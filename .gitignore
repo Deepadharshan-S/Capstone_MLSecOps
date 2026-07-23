@@ -120,4 +120,4 @@ data/
 
 ray_results/
 
-backend/.env
+**/.env
