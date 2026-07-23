@@ -120,10 +120,4 @@ data/
 
 ray_results/
 
-# ===================================
-# uv
-# ===================================
-
-# Keep these tracked!
-# pyproject.toml
-# uv.lock
+backend/.env
