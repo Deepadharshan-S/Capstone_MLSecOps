@@ -1,14 +1,18 @@
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     APP_NAME: str
+    APP_VERSION: str
 
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    POSTGRES_HOST: str
-    POSTGRES_PORT: int
+    DEBUG: bool
+
+    HOST: str
+    PORT: int
+
+    DATABASE_URL: str
 
     SECRET_KEY: str
     ALGORITHM: str
@@ -20,4 +24,9 @@ class Settings(BaseSettings):
     )
 
 
-settings = Settings()
+@lru_cache
+def get_settings():
+    return Settings()
+
+
+settings = get_settings()

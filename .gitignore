@@ -21,9 +21,9 @@ env/
 # Environment Variables
 # ===================================
 
-.env
-.env.*
-!.env.example
+# .env
+# .env.*
+# !.env.example
 
 # ===================================
 # Testing
@@ -111,7 +111,6 @@ secrets/
 mlruns/
 artifacts/
 checkpoints/
-models/
 data/
 
 # ===================================
