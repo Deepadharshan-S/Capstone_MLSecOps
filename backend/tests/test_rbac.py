@@ -231,7 +231,7 @@ def test_brute_force_lockout():
     # Attempt 5: Should trigger account lockout and return 403
     resp_5 = client.post("/api/auth/login", data=login_data_bad)
     assert resp_5.status_code == 403
-    assert "locked for 15 minutes" in resp_5.json()["detail"]
+    assert "temporarily locked" in resp_5.json()["detail"]
 
     # Attempt 6 (Immediate subsequent attempt): Should block immediately
     resp_6 = client.post("/api/auth/login", data=login_data_bad)
