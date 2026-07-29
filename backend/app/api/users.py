@@ -8,7 +8,7 @@ from app.api.permissions import get_current_active_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserResponse, UserUpdateRole
-from app.services import user_service
+from app.services.user_service import user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 

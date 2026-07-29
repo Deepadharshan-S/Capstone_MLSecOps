@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from app.api.permissions import get_current_active_user
 from app.models.user import User
-from app.services import ml_ops_service
+from app.services.ml_ops_service import ml_ops_service
 
 router = APIRouter(prefix="", tags=["mlops"])
 
