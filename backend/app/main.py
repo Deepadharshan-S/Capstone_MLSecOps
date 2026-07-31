@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -13,6 +15,13 @@ app = FastAPI(
 
 # Register Security Headers Middleware
 app.add_middleware(SecurityHeadersMiddleware)
+
+@app.exception_handler(IntegrityError)
+def integrity_error_handler(request: Request, exc: IntegrityError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Database integrity constraint violation. Unique or foreign key constraint failed."},
+    )
 
 # Include Routers
 app.include_router(auth.router, prefix="/api")

@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Security
 from sqlalchemy.orm import Session
+from app.core.rate_limiter import RateLimiter
 
 from app.api.permissions import get_current_active_user
 from app.db.session import get_db
@@ -45,7 +46,11 @@ def list_audit_logs(
     return user_service.get_all_audit_logs(db)
 
 
-@router.put("/{user_id}/role", response_model=UserResponse)
+@router.put(
+    "/{user_id}/role",
+    response_model=UserResponse,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+)
 def update_user_role(
     user_id: UUID,
     role_update: UserUpdateRole,

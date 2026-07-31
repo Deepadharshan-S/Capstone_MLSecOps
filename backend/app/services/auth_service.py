@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.core.security import (
     create_access_token,
@@ -69,12 +70,24 @@ class AuthService:
                 username=user_in.username,
                 email=user_in.email,
                 password_hash=hashed_pwd,
-                role=user_in.role,
+                role="viewer",
                 is_active=True,
             )
             db.add(new_user)
             db.commit()
             db.refresh(new_user)
+        except IntegrityError:
+            db.rollback()
+            log_audit_event(
+                "register_failed_collision",
+                user_in.username,
+                ip_address,
+                "Integrity constraint violation (username or email collision).",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username or email is unavailable.",
+            )
         except Exception:
             db.rollback()
             raise HTTPException(
@@ -380,6 +393,8 @@ class AuthService:
                             db_blacklist = BlacklistedToken(jti=jti, expires_at=expires_at)
                             db.add(db_blacklist)
                             db.commit()
+                    except IntegrityError:
+                        db.rollback()
                     except Exception:
                         db.rollback()
 

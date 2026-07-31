@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.models.user import User
 from app.schemas.user import UserUpdateRole
@@ -55,6 +56,12 @@ class UserService:
             user.role = role_update.role
             db.commit()
             db.refresh(user)
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Database integrity constraint violation during role update.",
+            )
         except Exception:
             db.rollback()
             raise HTTPException(

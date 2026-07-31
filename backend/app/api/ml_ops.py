@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Security, status
+from fastapi import APIRouter, Security, status, Depends
+from app.core.rate_limiter import RateLimiter
 from pydantic import BaseModel
 
 from app.api.permissions import get_current_active_user
@@ -29,7 +30,11 @@ class ManageDeploymentSchema(BaseModel):
     action: str = "restart"  # restart, rollback, stop
 
 
-@router.post("/datasets/upload", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/datasets/upload",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+)
 def upload_dataset(
     dataset: DatasetUploadSchema,
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
@@ -40,7 +45,11 @@ def upload_dataset(
     return ml_ops_service.perform_dataset_upload(dataset.name, user)
 
 
-@router.post("/models/train", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/models/train",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(RateLimiter(times=2, seconds=60))],
+)
 def train_model(
     train_info: TrainModelSchema,
     user: User = Security(get_current_active_user, scopes=["models:train"]),
@@ -61,7 +70,11 @@ def view_models(
     return ml_ops_service.retrieve_models(user)
 
 
-@router.post("/models/deploy", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/models/deploy",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(times=2, seconds=60))],
+)
 def deploy_model(
     deploy_info: DeployModelSchema,
     user: User = Security(get_current_active_user, scopes=["models:deploy"]),
@@ -72,7 +85,10 @@ def deploy_model(
     return ml_ops_service.perform_model_deploy(deploy_info.model_id, deploy_info.environment, user)
 
 
-@router.post("/deployments/manage")
+@router.post(
+    "/deployments/manage",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
 def manage_deployment(
     manage_info: ManageDeploymentSchema,
     user: User = Security(get_current_active_user, scopes=["deployments:manage"]),

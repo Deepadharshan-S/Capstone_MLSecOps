@@ -1,5 +1,4 @@
 import pytest
-from uuid import UUID
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -8,11 +7,18 @@ from app.main import app
 from app.db.session import get_db
 from app.db.base import Base
 from app.models.user import User
-from app.models.refresh_token import RefreshToken
-from app.models.audit_log import AuditLog
-from app.models.blacklisted_token import BlacklistedToken
+from app.models.refresh_token import RefreshToken  # noqa: F401
+from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.blacklisted_token import BlacklistedToken  # noqa: F401
 
 from sqlalchemy.pool import StaticPool
+from fastapi import Depends
+from app.core.rate_limiter import RateLimiter
+
+# Dynamically add a temporary route to test rate limiting in isolation
+@app.get("/api/test-rate-limiting-endpoint", dependencies=[Depends(RateLimiter(times=3, seconds=5, force_enable=True))])
+def rate_limiting_test_endpoint():
+    return {"message": "success"}
 
 # Isolated Test Database setup (using in-memory SQLite)
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -391,3 +397,59 @@ def test_audit_logging_and_retrieval():
     # 3. Check that actions like login_success are recorded
     actions = [log["action"] for log in logs]
     assert "login_success" in actions
+
+
+def test_rate_limiting_enforcement():
+    """Verify that exceeding the rate limit triggers HTTP 429 Too Many Requests."""
+    # First 3 requests must succeed
+    for _ in range(3):
+        response = client.get("/api/test-rate-limiting-endpoint")
+        assert response.status_code == 200
+        assert response.json() == {"message": "success"}
+
+    # 4th request must fail with 429
+    response = client.get("/api/test-rate-limiting-endpoint")
+    assert response.status_code == 429
+    assert "Too many requests" in response.json()["detail"]
+
+
+def test_registration_always_assigns_viewer_role():
+    """Verify that registering a new user always assigns the 'viewer' role, even if another role is passed."""
+    # Register requesting 'admin' role
+    payload = {
+        "username": "attacker_admin",
+        "email": "attacker@mlsecops.com",
+        "password": "StrongPassword123!",
+        "role": "admin"
+    }
+    response = client.post("/api/auth/register", json=payload)
+    assert response.status_code == 201
+    
+    # Assert that role returned in response is viewer, not admin
+    user_data = response.json()
+    assert user_data["username"] == "attacker_admin"
+    assert user_data["role"] == "viewer"
+
+    # Verify directly in the DB
+    db = TestingSessionLocal()
+    db_user = db.query(User).filter(User.username == "attacker_admin").first()
+    assert db_user is not None
+    assert db_user.role == "viewer"
+    db.close()
+
+
+def test_registration_integrity_error_handling():
+    """Verify that registering a user with duplicate username or email returns a clean 400 Bad Request."""
+    # Register first user
+    payload1 = {
+        "username": "duplicate_user",
+        "email": "duplicate@mlsecops.com",
+        "password": "StrongPassword123!"
+    }
+    response1 = client.post("/api/auth/register", json=payload1)
+    assert response1.status_code == 201
+
+    # Register second user with same username and email
+    response2 = client.post("/api/auth/register", json=payload1)
+    assert response2.status_code == 400
+    assert response2.json()["detail"] == "Username or email is unavailable."

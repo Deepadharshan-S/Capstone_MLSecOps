@@ -12,7 +12,6 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=64)
-    role: Optional[str] = Field("viewer", pattern="^(admin|data_scientist|ml_engineer|viewer)$")
 
 
 class UserUpdateRole(BaseModel):
