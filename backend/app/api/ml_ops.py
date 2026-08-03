@@ -1,33 +1,17 @@
 from fastapi import APIRouter, Security, status, Depends
 from app.core.rate_limiter import RateLimiter
-from pydantic import BaseModel
 
 from app.api.permissions import get_current_active_user
 from app.models.user import User
+from app.schemas import (
+    DatasetUploadSchema,
+    TrainModelSchema,
+    DeployModelSchema,
+    ManageDeploymentSchema,
+)
 from app.services.ml_ops_service import ml_ops_service
 
 router = APIRouter(prefix="", tags=["mlops"])
-
-
-class DatasetUploadSchema(BaseModel):
-    name: str
-    description: str
-
-
-class TrainModelSchema(BaseModel):
-    dataset_id: str
-    epochs: int = 10
-    hyperparameters: dict = {}
-
-
-class DeployModelSchema(BaseModel):
-    model_id: str
-    environment: str = "staging"
-
-
-class ManageDeploymentSchema(BaseModel):
-    deployment_id: str
-    action: str = "restart"  # restart, rollback, stop
 
 
 @router.post(

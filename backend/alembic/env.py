@@ -1,7 +1,8 @@
 from app.core.config import settings
 from app.db.base import Base
-from app import models
+from app import models  # noqa: F401
 from logging.config import fileConfig
+
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool

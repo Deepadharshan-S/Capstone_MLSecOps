@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.api import auth, users, ml_ops
 from app.middleware import SecurityHeadersMiddleware
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -35,22 +37,15 @@ def root():
 
 
 @app.get("/health")
-def health():
-    db = SessionLocal()
-
+def health(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
-
         return {
             "status": "healthy",
             "database": "connected",
         }
-
     except Exception as e:
         return {
             "status": "unhealthy",
             "error": str(e),
         }
-
-    finally:
-        db.close()
