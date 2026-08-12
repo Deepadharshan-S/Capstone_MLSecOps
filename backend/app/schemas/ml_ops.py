@@ -1,11 +1,6 @@
 from pydantic import BaseModel
 
 
-class DatasetUploadSchema(BaseModel):
-    name: str
-    description: str
-
-
 class TrainModelSchema(BaseModel):
     dataset_id: str
     epochs: int = 10

@@ -25,10 +25,24 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
+    # lakeFS config
+    LAKEFS_ENDPOINT: str
+    LAKEFS_ACCESS_KEY_ID: str
+    LAKEFS_SECRET_ACCESS_KEY: str
+    LAKEFS_DEFAULT_BRANCH: str = "main"
+
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         if not self.DATABASE_URL:
-            if all([self.POSTGRES_USER, self.POSTGRES_PASSWORD, self.POSTGRES_HOST, self.POSTGRES_PORT, self.POSTGRES_DB]):
+            if all(
+                [
+                    self.POSTGRES_USER,
+                    self.POSTGRES_PASSWORD,
+                    self.POSTGRES_HOST,
+                    self.POSTGRES_PORT,
+                    self.POSTGRES_DB,
+                ]
+            ):
                 self.DATABASE_URL = (
                     f"postgresql+psycopg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
                     f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -37,7 +51,9 @@ class Settings(BaseSettings):
                 # Fallback fallback
                 self.DATABASE_URL = "sqlite:///./test.db"
         elif self.DATABASE_URL.startswith("postgresql://"):
-            self.DATABASE_URL = self.DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+            self.DATABASE_URL = self.DATABASE_URL.replace(
+                "postgresql://", "postgresql+psycopg://", 1
+            )
         return self
 
     model_config = SettingsConfigDict(

@@ -88,7 +88,14 @@ def setup_test_database():
     finally:
         db.close()
 
+    # Apply dependency overrides to the app
+    app.dependency_overrides[get_db] = override_get_db
+
     yield
+
+    # Clean up dependency overrides
+    if get_db in app.dependency_overrides:
+        del app.dependency_overrides[get_db]
 
     Base.metadata.drop_all(bind=engine)
 
@@ -100,9 +107,6 @@ def override_get_db():
     finally:
         db.close()
 
-
-# Apply dependency overrides to the app
-app.dependency_overrides[get_db] = override_get_db
 
 client = TestClient(app, base_url="https://testserver.local")
 
@@ -275,12 +279,13 @@ def test_rbac_permissions_matrix():
     viewer_headers = get_user_headers("viewer_user", "ViewerPassword123!")
 
     # 1. Dataset Upload (Admin and Data Scientist only)
-    dataset_payload = {"name": "Iris Dataset", "description": "Classification dataset"}
+    dataset_payload_admin = {"name": "Iris Dataset Admin", "description": "Classification dataset"}
+    dataset_payload_ds = {"name": "Iris Dataset DS", "description": "Classification dataset"}
     
-    assert client.post("/api/datasets/upload", json=dataset_payload, headers=admin_headers).status_code == 201
-    assert client.post("/api/datasets/upload", json=dataset_payload, headers=ds_headers).status_code == 201
-    assert client.post("/api/datasets/upload", json=dataset_payload, headers=mle_headers).status_code == 403
-    assert client.post("/api/datasets/upload", json=dataset_payload, headers=viewer_headers).status_code == 403
+    assert client.post("/api/datasets", data=dataset_payload_admin, files={"file": ("data.csv", b"content")}, headers=admin_headers).status_code == 201
+    assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=ds_headers).status_code == 201
+    assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=mle_headers).status_code == 403
+    assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=viewer_headers).status_code == 403
 
     # 2. Model Training (Admin and Data Scientist only)
     train_payload = {"dataset_id": "iris-uuid", "epochs": 5}
@@ -351,7 +356,7 @@ def test_admin_user_management():
     # Login again to get new token reflecting the new role
     new_headers = get_user_headers("viewer_user", "ViewerPassword123!")
     dataset_payload = {"name": "Iris Dataset 2", "description": "Classification dataset 2"}
-    assert client.post("/api/datasets/upload", json=dataset_payload, headers=new_headers).status_code == 201
+    assert client.post("/api/datasets", data=dataset_payload, files={"file": ("data.csv", b"content")}, headers=new_headers).status_code == 201
 
 
 def test_access_token_blacklisting():

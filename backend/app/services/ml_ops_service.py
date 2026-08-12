@@ -8,20 +8,6 @@ class MLOpsService:
     deployment states) and writing activity records to security audit files.
     """
 
-    def perform_dataset_upload(self, dataset_name: str, user: User) -> dict:
-        """Logs dataset upload audit event and returns status payload."""
-        log_audit_event(
-            "dataset_upload",
-            user.username,
-            None,
-            f"Uploaded dataset '{dataset_name}'.",
-        )
-        return {
-            "message": f"Dataset '{dataset_name}' uploaded successfully by {user.username}.",
-            "dataset_name": dataset_name,
-            "uploaded_by": user.username,
-        }
-
     def perform_model_training(self, dataset_id: str, epochs: int, user: User) -> dict:
         """Logs model training start event and returns execution status payload."""
         log_audit_event(
@@ -79,7 +65,9 @@ class MLOpsService:
             "status": "deployed",
         }
 
-    def perform_deployment_management(self, deployment_id: str, action: str, user: User) -> dict:
+    def perform_deployment_management(
+        self, deployment_id: str, action: str, user: User
+    ) -> dict:
         """Logs deployment management audit event and returns action status payload."""
         log_audit_event(
             "deployment_management",

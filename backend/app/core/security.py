@@ -49,7 +49,9 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-def create_access_token(subject: str | Any, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    subject: str | Any, expires_delta: Optional[timedelta] = None
+) -> str:
     """
     Create a signed JWT access token.
     The subject is typically the user ID.
@@ -68,11 +70,15 @@ def create_access_token(subject: str | Any, expires_delta: Optional[timedelta] =
         "jti": secrets.token_hex(16),
         "iat": datetime.now(timezone.utc),
     }
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
+    )
     return encoded_jwt
 
 
-def create_refresh_token(subject: str | Any, expires_delta: Optional[timedelta] = None) -> tuple[str, str, datetime]:
+def create_refresh_token(
+    subject: str | Any, expires_delta: Optional[timedelta] = None
+) -> tuple[str, str, datetime]:
     """
     Create a signed JWT refresh token.
     Returns:
@@ -94,14 +100,18 @@ def create_refresh_token(subject: str | Any, expires_delta: Optional[timedelta] 
         "jti": token_id,
         "iat": datetime.now(timezone.utc),
     }
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
+    )
     return encoded_jwt, token_id, expire
 
 
 def decode_token(token: str) -> Optional[dict[str, Any]]:
     """Decode and validate a JWT token."""
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
         return payload
     except JWTError:
         return None

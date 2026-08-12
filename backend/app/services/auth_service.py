@@ -28,7 +28,9 @@ class AuthService:
     lockout verification, and token rotation workflows.
     """
 
-    def register_user(self, db: Session, user_in: UserCreate, ip_address: Optional[str] = None) -> User:
+    def register_user(
+        self, db: Session, user_in: UserCreate, ip_address: Optional[str] = None
+    ) -> User:
         """Enforces password complexity, checks collision, and registers new users in a managed transaction."""
         # 1. Enforce password complexity policy
         is_valid, error_msg = validate_password_strength(user_in.password)
@@ -114,7 +116,8 @@ class AuthService:
         user = (
             db.query(User)
             .filter(
-                (User.username == form_data.username) | (User.email == form_data.username)
+                (User.username == form_data.username)
+                | (User.email == form_data.username)
             )
             .first()
         )
@@ -318,7 +321,9 @@ class AuthService:
             db_token.is_revoked = True
 
             new_access_token = create_access_token(subject=user_uuid)
-            new_refresh_token, new_jti, new_expires_at = create_refresh_token(subject=user_uuid)
+            new_refresh_token, new_jti, new_expires_at = create_refresh_token(
+                subject=user_uuid
+            )
 
             db_new_token = RefreshToken(
                 token_hash=new_jti,
@@ -374,8 +379,12 @@ class AuthService:
                 user_id = payload.get("sub")
                 if user_id:
                     try:
-                        user_uuid = UUID(user_id) if isinstance(user_id, str) else user_id
-                        user_record = db.query(User).filter(User.id == user_uuid).first()
+                        user_uuid = (
+                            UUID(user_id) if isinstance(user_id, str) else user_id
+                        )
+                        user_record = (
+                            db.query(User).filter(User.id == user_uuid).first()
+                        )
                         if user_record:
                             username = user_record.username
                     except (ValueError, TypeError):
@@ -390,7 +399,9 @@ class AuthService:
                             .first()
                         )
                         if not existing_blacklist:
-                            db_blacklist = BlacklistedToken(jti=jti, expires_at=expires_at)
+                            db_blacklist = BlacklistedToken(
+                                jti=jti, expires_at=expires_at
+                            )
                             db.add(db_blacklist)
                             db.commit()
                     except IntegrityError:
@@ -406,7 +417,9 @@ class AuthService:
                 jti = payload.get("jti")
                 try:
                     db_token = (
-                        db.query(RefreshToken).filter(RefreshToken.token_hash == jti).first()
+                        db.query(RefreshToken)
+                        .filter(RefreshToken.token_hash == jti)
+                        .first()
                     )
                     if db_token:
                         db_token.is_revoked = True

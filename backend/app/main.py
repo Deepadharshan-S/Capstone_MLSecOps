@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.api import auth, users, ml_ops
 from app.middleware import SecurityHeadersMiddleware
-
+from app.api import datasets
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -18,17 +18,22 @@ app = FastAPI(
 # Register Security Headers Middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+
 @app.exception_handler(IntegrityError)
 def integrity_error_handler(request: Request, exc: IntegrityError):
     return JSONResponse(
         status_code=400,
-        content={"detail": "Database integrity constraint violation. Unique or foreign key constraint failed."},
+        content={
+            "detail": "Database integrity constraint violation. Unique or foreign key constraint failed."
+        },
     )
+
 
 # Include Routers
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(ml_ops.router, prefix="/api")
+app.include_router(datasets.router, prefix="/api")
 
 
 @app.get("/")

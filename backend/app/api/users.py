@@ -15,9 +15,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("/me", response_model=UserResponse)
-def read_user_me(
-    current_user: Annotated[User, Depends(get_current_active_user)]
-):
+def read_user_me(current_user: Annotated[User, Depends(get_current_active_user)]):
     """
     Returns the currently authenticated user's profile details.
     """
