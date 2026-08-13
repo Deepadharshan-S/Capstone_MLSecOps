@@ -43,14 +43,33 @@ def root():
 
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
+    db_status = "connected"
+    lakefs_status = "connected"
+    
+    # 1. Database check
     try:
         db.execute(text("SELECT 1"))
-        return {
-            "status": "healthy",
-            "database": "connected",
-        }
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
+        db_status = f"error: {str(e)}"
+        
+    # 2. lakeFS check
+    try:
+        from app.services.data_service import data_service
+        if data_service.client:
+            _ = data_service.client.sdk_client.config_api.get_config()
+        else:
+            lakefs_status = "error: client not initialized"
+    except Exception as e:
+        lakefs_status = f"error: {str(e)}"
+        
+    is_healthy = db_status == "connected" and lakefs_status == "connected"
+    status_code = 200 if is_healthy else 503
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if is_healthy else "unhealthy",
+            "database": db_status,
+            "lakefs": lakefs_status,
         }
+    )

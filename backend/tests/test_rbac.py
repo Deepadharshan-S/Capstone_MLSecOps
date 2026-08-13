@@ -119,7 +119,10 @@ def test_public_endpoints():
 
     r_health = client.get("/health")
     assert r_health.status_code == 200
-    assert r_health.json()["status"] == "healthy"
+    res = r_health.json()
+    assert res["status"] == "healthy"
+    assert res["database"] == "connected"
+    assert res["lakefs"] == "connected"
 
 
 def test_password_complexity():
@@ -458,3 +461,52 @@ def test_registration_integrity_error_handling():
     response2 = client.post("/api/auth/register", json=payload1)
     assert response2.status_code == 400
     assert response2.json()["detail"] == "Username or email is unavailable."
+
+
+def test_health_endpoint_failure_modes(monkeypatch):
+    """Verify that /health returns 503 if database or lakeFS is unhealthy."""
+    from unittest.mock import MagicMock
+    from app.services.data_service import data_service
+
+    # Case 1: Database failure
+    original_get_db = app.dependency_overrides.get(get_db)
+    
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = Exception("DB Connection Lost")
+    
+    def override_get_db_fail():
+        yield mock_db
+        
+    app.dependency_overrides[get_db] = override_get_db_fail
+    try:
+        r_health = client.get("/health")
+        assert r_health.status_code == 503
+        res = r_health.json()
+        assert res["status"] == "unhealthy"
+        assert "error: DB Connection Lost" in res["database"]
+        assert res["lakefs"] == "connected"
+    finally:
+        if original_get_db:
+            app.dependency_overrides[get_db] = original_get_db
+        else:
+            del app.dependency_overrides[get_db]
+
+    # Case 2: lakeFS failure
+    original_client = data_service.client
+    class MockLakefsClient:
+        class sdk_client:
+            class config_api:
+                @staticmethod
+                def get_config():
+                    raise Exception("lakeFS Offline")
+            
+    data_service.client = MockLakefsClient()
+    try:
+        r_health = client.get("/health")
+        assert r_health.status_code == 503
+        res = r_health.json()
+        assert res["status"] == "unhealthy"
+        assert res["database"] == "connected"
+        assert "error: lakeFS Offline" in res["lakefs"]
+    finally:
+        data_service.client = original_client
