@@ -4,7 +4,10 @@ import socket
 _original_getaddrinfo = socket.getaddrinfo
 def _patched_getaddrinfo(host, port, *args, **kwargs):
     if host == "mlsecops-minio":
-        host = "127.0.0.1"
+        try:
+            return _original_getaddrinfo(host, port, *args, **kwargs)
+        except socket.gaierror:
+            host = "127.0.0.1"
     return _original_getaddrinfo(host, port, *args, **kwargs)
 socket.getaddrinfo = _patched_getaddrinfo
 
@@ -154,18 +157,16 @@ def test_dataset_lifecycle(user_tokens):
     assert dataset_data["description"] == reg_payload["description"]
     assert "storage_namespace" in dataset_data
 
-    # 2. List & Search datasets
-    # List datasets
+    # 2. List datasets
+    # Viewer should be blocked (403)
     list_resp = client.get("/api/datasets", headers=viewer_headers)
+    assert list_resp.status_code == 403
+
+    # Data Scientist should succeed (200)
+    list_resp = client.get("/api/datasets", headers=ds_headers)
     assert list_resp.status_code == 200
     dataset_names = [d["name"] for d in list_resp.json()]
     assert dataset_name in dataset_names
-
-    # Search datasets
-    search_resp = client.get(f"/api/datasets/search?q={dataset_name[:12]}", headers=viewer_headers)
-    assert search_resp.status_code == 200
-    search_names = [d["name"] for d in search_resp.json()]
-    assert dataset_name in search_names
 
     # 3. Data upload (RBAC: ds_user/admin can, viewer cannot)
     file_content = b"feature1,feature2,label\n5.1,3.5,0\n4.9,3.0,0"
@@ -229,8 +230,12 @@ def test_dataset_lifecycle(user_tokens):
     assert resp.status_code == 200
     assert resp.json()["name"] == "experiment-v1"
 
-    # List branches
+    # List branches: viewer should be blocked
     resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=viewer_headers)
+    assert resp.status_code == 403
+
+    # DS List branches
+    resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=ds_headers)
     assert resp.status_code == 200
     branches = [b["name"] for b in resp.json()]
     assert "main" in branches
@@ -253,10 +258,17 @@ def test_dataset_lifecycle(user_tokens):
     assert resp.status_code == 200
     commit2_id = resp.json()["id"]
 
-    # Compare versions
+    # Compare versions: viewer blocked
     resp = client.get(
         f"/api/datasets/{dataset_name}/compare?left_ref=main&right_ref=experiment-v1",
         headers=viewer_headers
+    )
+    assert resp.status_code == 403
+
+    # DS Compare versions
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref=main&right_ref=experiment-v1",
+        headers=ds_headers
     )
     assert resp.status_code == 200
     changes = resp.json()
@@ -265,11 +277,18 @@ def test_dataset_lifecycle(user_tokens):
     paths = [c["path"] for c in changes]
     assert "new_data.csv" in paths
 
-    # 7. Dataset download (All authenticated users)
-    # Download from main branch
+    # 7. Dataset download (RBAC: write/read restricted to ds/admin)
+    # Download from main branch: viewer blocked
     dl_resp = client.get(
         f"/api/datasets/{dataset_name}/download?path={file_path}&ref=main",
         headers=viewer_headers
+    )
+    assert dl_resp.status_code == 403
+
+    # DS download
+    dl_resp = client.get(
+        f"/api/datasets/{dataset_name}/download?path={file_path}&ref=main",
+        headers=ds_headers
     )
     assert dl_resp.status_code == 200
     assert dl_resp.content == file_content
@@ -289,23 +308,38 @@ def test_dataset_lifecycle(user_tokens):
     assert resp.status_code == 200
     assert resp.json()["name"] == "release-v1.0"
 
-    # List tags
+    # List tags: viewer blocked
     resp = client.get(f"/api/datasets/{dataset_name}/tags", headers=viewer_headers)
+    assert resp.status_code == 403
+
+    # DS List tags
+    resp = client.get(f"/api/datasets/{dataset_name}/tags", headers=ds_headers)
     assert resp.status_code == 200
     tags = [t["name"] for t in resp.json()]
     assert "release-v1.0" in tags
 
-    # Download file using tag reference
+    # Download file using tag reference: viewer blocked
     dl_tag_resp = client.get(
         f"/api/datasets/{dataset_name}/download?path={file_path}&ref=release-v1.0",
         headers=viewer_headers
     )
+    assert dl_tag_resp.status_code == 403
+
+    # DS Download file using tag reference
+    dl_tag_resp = client.get(
+        f"/api/datasets/{dataset_name}/download?path={file_path}&ref=release-v1.0",
+        headers=ds_headers
+    )
     assert dl_tag_resp.status_code == 200
     assert dl_tag_resp.content == file_content
 
-    # 9. Get & Update metadata (RBAC: write requires ds_user/admin)
-    # Get metadata
+    # 9. Get & Update metadata (RBAC: ds_user/admin)
+    # Get metadata: viewer blocked
     resp = client.get(f"/api/datasets/{dataset_name}/metadata", headers=viewer_headers)
+    assert resp.status_code == 403
+
+    # DS Get metadata
+    resp = client.get(f"/api/datasets/{dataset_name}/metadata", headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["dataset_name"] == dataset_name
 
@@ -330,7 +364,12 @@ def test_dataset_lifecycle(user_tokens):
     assert "Successfully reverted" in resp.json()["message"]
 
     # 11. View commit history
+    # Viewer blocked
     resp = client.get(f"/api/datasets/{dataset_name}/commits?ref=main", headers=viewer_headers)
+    assert resp.status_code == 403
+
+    # DS view commit history
+    resp = client.get(f"/api/datasets/{dataset_name}/commits?ref=main", headers=ds_headers)
     assert resp.status_code == 200
     commits_list = resp.json()
     assert len(commits_list) > 0
@@ -350,9 +389,11 @@ def test_dataset_lifecycle(user_tokens):
     resp = client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)
     assert resp.status_code == 200
 
-    # Verify dataset is deleted from DB
-    resp = client.get(f"/api/datasets/{dataset_name}", headers=viewer_headers)
-    assert resp.status_code == 404
+    # Verify dataset is deleted from DB list
+    resp = client.get("/api/datasets", headers=admin_headers)
+    assert resp.status_code == 200
+    dataset_names = [d["name"] for d in resp.json()]
+    assert dataset_name not in dataset_names
 
     # 13. Audit logs check
     audit_logs = get_all_audit_logs()

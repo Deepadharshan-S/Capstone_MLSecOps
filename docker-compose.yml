@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mlsecops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - mlsecops-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: mlsecops-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - mlsecops-network
+
+  lakefs:
+    image: treeverse/lakefs:latest
+    container_name: mlsecops-lakefs
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - minio
+    ports:
+      - "8000:8000"
+    environment:
+      LAKEFS_DATABASE_TYPE: postgres
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: ${LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING}
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://mlsecops-minio:9000
+      LAKEFS_BLOCKSTORE_S3_REGION: us-east-1
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: ${LAKEFS_AUTH_ENCRYPT_SECRET_KEY}
+    networks:
+      - mlsecops-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: mlsecops-backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - lakefs
+    ports:
+      - "8080:8000"
+    env_file:
+      - .env
+    networks:
+      - mlsecops-network
+
+networks:
+  mlsecops-network:
+    name: mlsecops-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: postgres_data
+  minio_data:
+    name: mlsecops_minio_data

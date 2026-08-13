@@ -82,41 +82,12 @@ async def register_dataset(
 @router.get("", response_model=list[DatasetResponse])
 def list_datasets(
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Lists all registered datasets.
     """
     return data_service.list_datasets(db)
-
-
-@router.get("/search", response_model=list[DatasetResponse])
-def search_datasets(
-    q: str,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
-):
-    """
-    Searches for datasets matching query string.
-    """
-    return data_service.search_datasets(db, query=q)
-
-
-@router.get("/{dataset_name}", response_model=DatasetResponse)
-def get_dataset(
-    dataset_name: str,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
-):
-    """
-    Gets details of a single dataset.
-    """
-    dataset = db.query(Dataset).filter(Dataset.name == dataset_name).first()
-    if not dataset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found"
-        )
-    return dataset
 
 
 @router.delete("/{dataset_name}")
@@ -168,7 +139,7 @@ def download_file(
     path: str,
     ref: Optional[str] = "main",
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Downloads/retrieves a file stream from a reference (branch/commit/tag).
@@ -230,7 +201,7 @@ def create_branch(
 def list_branches(
     dataset_name: str,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Lists all branches in the repository.
@@ -259,7 +230,7 @@ def view_commit_history(
     ref: Optional[str] = "main",
     limit: Optional[int] = None,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Views commit history starting from a reference.
@@ -273,7 +244,7 @@ def compare_dataset_versions(
     left_ref: str,
     right_ref: str,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Compares two references (branches, commits, tags).
@@ -323,7 +294,7 @@ def create_tag(
 def list_tags(
     dataset_name: str,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Lists all tags in the repository.
@@ -348,7 +319,7 @@ def delete_tag(
 def get_dataset_metadata(
     dataset_name: str,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Retrieves metadata from both database and lakeFS.

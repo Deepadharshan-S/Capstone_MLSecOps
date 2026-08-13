@@ -7,7 +7,10 @@ _original_getaddrinfo = socket.getaddrinfo
 
 def _patched_getaddrinfo(host, port, *args, **kwargs):
     if host == "mlsecops-minio":
-        host = "127.0.0.1"
+        try:
+            return _original_getaddrinfo(host, port, *args, **kwargs)
+        except socket.gaierror:
+            host = "127.0.0.1"
     return _original_getaddrinfo(host, port, *args, **kwargs)
 
 
@@ -701,19 +704,6 @@ class DataService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"File '{file_path}' not found at reference '{ref_id}': {str(e)}",
             )
-
-    def search_datasets(self, db: Session, query: str) -> list[Dataset]:
-        """
-        Searches registered datasets matching a name or description pattern.
-        """
-        return (
-            db.query(Dataset)
-            .filter(
-                Dataset.name.ilike(f"%{query}%")
-                | Dataset.description.ilike(f"%{query}%")
-            )
-            .all()
-        )
 
     def list_datasets(self, db: Session) -> list[Dataset]:
         """
