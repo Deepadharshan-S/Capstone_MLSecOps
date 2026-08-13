@@ -1,4 +1,7 @@
 import re
+import boto3
+from botocore.client import Config
+
 
 from typing import Optional, Any
 from uuid import UUID
@@ -615,7 +618,7 @@ class DataService:
 
     def delete_dataset(self, db: Session, dataset_name: str, username: str) -> dict:
         """
-        Deletes the dataset repository in lakeFS and the DB registration record.
+        Deletes the dataset repository in lakeFS, its MinIO storage folder, and the DB registration record.
         """
         dataset = db.query(Dataset).filter(Dataset.name == dataset_name).first()
         if not dataset:
@@ -624,8 +627,30 @@ class DataService:
                 detail=f"Dataset '{dataset_name}' not found.",
             )
 
-        # 1. Delete lakeFS repository
         sanitized_repo_name = self._get_repo_name(dataset_name)
+
+        # 1. Delete matching objects under the repository prefix in MinIO
+        try:
+            s3 = boto3.resource(
+                "s3",
+                endpoint_url=settings.MINIO_ENDPOINT,
+                aws_access_key_id=settings.MINIO_ROOT_USER,
+                aws_secret_access_key=settings.MINIO_ROOT_PASSWORD,
+                config=Config(signature_version="s3v4"),
+                region_name="us-east-1",
+            )
+            bucket = s3.Bucket("lakefs")
+            prefix = f"{sanitized_repo_name}/"
+            bucket.objects.filter(Prefix=prefix).delete()
+        except Exception as e:
+            log_audit_event(
+                "dataset_delete_warning",
+                username,
+                None,
+                f"MinIO storage deletion warning for '{dataset_name}': {str(e)}",
+            )
+
+        # 2. Delete lakeFS repository
         try:
             repo = lakefs.Repository(sanitized_repo_name, client=self.client)
             repo.delete()

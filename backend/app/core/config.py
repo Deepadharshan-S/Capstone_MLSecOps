@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     # MinIO config
     MINIO_ENDPOINT: str = "http://localhost:9000"
+    MINIO_ROOT_USER: str = "minioadmin"
+    MINIO_ROOT_PASSWORD: str = "minioadmin123"
 
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
