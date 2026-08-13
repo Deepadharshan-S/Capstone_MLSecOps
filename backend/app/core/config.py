@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     LAKEFS_SECRET_ACCESS_KEY: str
     LAKEFS_DEFAULT_BRANCH: str = "main"
 
+    # MinIO config
+    MINIO_ENDPOINT: str = "http://localhost:9000"
+
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         if not self.DATABASE_URL:

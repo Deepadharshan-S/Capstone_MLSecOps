@@ -7,6 +7,10 @@ from app.schemas import (
     TrainModelSchema,
     DeployModelSchema,
     ManageDeploymentSchema,
+    TrainModelResponse,
+    ModelListResponse,
+    DeployModelResponse,
+    ManageDeploymentResponse,
 )
 from app.services.ml_ops_service import ml_ops_service
 from app.services.data_service import data_service
@@ -16,6 +20,7 @@ router = APIRouter(prefix="", tags=["mlops"])
 
 @router.post(
     "/models/train",
+    response_model=TrainModelResponse,
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(RateLimiter(times=2, seconds=60))],
 )
@@ -31,7 +36,7 @@ def train_model(
     )
 
 
-@router.get("/models")
+@router.get("/models", response_model=ModelListResponse)
 def view_models(
     user: User = Security(get_current_active_user, scopes=["models:view"]),
 ):
@@ -43,6 +48,7 @@ def view_models(
 
 @router.post(
     "/models/deploy",
+    response_model=DeployModelResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RateLimiter(times=2, seconds=60))],
 )
@@ -60,6 +66,7 @@ def deploy_model(
 
 @router.post(
     "/deployments/manage",
+    response_model=ManageDeploymentResponse,
     dependencies=[Depends(RateLimiter(times=10, seconds=60))],
 )
 def manage_deployment(

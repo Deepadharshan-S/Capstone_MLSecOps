@@ -1,20 +1,4 @@
-import socket
 import re
-
-# Patch name resolution for mlsecops-minio when running on the host machine
-_original_getaddrinfo = socket.getaddrinfo
-
-
-def _patched_getaddrinfo(host, port, *args, **kwargs):
-    if host == "mlsecops-minio":
-        try:
-            return _original_getaddrinfo(host, port, *args, **kwargs)
-        except socket.gaierror:
-            host = "127.0.0.1"
-    return _original_getaddrinfo(host, port, *args, **kwargs)
-
-
-socket.getaddrinfo = _patched_getaddrinfo
 
 from typing import Optional, Any
 from uuid import UUID

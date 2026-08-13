@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -25,3 +26,15 @@ class UserResponse(UserBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AuditLogResponse(BaseModel):
+    timestamp: str
+    action: str
+    username: str
+    ip_address: Optional[str] = None
+    details: Optional[str] = None
+
+
+class MessageResponse(BaseModel):
+    message: str

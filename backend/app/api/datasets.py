@@ -21,14 +21,15 @@ from app.models.dataset import Dataset
 from app.schemas import (
     DatasetResponse,
     DatasetCommitRequest,
-    BranchCreateRequest,
-    BranchResponse,
-    TagCreateRequest,
-    TagResponse,
     CommitResponse,
     CompareResponse,
     RollbackRequest,
     MetadataUpdateRequest,
+    FileUploadResponse,
+    RollbackResponse,
+    DatasetMetadataResponse,
+    DatasetMetadataUpdateResponse,
+    MessageResponse,
 )
 from app.services.data_service import data_service
 
@@ -90,7 +91,7 @@ def list_datasets(
     return data_service.list_datasets(db)
 
 
-@router.delete("/{dataset_name}")
+@router.delete("/{dataset_name}", response_model=MessageResponse)
 def delete_dataset(
     dataset_name: str,
     db: Session = Depends(get_db),
@@ -104,6 +105,7 @@ def delete_dataset(
 
 @router.post(
     "/{dataset_name}/upload",
+    response_model=FileUploadResponse,
     dependencies=[Depends(RateLimiter(times=20, seconds=60))],
 )
 async def upload_file(
@@ -178,52 +180,6 @@ def commit_changes(
     )
 
 
-@router.post("/{dataset_name}/branches", response_model=BranchResponse)
-def create_branch(
-    dataset_name: str,
-    req: BranchCreateRequest,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Creates a new branch.
-    """
-    return data_service.create_branch(
-        db=db,
-        dataset_name=dataset_name,
-        branch_name=req.name,
-        source_branch=req.source_branch,
-        username=user.username,
-    )
-
-
-@router.get("/{dataset_name}/branches", response_model=list[BranchResponse])
-def list_branches(
-    dataset_name: str,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Lists all branches in the repository.
-    """
-    return data_service.list_branches(db, dataset_name)
-
-
-@router.delete("/{dataset_name}/branches/{branch_name}")
-def delete_branch(
-    dataset_name: str,
-    branch_name: str,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Deletes a branch in the repository.
-    """
-    return data_service.delete_branch(
-        db, dataset_name, branch_name, username=user.username
-    )
-
-
 @router.get("/{dataset_name}/commits", response_model=list[CommitResponse])
 def view_commit_history(
     dataset_name: str,
@@ -252,7 +208,7 @@ def compare_dataset_versions(
     return data_service.compare_dataset_versions(db, dataset_name, left_ref, right_ref)
 
 
-@router.post("/{dataset_name}/rollback")
+@router.post("/{dataset_name}/rollback", response_model=RollbackResponse)
 def rollback_changes(
     dataset_name: str,
     req: RollbackRequest,
@@ -271,51 +227,7 @@ def rollback_changes(
     )
 
 
-@router.post("/{dataset_name}/tags", response_model=TagResponse)
-def create_tag(
-    dataset_name: str,
-    req: TagCreateRequest,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Creates a tag pointing to a reference.
-    """
-    return data_service.create_tag(
-        db=db,
-        dataset_name=dataset_name,
-        tag_name=req.name,
-        target_ref=req.target_ref,
-        username=user.username,
-    )
-
-
-@router.get("/{dataset_name}/tags", response_model=list[TagResponse])
-def list_tags(
-    dataset_name: str,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Lists all tags in the repository.
-    """
-    return data_service.list_tags(db, dataset_name)
-
-
-@router.delete("/{dataset_name}/tags/{tag_name}")
-def delete_tag(
-    dataset_name: str,
-    tag_name: str,
-    db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Deletes a tag.
-    """
-    return data_service.delete_tag(db, dataset_name, tag_name, username=user.username)
-
-
-@router.get("/{dataset_name}/metadata")
+@router.get("/{dataset_name}", response_model=DatasetMetadataResponse)
 def get_dataset_metadata(
     dataset_name: str,
     db: Session = Depends(get_db),
@@ -327,7 +239,7 @@ def get_dataset_metadata(
     return data_service.get_dataset_metadata(db, dataset_name)
 
 
-@router.put("/{dataset_name}/metadata")
+@router.put("/{dataset_name}", response_model=DatasetMetadataUpdateResponse)
 def update_dataset_metadata(
     dataset_name: str,
     req: MetadataUpdateRequest,

@@ -1,15 +1,3 @@
-import socket
-
-# Patch name resolution for mlsecops-minio when running on the host machine
-_original_getaddrinfo = socket.getaddrinfo
-def _patched_getaddrinfo(host, port, *args, **kwargs):
-    if host == "mlsecops-minio":
-        try:
-            return _original_getaddrinfo(host, port, *args, **kwargs)
-        except socket.gaierror:
-            host = "127.0.0.1"
-    return _original_getaddrinfo(host, port, *args, **kwargs)
-socket.getaddrinfo = _patched_getaddrinfo
 
 import uuid
 import pytest
@@ -215,31 +203,17 @@ def test_dataset_lifecycle(user_tokens):
     assert commit1["metadata"]["framework"] == "pytest"
     commit1_id = commit1["id"]
 
-    # 5. Create branch & List branches
-    branch_payload = {
-        "name": "experiment-v1",
-        "source_branch": "main"
-    }
-
-    # DS creates branch
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/branches",
-        json=branch_payload,
-        headers=ds_headers
-    )
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "experiment-v1"
-
-    # List branches: viewer should be blocked
-    resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=viewer_headers)
-    assert resp.status_code == 403
-
-    # DS List branches
-    resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=ds_headers)
-    assert resp.status_code == 200
-    branches = [b["name"] for b in resp.json()]
-    assert "main" in branches
-    assert "experiment-v1" in branches
+    # 5. Create branch & List branches (using data_service directly since HTTP endpoints are removed)
+    from app.services.data_service import data_service
+    db = TestingSessionLocal()
+    try:
+        data_service.create_branch(db, dataset_name, "experiment-v1", "main", username="ds_user")
+        branches_list = data_service.list_branches(db, dataset_name)
+        branches = [b["name"] for b in branches_list]
+        assert "main" in branches
+        assert "experiment-v1" in branches
+    finally:
+        db.close()
 
     # 6. Upload new file on branch and commit to compare dataset versions
     new_file_content = b"feature1,feature2,label\n6.0,3.0,1\n5.8,2.7,1"
@@ -293,30 +267,15 @@ def test_dataset_lifecycle(user_tokens):
     assert dl_resp.status_code == 200
     assert dl_resp.content == file_content
 
-    # 8. Create a tag (RBAC: ds_user/admin can, viewer cannot)
-    tag_payload = {
-        "name": "release-v1.0",
-        "target_ref": "main"
-    }
-
-    # DS tags the main branch commit
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/tags",
-        json=tag_payload,
-        headers=ds_headers
-    )
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "release-v1.0"
-
-    # List tags: viewer blocked
-    resp = client.get(f"/api/datasets/{dataset_name}/tags", headers=viewer_headers)
-    assert resp.status_code == 403
-
-    # DS List tags
-    resp = client.get(f"/api/datasets/{dataset_name}/tags", headers=ds_headers)
-    assert resp.status_code == 200
-    tags = [t["name"] for t in resp.json()]
-    assert "release-v1.0" in tags
+    # 8. Create a tag (using data_service directly since HTTP endpoints are removed)
+    db = TestingSessionLocal()
+    try:
+        data_service.create_tag(db, dataset_name, "release-v1.0", "main", username="ds_user")
+        tags_list = data_service.list_tags(db, dataset_name)
+        tags = [t["name"] for t in tags_list]
+        assert "release-v1.0" in tags
+    finally:
+        db.close()
 
     # Download file using tag reference: viewer blocked
     dl_tag_resp = client.get(
@@ -335,17 +294,17 @@ def test_dataset_lifecycle(user_tokens):
 
     # 9. Get & Update metadata (RBAC: ds_user/admin)
     # Get metadata: viewer blocked
-    resp = client.get(f"/api/datasets/{dataset_name}/metadata", headers=viewer_headers)
+    resp = client.get(f"/api/datasets/{dataset_name}", headers=viewer_headers)
     assert resp.status_code == 403
 
     # DS Get metadata
-    resp = client.get(f"/api/datasets/{dataset_name}/metadata", headers=ds_headers)
+    resp = client.get(f"/api/datasets/{dataset_name}", headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["dataset_name"] == dataset_name
 
     # Update metadata
     meta_payload = {"metadata": {"license": "MIT", "owner": "MLSecOps Team"}}
-    resp = client.put(f"/api/datasets/{dataset_name}/metadata", json=meta_payload, headers=ds_headers)
+    resp = client.put(f"/api/datasets/{dataset_name}", json=meta_payload, headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["db_metadata"]["license"] == "MIT"
 
@@ -377,13 +336,12 @@ def test_dataset_lifecycle(user_tokens):
     assert "Initial dataset commit" in commit_msgs
 
     # 12. Deletions: tag, branch, dataset
-    # Delete tag
-    resp = client.delete(f"/api/datasets/{dataset_name}/tags/release-v1.0", headers=ds_headers)
-    assert resp.status_code == 200
-
-    # Delete branch
-    resp = client.delete(f"/api/datasets/{dataset_name}/branches/experiment-v1", headers=ds_headers)
-    assert resp.status_code == 200
+    db = TestingSessionLocal()
+    try:
+        data_service.delete_tag(db, dataset_name, "release-v1.0", username="ds_user")
+        data_service.delete_branch(db, dataset_name, "experiment-v1", username="ds_user")
+    finally:
+        db.close()
 
     # Delete dataset (RBAC: admin/ds_user can)
     resp = client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)

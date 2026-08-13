@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 from typing import Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class DatasetResponse(BaseModel):
@@ -15,33 +15,13 @@ class DatasetResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DatasetCommitRequest(BaseModel):
     message: str
     metadata: Optional[dict[str, str]] = None
 
-
-class BranchCreateRequest(BaseModel):
-    name: str
-    source_branch: Optional[str] = "main"
-
-
-class BranchResponse(BaseModel):
-    name: str
-    head_commit_id: str
-
-
-class TagCreateRequest(BaseModel):
-    name: str
-    target_ref: str
-
-
-class TagResponse(BaseModel):
-    name: str
-    commit_id: str
 
 
 class CommitResponse(BaseModel):
@@ -67,3 +47,27 @@ class RollbackRequest(BaseModel):
 
 class MetadataUpdateRequest(BaseModel):
     metadata: dict[str, str]
+
+
+class FileUploadResponse(BaseModel):
+    message: str
+    path: str
+    branch: str
+    dataset: str
+
+
+class RollbackResponse(BaseModel):
+    message: str
+    new_commit_id: str
+    reverted_commit_id: str
+
+
+class DatasetMetadataResponse(BaseModel):
+    dataset_name: str
+    db_metadata: dict[str, Any]
+    lakefs_metadata: dict[str, Any]
+
+
+class DatasetMetadataUpdateResponse(BaseModel):
+    dataset_name: str
+    db_metadata: dict[str, Any]

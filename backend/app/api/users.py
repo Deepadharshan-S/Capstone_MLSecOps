@@ -8,7 +8,7 @@ from app.core.rate_limiter import RateLimiter
 from app.api.permissions import get_current_active_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import UserResponse, UserUpdateRole
+from app.schemas.user import UserResponse, UserUpdateRole, AuditLogResponse
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -33,7 +33,7 @@ def list_users(
     return user_service.get_all_users(db)
 
 
-@router.get("/audit-logs")
+@router.get("/audit-logs", response_model=list[AuditLogResponse])
 def list_audit_logs(
     db: Session = Depends(get_db),
     admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
