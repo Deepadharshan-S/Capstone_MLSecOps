@@ -301,12 +301,19 @@ def test_dataset_lifecycle(user_tokens):
     resp = client.get(f"/api/datasets/{dataset_name}", headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["dataset_name"] == dataset_name
+    assert resp.json()["lakefs_metadata"].get("description") == "A classification dataset for integration testing"
 
     # Update metadata
     meta_payload = {"metadata": {"license": "MIT", "owner": "MLSecOps Team"}}
     resp = client.put(f"/api/datasets/{dataset_name}", json=meta_payload, headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["db_metadata"]["license"] == "MIT"
+
+    # Get metadata again to verify lakeFS KV synchronization
+    resp = client.get(f"/api/datasets/{dataset_name}", headers=ds_headers)
+    assert resp.status_code == 200
+    assert resp.json()["lakefs_metadata"].get("license") == "MIT"
+    assert resp.json()["lakefs_metadata"].get("owner") == "MLSecOps Team"
 
     # 10. Rollback / Revert a commit (RBAC: ds_user/admin can, viewer cannot)
     # On experiment-v1 branch, revert the second commit
