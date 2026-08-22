@@ -44,7 +44,7 @@ class UserService:
                 detail="Admins cannot change their own roles.",
             )
 
-        user = db.query(User).filter(User.id == user_id).first()
+        user = self.get_user_by_id(db, user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

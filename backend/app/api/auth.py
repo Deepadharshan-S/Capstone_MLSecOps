@@ -7,7 +7,7 @@ from app.core.rate_limiter import RateLimiter
 
 from app.db.session import get_db
 from app.schemas.token import Token
-from app.schemas.user import UserCreate, UserResponse
+from app.schemas.user import UserCreate, UserResponse, MessageResponse
 from app.services.auth_service import auth_service
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -65,6 +65,7 @@ def refresh(
 
 @router.post(
     "/logout",
+    response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(RateLimiter(times=10, seconds=60))],
 )

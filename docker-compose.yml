@@ -1,0 +1,203 @@
+services:
+
+  # ==========================================================
+  # PostgreSQL
+  # ==========================================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: mlsecops-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - mlsecops-network
+
+
+  # ==========================================================
+  # MinIO
+  # ==========================================================
+
+  minio:
+    image: minio/minio:latest
+    container_name: mlsecops-minio
+    restart: unless-stopped
+
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+    volumes:
+      - minio_data:/data
+
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -f http://localhost:9000/minio/health/live || exit 1"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - mlsecops-network
+
+
+  # ==========================================================
+  # lakeFS
+  # ==========================================================
+
+  lakefs:
+    image: treeverse/lakefs:latest
+    container_name: mlsecops-lakefs
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      minio:
+        condition: service_healthy
+
+    ports:
+      - "8000:8000"
+
+    environment:
+
+      # ------------------------------------------------------
+      # Database
+      # ------------------------------------------------------
+
+      LAKEFS_DATABASE_TYPE: postgres
+
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: ${LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING}
+
+
+      # ------------------------------------------------------
+      # Blockstore
+      # ------------------------------------------------------
+
+      LAKEFS_BLOCKSTORE_TYPE: s3
+
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://minio:9000
+
+      LAKEFS_BLOCKSTORE_S3_PRE_SIGNED_ENDPOINT: http://localhost:9000
+
+      LAKEFS_BLOCKSTORE_S3_REGION: us-east-1
+
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+
+
+      # ------------------------------------------------------
+      # Authentication
+      # ------------------------------------------------------
+
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: ${LAKEFS_AUTH_ENCRYPT_SECRET_KEY}
+
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --spider -q http://localhost:8000/api/healthcheck || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      - mlsecops-network
+
+
+  # ==========================================================
+  # FastAPI Backend
+  # ==========================================================
+
+  # backend:
+  #   build:
+  #     context: .
+  #     dockerfile: backend/Dockerfile
+
+  #   container_name: mlsecops-backend
+  #   restart: unless-stopped
+
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+  #     lakefs:
+  #       condition: service_healthy
+
+  #   ports:
+  #     - "8080:8000"
+
+  #   environment:
+  #     - LAKEFS_ENDPOINT=http://lakefs:8000
+
+  #   env_file:
+  #     - .env
+
+  #   networks:
+  #     - mlsecops-network
+
+
+# ============================================================
+# Networks
+# ============================================================
+
+networks:
+  mlsecops-network:
+    name: mlsecops-network
+    driver: bridge
+
+
+# ============================================================
+# Volumes
+# ============================================================
+
+volumes:
+
+  postgres_data:
+    name: postgres_data
+
+  minio_data:
+    name: mlsecops_minio_data

@@ -21,9 +21,15 @@ env/
 # Environment Variables
 # ===================================
 
-# .env
-# .env.*
-# !.env.example
+.env
+.env.*
+!.env.example
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+backend/logs/
 
 # ===================================
 # Testing

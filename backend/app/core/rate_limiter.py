@@ -6,11 +6,13 @@ from collections import defaultdict
 from fastapi import Request, HTTPException, status
 from app.core.logging_config import log_audit_event
 
+
 class RateLimiter:
     """
     An in-memory, thread-safe sliding window rate limiter implemented as a FastAPI dependency.
     Bypasses rate limiting in testing environments by default unless force_enable=True.
     """
+
     def __init__(self, times: int, seconds: int = 60, force_enable: bool = False):
         self.times = times
         self.seconds = seconds
@@ -33,7 +35,9 @@ class RateLimiter:
 
         with self.lock:
             # Keep only the timestamps within the sliding window
-            self.requests[key] = [t for t in self.requests[key] if now - t < self.seconds]
+            self.requests[key] = [
+                t for t in self.requests[key] if now - t < self.seconds
+            ]
 
             if len(self.requests[key]) >= self.times:
                 # Log audit event for security monitoring
@@ -41,7 +45,7 @@ class RateLimiter:
                     action="rate_limit_exceeded",
                     username="anonymous",
                     ip_address=ip_address,
-                    details=f"Rate limit of {self.times} requests per {self.seconds} seconds exceeded on {path}."
+                    details=f"Rate limit of {self.times} requests per {self.seconds} seconds exceeded on {path}.",
                 )
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,

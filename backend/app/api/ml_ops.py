@@ -4,33 +4,23 @@ from app.core.rate_limiter import RateLimiter
 from app.api.permissions import get_current_active_user
 from app.models.user import User
 from app.schemas import (
-    DatasetUploadSchema,
     TrainModelSchema,
     DeployModelSchema,
     ManageDeploymentSchema,
+    TrainModelResponse,
+    ModelListResponse,
+    DeployModelResponse,
+    ManageDeploymentResponse,
 )
 from app.services.ml_ops_service import ml_ops_service
+from app.services.data_service import data_service
 
 router = APIRouter(prefix="", tags=["mlops"])
 
 
 @router.post(
-    "/datasets/upload",
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
-)
-def upload_dataset(
-    dataset: DatasetUploadSchema,
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
-):
-    """
-    Upload datasets. Accessible to Data Scientists and Admins.
-    """
-    return ml_ops_service.perform_dataset_upload(dataset.name, user)
-
-
-@router.post(
     "/models/train",
+    response_model=TrainModelResponse,
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(RateLimiter(times=2, seconds=60))],
 )
@@ -41,10 +31,12 @@ def train_model(
     """
     Start model training. Accessible to Data Scientists and Admins.
     """
-    return ml_ops_service.perform_model_training(train_info.dataset_id, train_info.epochs, user)
+    return ml_ops_service.perform_model_training(
+        train_info.dataset_id, train_info.epochs, user
+    )
 
 
-@router.get("/models")
+@router.get("/models", response_model=ModelListResponse)
 def view_models(
     user: User = Security(get_current_active_user, scopes=["models:view"]),
 ):
@@ -56,6 +48,7 @@ def view_models(
 
 @router.post(
     "/models/deploy",
+    response_model=DeployModelResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RateLimiter(times=2, seconds=60))],
 )
@@ -66,11 +59,14 @@ def deploy_model(
     """
     Deploy models. Accessible to ML Engineers and Admins.
     """
-    return ml_ops_service.perform_model_deploy(deploy_info.model_id, deploy_info.environment, user)
+    return ml_ops_service.perform_model_deploy(
+        deploy_info.model_id, deploy_info.environment, user
+    )
 
 
 @router.post(
     "/deployments/manage",
+    response_model=ManageDeploymentResponse,
     dependencies=[Depends(RateLimiter(times=10, seconds=60))],
 )
 def manage_deployment(
@@ -80,4 +76,6 @@ def manage_deployment(
     """
     Manage deployments. Accessible to ML Engineers and Admins.
     """
-    return ml_ops_service.perform_deployment_management(manage_info.deployment_id, manage_info.action, user)
+    return ml_ops_service.perform_deployment_management(
+        manage_info.deployment_id, manage_info.action, user
+    )
