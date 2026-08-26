@@ -328,7 +328,7 @@ class DataService:
             )
 
     def compare_dataset_versions(
-        self, db: Session, dataset_name: str, left_ref: str, right_ref: str
+        self, db: Session, dataset_name: str, left_ref: str, right_ref: str, compare_type: str = "three_dot"
     ) -> list[dict]:
         """
         Compares two references (e.g. branches or commit IDs) and returns a diff list.
@@ -342,7 +342,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            return lakefs_service.compare(sanitized_repo_name, left_ref, right_ref)
+            return lakefs_service.compare(sanitized_repo_name, left_ref, right_ref, compare_type)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

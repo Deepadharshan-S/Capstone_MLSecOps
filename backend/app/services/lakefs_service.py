@@ -107,13 +107,13 @@ class LakeFSService:
             )
         return commits
 
-    def compare(self, repo_name: str, left_ref: str, right_ref: str) -> list[dict]:
+    def compare(self, repo_name: str, left_ref: str, right_ref: str, compare_type: str = "three_dot") -> list[dict]:
         if not self.client:
             raise RuntimeError("lakeFS client is not initialized.")
         repo = lakefs.Repository(repo_name, client=self.client)
         ref = repo.ref(left_ref)
         changes = []
-        for change in ref.diff(other_ref=right_ref):
+        for change in ref.diff(other_ref=right_ref, type=compare_type):
             changes.append(
                 {
                     "type": change.type,

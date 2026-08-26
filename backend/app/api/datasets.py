@@ -8,6 +8,7 @@ from fastapi import (
     UploadFile,
     File,
     Form,
+    Query,
 )
 from fastapi.responses import StreamingResponse
 import io
@@ -199,13 +200,14 @@ def compare_dataset_versions(
     dataset_name: str,
     left_ref: str,
     right_ref: str,
+    type: str = Query("three_dot", pattern="^(three_dot|two_dot)$"),
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
 ):
     """
     Compares two references (branches, commits, tags).
     """
-    return data_service.compare_dataset_versions(db, dataset_name, left_ref, right_ref)
+    return data_service.compare_dataset_versions(db, dataset_name, left_ref, right_ref, type)
 
 
 @router.post("/{dataset_name}/rollback", response_model=RollbackResponse)
