@@ -179,6 +179,58 @@ services:
   #   networks:
   #     - mlsecops-network
 
+  # ==========================================================
+  # MLflow Tracking Server
+  # ==========================================================
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.15.1
+    container_name: mlsecops-mlflow
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - MLFLOW_S3_IGNORE_TLS=true
+    entrypoint: >
+      /bin/sh -c "
+      pip install --no-cache-dir psycopg2-binary boto3 cryptography &&
+      mlflow server
+      --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      --default-artifact-root s3://mlflow
+      --host 0.0.0.0
+      --port 5000
+      "
+    networks:
+      - mlsecops-network
+
+  # ==========================================================
+  # MinIO Bucket Creator Helper
+  # ==========================================================
+
+  createbuckets:
+    image: minio/mc:latest
+    container_name: mlsecops-minio-createbuckets
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc mb --ignore-existing myminio/lakefs;
+      /usr/bin/mc mb --ignore-existing myminio/mlflow;
+      exit 0;
+      "
+    networks:
+      - mlsecops-network
+
 
 # ============================================================
 # Networks
