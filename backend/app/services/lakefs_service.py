@@ -2,20 +2,38 @@ import lakefs
 import lakefs_sdk
 from typing import Optional, Any
 from app.core.config import settings
+from app.services.interfaces import VersionControlService
 
-class LakeFSService:
+class LakeFSService(VersionControlService):
     """
     Dedicated service handling low-level and high-level direct client interactions with the lakeFS API and SDK.
     """
     def __init__(self):
         try:
-            self.client = lakefs.Client(
+            self._client = lakefs.Client(
                 username=settings.LAKEFS_ACCESS_KEY_ID,
                 password=settings.LAKEFS_SECRET_ACCESS_KEY,
                 host=settings.LAKEFS_ENDPOINT,
             )
         except Exception:
-            self.client = None
+            self._client = None
+
+    @property
+    def client(self) -> Any:
+        return self._client
+
+    @client.setter
+    def client(self, value: Any) -> None:
+        self._client = value
+
+    def check_health(self) -> tuple[bool, str]:
+        if not self._client:
+            return False, "error: client not initialized"
+        try:
+            self._client.sdk_client.config_api.get_config()
+            return True, "connected"
+        except Exception as e:
+            return False, f"error: {str(e)}"
 
     def create_repository(self, repo_name: str, storage_ns: str, description: Optional[str] = None) -> None:
         if not self.client:
