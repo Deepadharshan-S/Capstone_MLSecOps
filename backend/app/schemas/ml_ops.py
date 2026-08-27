@@ -33,6 +33,9 @@ class ModelItem(BaseModel):
     id: str
     name: str
     accuracy: float
+    precision: Optional[float] = 0.0
+    recall: Optional[float] = 0.0
+    f1_score: Optional[float] = 0.0
     created_at: str
 
 

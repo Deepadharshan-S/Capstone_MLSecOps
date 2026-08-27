@@ -174,6 +174,9 @@ class MLOpsService:
                     env["AWS_SECRET_ACCESS_KEY"] = settings.MINIO_ROOT_PASSWORD
                     env["MLFLOW_S3_ENDPOINT_URL"] = settings.MINIO_ENDPOINT
                     env["MLFLOW_S3_IGNORE_TLS"] = "true"
+                    env["LAKEFS_ENDPOINT"] = settings.LAKEFS_ENDPOINT
+                    env["LAKEFS_ACCESS_KEY_ID"] = settings.LAKEFS_ACCESS_KEY_ID
+                    env["LAKEFS_SECRET_ACCESS_KEY"] = settings.LAKEFS_SECRET_ACCESS_KEY
                     subprocess.run(cmd, check=True, env=env)
                     log_audit_event(
                         "model_training_completed",
@@ -231,6 +234,11 @@ class MLOpsService:
             for rm in registered_models:
                 created_at_str = "unknown"
                 run_id = "unknown"
+                accuracy = 0.0
+                precision = 0.0
+                recall = 0.0
+                f1_score = 0.0
+                
                 if rm.latest_versions:
                     latest_v = rm.latest_versions[-1]
                     # creation_timestamp is in milliseconds since epoch
@@ -239,12 +247,25 @@ class MLOpsService:
                     )
                     created_at_str = dt.isoformat()
                     run_id = latest_v.run_id
+                    
+                    try:
+                        run = client.get_run(run_id)
+                        run_metrics = run.data.metrics
+                        accuracy = run_metrics.get("accuracy", 0.0)
+                        precision = run_metrics.get("precision", 0.0)
+                        recall = run_metrics.get("recall", 0.0)
+                        f1_score = run_metrics.get("f1_score", 0.0)
+                    except Exception as e:
+                        print(f"Error retrieving run metrics from MLflow: {str(e)}")
 
                 models_list.append(
                     {
                         "id": run_id,
                         "name": rm.name,
-                        "accuracy": 0.0,  # Just store model without metrics for now
+                        "accuracy": accuracy,
+                        "precision": precision,
+                        "recall": recall,
+                        "f1_score": f1_score,
                         "created_at": created_at_str,
                     }
                 )

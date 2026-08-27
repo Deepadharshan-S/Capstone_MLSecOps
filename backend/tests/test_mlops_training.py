@@ -92,17 +92,38 @@ class MyTrainer:
     model_name = f"{dataset_name}-model"
 
     # Poll /api/models for up to 180 seconds (120 attempts with 1.5s sleep)
+    registered_model = None
     for _ in range(120):
         time.sleep(1.5)
         resp_models = client.get("/api/models", headers=ds_headers)
         assert resp_models.status_code == 200
         models = resp_models.json()["models"]
-        names = [m["name"] for m in models]
-        if model_name in names:
-            model_registered = True
+        for m in models:
+            if m["name"] == model_name:
+                registered_model = m
+                break
+        if registered_model:
             break
 
-
     assert (
-        model_registered
+        registered_model is not None
     ), f"Model '{model_name}' was not registered in MLflow registry within the timeout."
+
+    # Assert metrics exist and are valid non-negative floats
+    assert "accuracy" in registered_model
+    assert "precision" in registered_model
+    assert "recall" in registered_model
+    assert "f1_score" in registered_model
+
+    assert isinstance(registered_model["accuracy"], float)
+    assert isinstance(registered_model["precision"], float)
+    assert isinstance(registered_model["recall"], float)
+    assert isinstance(registered_model["f1_score"], float)
+
+    # In our dummy training test dataset: 
+    # y = [0, 1] (two label samples). A trained model will output some prediction,
+    # so metrics should be mathematically computed and >= 0.0.
+    assert registered_model["accuracy"] >= 0.0
+    assert registered_model["precision"] >= 0.0
+    assert registered_model["recall"] >= 0.0
+    assert registered_model["f1_score"] >= 0.0

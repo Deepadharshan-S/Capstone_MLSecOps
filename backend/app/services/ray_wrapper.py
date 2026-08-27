@@ -66,11 +66,59 @@ def download_dataset(repo_name: str, ref_id: str, dest_dir: str) -> str:
     return downloaded_files[0]
 
 
+def calculate_metrics(model, data_path) -> dict:
+    """Calculates evaluation metrics (accuracy, precision, recall, f1_score) for the model."""
+    import os
+    import pandas as pd
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+    metrics = {}
+    try:
+        if not os.path.exists(data_path):
+            print(f"Data path {data_path} does not exist. Skipping metrics.")
+            return metrics
+
+        df = pd.read_csv(data_path)
+        if df.empty:
+            print("Dataframe is empty. Skipping metrics.")
+            return metrics
+
+        target_col = None
+        for col in ["label", "target"]:
+            if col in df.columns:
+                target_col = col
+                break
+        if target_col is None:
+            target_col = df.columns[-1]
+
+        y = df[target_col]
+        
+        # Determine features X
+        if hasattr(model, "feature_names_in_"):
+            X = df[model.feature_names_in_]
+        else:
+            X = df.drop(columns=[target_col])
+
+        y_pred = model.predict(X)
+
+        # Classification metrics
+        metrics["accuracy"] = float(accuracy_score(y, y_pred))
+        metrics["precision"] = float(precision_score(y, y_pred, average="weighted", zero_division=0))
+        metrics["recall"] = float(recall_score(y, y_pred, average="weighted", zero_division=0))
+        metrics["f1_score"] = float(f1_score(y, y_pred, average="weighted", zero_division=0))
+        
+        print(f"Calculated metrics: {metrics}")
+    except Exception as e:
+        print(f"Error calculating metrics on the Ray side: {str(e)}")
+    return metrics
+
+
 def execute_training_task(trainer_class, data_path, epochs, hyperparameters):
     """Ray task executing the train function from the user's class."""
     trainer_instance = trainer_class()
     model = trainer_instance.train(data_path, epochs, **hyperparameters)
     return model
+
 
 
 def main():
@@ -159,6 +207,13 @@ def main():
                 registered_model_name=args.output_model_name,
                 pip_requirements=["mlflow", "scikit-learn", "pandas", "cloudpickle"]
             )
+            
+            # Calculate and log metrics
+            print("Calculating evaluation metrics on the Ray side...")
+            metrics = calculate_metrics(model, data_path)
+            for name, val in metrics.items():
+                print(f"Logging metric to MLflow: {name}={val}")
+                mlflow.log_metric(name, val)
         print(f"Model successfully registered under name '{args.output_model_name}' in MLflow.")
     except Exception as e:
         print(f"Error registering model in MLflow: {str(e)}")
