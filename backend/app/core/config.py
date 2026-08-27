@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "MLSecOps"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
-    HOST: str = "0.0.0.0"
+    HOST: str = "127.0.0.1"
     PORT: int = 8000
 
     # Postgres config (used to assemble DATABASE_URL if not provided)
@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str = "http://localhost:9000"
     MINIO_ROOT_USER: str = "minioadmin"
     MINIO_ROOT_PASSWORD: str = "minioadmin123"
+
+    # MLflow config
+    MLFLOW_TRACKING_URI: str = "http://localhost:5000"
 
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
@@ -62,7 +65,7 @@ class Settings(BaseSettings):
         return self
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=("../.env", ".env"),
         extra="ignore",
     )
 

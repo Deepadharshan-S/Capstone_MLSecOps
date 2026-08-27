@@ -8,6 +8,7 @@ from fastapi import (
     UploadFile,
     File,
     Form,
+    Query,
 )
 from fastapi.responses import StreamingResponse
 import io
@@ -17,7 +18,6 @@ from app.core.rate_limiter import RateLimiter
 from app.api.permissions import get_current_active_user
 from app.db.session import get_db
 from app.models.user import User
-from app.models.dataset import Dataset
 from app.schemas import (
     DatasetResponse,
     DatasetCommitRequest,
@@ -31,7 +31,8 @@ from app.schemas import (
     DatasetMetadataUpdateResponse,
     MessageResponse,
 )
-from app.services.data_service import data_service
+from app.services.dependencies import get_data_service
+from app.services.data_service import DataService
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -48,6 +49,7 @@ async def register_dataset(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Registers a new dataset (creates database record and lakeFS repository) and uploads the dataset file.
@@ -84,6 +86,7 @@ async def register_dataset(
 def list_datasets(
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Lists all registered datasets.
@@ -96,6 +99,7 @@ def delete_dataset(
     dataset_name: str,
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Deletes a dataset (lakeFS repository and DB registration).
@@ -114,6 +118,7 @@ async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Uploads a file to the lakeFS repository.
@@ -142,6 +147,7 @@ def download_file(
     ref: Optional[str] = "main",
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Downloads/retrieves a file stream from a reference (branch/commit/tag).
@@ -166,6 +172,7 @@ def commit_changes(
     branch: Optional[str] = "main",
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Commits changes on a branch.
@@ -187,6 +194,7 @@ def view_commit_history(
     limit: Optional[int] = None,
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Views commit history starting from a reference.
@@ -199,13 +207,15 @@ def compare_dataset_versions(
     dataset_name: str,
     left_ref: str,
     right_ref: str,
+    type: str = Query("three_dot", pattern="^(three_dot|two_dot)$"),
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Compares two references (branches, commits, tags).
     """
-    return data_service.compare_dataset_versions(db, dataset_name, left_ref, right_ref)
+    return data_service.compare_dataset_versions(db, dataset_name, left_ref, right_ref, type)
 
 
 @router.post("/{dataset_name}/rollback", response_model=RollbackResponse)
@@ -214,6 +224,7 @@ def rollback_changes(
     req: RollbackRequest,
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Reverts a commit on a branch.
@@ -232,6 +243,7 @@ def get_dataset_metadata(
     dataset_name: str,
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Retrieves metadata from both database and lakeFS.
@@ -245,6 +257,7 @@ def update_dataset_metadata(
     req: MetadataUpdateRequest,
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
 ):
     """
     Updates the dataset metadata in Postgres database.

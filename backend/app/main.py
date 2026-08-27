@@ -9,6 +9,8 @@ from app.db.session import get_db
 from app.api import auth, users, ml_ops
 from app.middleware import SecurityHeadersMiddleware
 from app.api import datasets
+from app.services.interfaces import VersionControlService
+from app.services.dependencies import get_version_control_service
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -42,9 +44,11 @@ def root():
 
 
 @app.get("/health")
-def health(db: Session = Depends(get_db)):
+def health(
+    db: Session = Depends(get_db),
+    version_control_service: VersionControlService = Depends(get_version_control_service),
+):
     db_status = "connected"
-    lakefs_status = "connected"
     
     # 1. Database check
     try:
@@ -53,16 +57,9 @@ def health(db: Session = Depends(get_db)):
         db_status = f"error: {str(e)}"
         
     # 2. lakeFS check
-    try:
-        from app.services.data_service import data_service
-        if data_service.client:
-            _ = data_service.client.sdk_client.config_api.get_config()
-        else:
-            lakefs_status = "error: client not initialized"
-    except Exception as e:
-        lakefs_status = f"error: {str(e)}"
+    is_lakefs_healthy, lakefs_status = version_control_service.check_health()
         
-    is_healthy = db_status == "connected" and lakefs_status == "connected"
+    is_healthy = db_status == "connected" and is_lakefs_healthy
     status_code = 200 if is_healthy else 503
     
     return JSONResponse(

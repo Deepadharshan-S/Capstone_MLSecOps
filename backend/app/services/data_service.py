@@ -1,6 +1,4 @@
 import re
-import boto3
-from botocore.client import Config
 from typing import Optional, Any
 from uuid import UUID
 from fastapi import HTTPException, status
@@ -10,23 +8,40 @@ from app.core.config import settings
 from app.models.user import User
 from app.models.dataset import Dataset
 from app.core.logging_config import log_audit_event
-from app.services.lakefs_service import lakefs_service
+from app.services.interfaces import VersionControlService, ObjectStorageService
 
 
 class DataService:
     """
     Service class managing dataset and versioning orchestration by coordinating
-    relational database metadata operations and delegating lakeFS tasks to LakeFSService.
+    relational database metadata operations and delegating lakeFS tasks to VersionControlService.
     """
+
+    def __init__(
+        self,
+        version_control_service: Optional[VersionControlService] = None,
+        storage_service: Optional[ObjectStorageService] = None,
+    ):
+        if version_control_service is None:
+            from app.services.lakefs_service import lakefs_service
+            self.version_control_service = lakefs_service
+        else:
+            self.version_control_service = version_control_service
+
+        if storage_service is None:
+            from app.services.s3_storage_service import S3StorageService
+            self.storage_service = S3StorageService()
+        else:
+            self.storage_service = storage_service
 
     @property
     def client(self):
         """Property for backward compatibility with external checks."""
-        return lakefs_service.client
+        return self.version_control_service.client
 
     @client.setter
     def client(self, value):
-        lakefs_service.client = value
+        self.version_control_service.client = value
 
     def _get_repo_name(self, name: str) -> str:
         """Sanitizes a dataset name to make it a valid lakeFS repository name."""
@@ -67,7 +82,7 @@ class DataService:
         repo_created = False
         try:
             # Create repo and initialize description metadata in lakeFS
-            lakefs_service.create_repository(sanitized_repo_name, storage_ns, description)
+            self.version_control_service.create_repository(sanitized_repo_name, storage_ns, description)
             repo_created = True
         except Exception as e:
             log_audit_event(
@@ -104,7 +119,7 @@ class DataService:
             db.rollback()
             if repo_created:
                 try:
-                    lakefs_service.delete_repository(sanitized_repo_name)
+                    self.version_control_service.delete_repository(sanitized_repo_name)
                 except Exception as cleanup_err:
                     log_audit_event(
                         "dataset_registration_cleanup_error",
@@ -144,7 +159,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            lakefs_service.upload_file(sanitized_repo_name, branch_name, file_path, content)
+            self.version_control_service.upload_file(sanitized_repo_name, branch_name, file_path, content)
             log_audit_event(
                 "dataset_file_upload",
                 username,
@@ -190,7 +205,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            res = lakefs_service.commit(sanitized_repo_name, branch_name, message, metadata)
+            res = self.version_control_service.commit(sanitized_repo_name, branch_name, message, metadata)
             log_audit_event(
                 "dataset_commit",
                 username,
@@ -230,7 +245,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            head_commit_id = lakefs_service.create_branch(sanitized_repo_name, branch_name, source_branch)
+            head_commit_id = self.version_control_service.create_branch(sanitized_repo_name, branch_name, source_branch)
             log_audit_event(
                 "dataset_branch_create",
                 username,
@@ -263,7 +278,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            return lakefs_service.list_branches(sanitized_repo_name)
+            return self.version_control_service.list_branches(sanitized_repo_name)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -285,7 +300,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            lakefs_service.delete_branch(sanitized_repo_name, branch_name)
+            self.version_control_service.delete_branch(sanitized_repo_name, branch_name)
             log_audit_event(
                 "dataset_branch_delete",
                 username,
@@ -320,7 +335,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            return lakefs_service.list_commits(sanitized_repo_name, ref_id, limit)
+            return self.version_control_service.list_commits(sanitized_repo_name, ref_id, limit)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -328,7 +343,7 @@ class DataService:
             )
 
     def compare_dataset_versions(
-        self, db: Session, dataset_name: str, left_ref: str, right_ref: str
+        self, db: Session, dataset_name: str, left_ref: str, right_ref: str, compare_type: str = "three_dot"
     ) -> list[dict]:
         """
         Compares two references (e.g. branches or commit IDs) and returns a diff list.
@@ -342,7 +357,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            return lakefs_service.compare(sanitized_repo_name, left_ref, right_ref)
+            return self.version_control_service.compare(sanitized_repo_name, left_ref, right_ref, compare_type)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -369,7 +384,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            res = lakefs_service.rollback(sanitized_repo_name, branch_name, commit_id)
+            res = self.version_control_service.rollback(sanitized_repo_name, branch_name, commit_id)
             log_audit_event(
                 "dataset_rollback",
                 username,
@@ -413,7 +428,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            commit_id = lakefs_service.create_tag(sanitized_repo_name, tag_name, target_ref)
+            commit_id = self.version_control_service.create_tag(sanitized_repo_name, tag_name, target_ref)
             log_audit_event(
                 "dataset_tag_create",
                 username,
@@ -446,7 +461,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            return lakefs_service.list_tags(sanitized_repo_name)
+            return self.version_control_service.list_tags(sanitized_repo_name)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -468,7 +483,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            lakefs_service.delete_tag(sanitized_repo_name, tag_name)
+            self.version_control_service.delete_tag(sanitized_repo_name, tag_name)
             log_audit_event(
                 "dataset_tag_delete",
                 username,
@@ -500,7 +515,7 @@ class DataService:
             )
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
-        lakefs_meta = lakefs_service.get_repository_metadata(sanitized_repo_name)
+        lakefs_meta = self.version_control_service.get_repository_metadata(sanitized_repo_name)
 
         return {
             "dataset_name": dataset_name,
@@ -523,14 +538,14 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         # Fetch previous metadata from lakeFS in case we need to roll it back
-        previous_lakefs_meta = lakefs_service.get_repository_metadata(sanitized_repo_name)
+        previous_lakefs_meta = self.version_control_service.get_repository_metadata(sanitized_repo_name)
 
         try:
             dataset.metadata_info = metadata
             db.add(dataset)
 
             # Synchronize metadata update to lakeFS repository KV store
-            lakefs_service.set_repository_metadata(sanitized_repo_name, metadata)
+            self.version_control_service.set_repository_metadata(sanitized_repo_name, metadata)
 
             db.commit()
             db.refresh(dataset)
@@ -545,7 +560,7 @@ class DataService:
             db.rollback()
             # Revert lakeFS metadata to previous state
             try:
-                lakefs_service.set_repository_metadata(sanitized_repo_name, previous_lakefs_meta)
+                self.version_control_service.set_repository_metadata(sanitized_repo_name, previous_lakefs_meta)
             except Exception as revert_err:
                 log_audit_event(
                     "dataset_metadata_revert_error",
@@ -579,17 +594,7 @@ class DataService:
 
         # 1. Delete matching objects under the repository prefix in MinIO
         try:
-            s3 = boto3.resource(
-                "s3",
-                endpoint_url=settings.MINIO_ENDPOINT,
-                aws_access_key_id=settings.MINIO_ROOT_USER,
-                aws_secret_access_key=settings.MINIO_ROOT_PASSWORD,
-                config=Config(signature_version="s3v4"),
-                region_name="us-east-1",
-            )
-            bucket = s3.Bucket("lakefs")
-            prefix = f"{sanitized_repo_name}/"
-            bucket.objects.filter(Prefix=prefix).delete()
+            self.storage_service.delete_objects_with_prefix("lakefs", f"{sanitized_repo_name}/")
         except Exception as e:
             log_audit_event(
                 "dataset_delete_warning",
@@ -600,7 +605,7 @@ class DataService:
 
         # 2. Delete lakeFS repository
         try:
-            lakefs_service.delete_repository(sanitized_repo_name)
+            self.version_control_service.delete_repository(sanitized_repo_name)
         except Exception as e:
             # Log warning but proceed with DB deletion to avoid orphan records if repository was manually removed
             log_audit_event(
@@ -649,7 +654,7 @@ class DataService:
 
         sanitized_repo_name = self._get_repo_name(dataset_name)
         try:
-            return lakefs_service.download_file(sanitized_repo_name, ref_id, file_path)
+            return self.version_control_service.download_file(sanitized_repo_name, ref_id, file_path)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

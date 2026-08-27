@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -282,8 +283,9 @@ def test_rbac_permissions_matrix():
     viewer_headers = get_user_headers("viewer_user", "ViewerPassword123!")
 
     # 1. Dataset Upload (Admin and Data Scientist only)
-    dataset_payload_admin = {"name": "Iris Dataset Admin", "description": "Classification dataset"}
-    dataset_payload_ds = {"name": "Iris Dataset DS", "description": "Classification dataset"}
+    suffix = uuid.uuid4().hex[:8]
+    dataset_payload_admin = {"name": f"test-dataset-admin-{suffix}", "description": "Classification dataset"}
+    dataset_payload_ds = {"name": f"test-dataset-ds-{suffix}", "description": "Classification dataset"}
     
     assert client.post("/api/datasets", data=dataset_payload_admin, files={"file": ("data.csv", b"content")}, headers=admin_headers).status_code == 201
     assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=ds_headers).status_code == 201
@@ -358,7 +360,7 @@ def test_admin_user_management():
     # 6. Verify the updated user now has Data Scientist permissions (can upload datasets)
     # Login again to get new token reflecting the new role
     new_headers = get_user_headers("viewer_user", "ViewerPassword123!")
-    dataset_payload = {"name": "Iris Dataset 2", "description": "Classification dataset 2"}
+    dataset_payload = {"name": f"test-dataset-2-{uuid.uuid4().hex[:8]}", "description": "Classification dataset 2"}
     assert client.post("/api/datasets", data=dataset_payload, files={"file": ("data.csv", b"content")}, headers=new_headers).status_code == 201
 
 

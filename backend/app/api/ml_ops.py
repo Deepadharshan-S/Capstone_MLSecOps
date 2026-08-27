@@ -12,8 +12,8 @@ from app.schemas import (
     DeployModelResponse,
     ManageDeploymentResponse,
 )
-from app.services.ml_ops_service import ml_ops_service
-from app.services.data_service import data_service
+from app.services.dependencies import get_ml_ops_service
+from app.services.ml_ops_service import MLOpsService
 
 router = APIRouter(prefix="", tags=["mlops"])
 
@@ -27,18 +27,25 @@ router = APIRouter(prefix="", tags=["mlops"])
 def train_model(
     train_info: TrainModelSchema,
     user: User = Security(get_current_active_user, scopes=["models:train"]),
+    ml_ops_service: MLOpsService = Depends(get_ml_ops_service),
 ):
     """
     Start model training. Accessible to Data Scientists and Admins.
     """
     return ml_ops_service.perform_model_training(
-        train_info.dataset_id, train_info.epochs, user
+        dataset_id=train_info.dataset_id,
+        ref=train_info.ref,
+        epochs=train_info.epochs,
+        hyperparameters=train_info.hyperparameters,
+        code=train_info.code,
+        user=user,
     )
 
 
 @router.get("/models", response_model=ModelListResponse)
 def view_models(
     user: User = Security(get_current_active_user, scopes=["models:view"]),
+    ml_ops_service: MLOpsService = Depends(get_ml_ops_service),
 ):
     """
     View models. Accessible to all roles (Viewer, ML Engineer, Data Scientist, Admin).
@@ -55,6 +62,7 @@ def view_models(
 def deploy_model(
     deploy_info: DeployModelSchema,
     user: User = Security(get_current_active_user, scopes=["models:deploy"]),
+    ml_ops_service: MLOpsService = Depends(get_ml_ops_service),
 ):
     """
     Deploy models. Accessible to ML Engineers and Admins.
@@ -72,6 +80,7 @@ def deploy_model(
 def manage_deployment(
     manage_info: ManageDeploymentSchema,
     user: User = Security(get_current_active_user, scopes=["deployments:manage"]),
+    ml_ops_service: MLOpsService = Depends(get_ml_ops_service),
 ):
     """
     Manage deployments. Accessible to ML Engineers and Admins.

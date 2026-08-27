@@ -8,7 +8,8 @@ from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db
 from app.schemas.token import Token
 from app.schemas.user import UserCreate, UserResponse, MessageResponse
-from app.services.auth_service import auth_service
+from app.services.dependencies import get_auth_service
+from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -19,7 +20,12 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
-def register(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
+def register(
+    user_in: UserCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+):
     """
     Registers a new user after enforcing the password complexity policy.
     """
@@ -37,6 +43,7 @@ def login(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Authenticates user, handles brute-force lockout, and issues access/refresh tokens.
@@ -54,6 +61,7 @@ def refresh(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Refreshes access and refresh tokens using Refresh Token Rotation (RTR).
@@ -73,6 +81,7 @@ def logout(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Logs out the user by revoking the refresh token, blacklisting the access token, and clearing the cookie.

@@ -2,20 +2,38 @@ import lakefs
 import lakefs_sdk
 from typing import Optional, Any
 from app.core.config import settings
+from app.services.interfaces import VersionControlService
 
-class LakeFSService:
+class LakeFSService(VersionControlService):
     """
     Dedicated service handling low-level and high-level direct client interactions with the lakeFS API and SDK.
     """
     def __init__(self):
         try:
-            self.client = lakefs.Client(
+            self._client = lakefs.Client(
                 username=settings.LAKEFS_ACCESS_KEY_ID,
                 password=settings.LAKEFS_SECRET_ACCESS_KEY,
                 host=settings.LAKEFS_ENDPOINT,
             )
         except Exception:
-            self.client = None
+            self._client = None
+
+    @property
+    def client(self) -> Any:
+        return self._client
+
+    @client.setter
+    def client(self, value: Any) -> None:
+        self._client = value
+
+    def check_health(self) -> tuple[bool, str]:
+        if not self._client:
+            return False, "error: client not initialized"
+        try:
+            self._client.sdk_client.config_api.get_config()
+            return True, "connected"
+        except Exception as e:
+            return False, f"error: {str(e)}"
 
     def create_repository(self, repo_name: str, storage_ns: str, description: Optional[str] = None) -> None:
         if not self.client:
@@ -107,13 +125,13 @@ class LakeFSService:
             )
         return commits
 
-    def compare(self, repo_name: str, left_ref: str, right_ref: str) -> list[dict]:
+    def compare(self, repo_name: str, left_ref: str, right_ref: str, compare_type: str = "three_dot") -> list[dict]:
         if not self.client:
             raise RuntimeError("lakeFS client is not initialized.")
         repo = lakefs.Repository(repo_name, client=self.client)
         ref = repo.ref(left_ref)
         changes = []
-        for change in ref.diff(other_ref=right_ref):
+        for change in ref.diff(other_ref=right_ref, type=compare_type):
             changes.append(
                 {
                     "type": change.type,

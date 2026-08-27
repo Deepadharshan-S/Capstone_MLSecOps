@@ -373,3 +373,107 @@ def test_dataset_lifecycle(user_tokens):
     assert "dataset_branch_delete" in actions
     assert "dataset_tag_delete" in actions
     assert "dataset_delete" in actions
+
+
+def test_dataset_compare_types(user_tokens):
+    dataset_name = f"test-compare-{uuid.uuid4().hex[:8]}"
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    admin_headers = {"Authorization": f"Bearer {user_tokens['admin_user']}"}
+
+    # 1. Register dataset
+    reg_payload = {
+        "name": dataset_name,
+        "description": "Dataset to test comparison modes"
+    }
+    dummy_file = ("data.csv", b"col1,col2\n1,2")
+    resp = client.post("/api/datasets", data=reg_payload, files={"file": dummy_file}, headers=ds_headers)
+    assert resp.status_code == 201
+
+    # Commit initial state
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/commit?branch=main",
+        json={"message": "Initial commit"},
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    commit1_id = resp.json()["id"]
+
+    # 2. Upload second file and commit
+    new_file_content = b"col1,col2\n3,4"
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/upload?branch=main",
+        files={"file": ("new_data.csv", new_file_content)},
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/commit?branch=main",
+        json={"message": "Second commit adding new_data.csv"},
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    commit2_id = resp.json()["id"]
+
+    # 3. Test comparing: left_ref=commit2 (newer), right_ref=commit1 (older)
+    # Default (three_dot) should be empty
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref={commit2_id}&right_ref={commit1_id}",
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # Explicit three_dot should be empty
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref={commit2_id}&right_ref={commit1_id}&type=three_dot",
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # two_dot should detect the removal of new_data.csv going back in time
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref={commit2_id}&right_ref={commit1_id}&type=two_dot",
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    changes = resp.json()
+    assert len(changes) == 1
+    assert changes[0]["path"] == "new_data.csv"
+    assert changes[0]["type"] == "removed"
+
+    # 4. Test comparing: left_ref=commit1 (older), right_ref=commit2 (newer)
+    # Default (three_dot) should show added
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref={commit1_id}&right_ref={commit2_id}",
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    changes = resp.json()
+    assert len(changes) == 1
+    assert changes[0]["path"] == "new_data.csv"
+    assert changes[0]["type"] == "added"
+
+    # two_dot should show added
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref={commit1_id}&right_ref={commit2_id}&type=two_dot",
+        headers=ds_headers
+    )
+    assert resp.status_code == 200
+    changes = resp.json()
+    assert len(changes) == 1
+    assert changes[0]["path"] == "new_data.csv"
+    assert changes[0]["type"] == "added"
+
+    # 5. Invalid type should return 422 (validation error)
+    resp = client.get(
+        f"/api/datasets/{dataset_name}/compare?left_ref={commit1_id}&right_ref={commit2_id}&type=invalid_type",
+        headers=ds_headers
+    )
+    assert resp.status_code == 422
+
+    # Clean up dataset
+    resp = client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)
+    assert resp.status_code == 200
+

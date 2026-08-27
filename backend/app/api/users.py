@@ -9,7 +9,8 @@ from app.api.permissions import get_current_active_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserResponse, UserUpdateRole, AuditLogResponse
-from app.services.user_service import user_service
+from app.services.dependencies import get_user_service
+from app.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -26,6 +27,7 @@ def read_user_me(current_user: Annotated[User, Depends(get_current_active_user)]
 def list_users(
     db: Session = Depends(get_db),
     admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
+    user_service: UserService = Depends(get_user_service),
 ):
     """
     Lists all registered users in the system. Admin-only.
@@ -37,6 +39,7 @@ def list_users(
 def list_audit_logs(
     db: Session = Depends(get_db),
     admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
+    user_service: UserService = Depends(get_user_service),
 ):
     """
     Lists all security audit logs. Admin-only.
@@ -55,6 +58,7 @@ def update_user_role(
     request: Request,
     db: Session = Depends(get_db),
     admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
+    user_service: UserService = Depends(get_user_service),
 ):
     """
     Updates the role of a user. Admin-only. Enforces audit logging of role updates.
