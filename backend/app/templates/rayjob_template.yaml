@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rayjob-code-{{job_id}}
+  namespace: default
+data:
+  user_code.py: |
+{{user_code_content_indented}}
+  ray_wrapper.py: |
+{{ray_wrapper_content_indented}}
+  entrypoint.sh: |
+    #!/bin/bash
+    set -e
+    python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --epochs {{epochs}} --hyperparameters '{{hyperparameters}}' --code_file /app/user_code/user_code.py --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}
+---
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: rayjob-{{job_id}}
+  namespace: default
+spec:
+  entrypoint: bash /app/user_code/entrypoint.sh
+  rayClusterSpec:
+    rayVersion: '2.57.0'
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: '0.0.0.0'
+        memory: '268435456'
+        object-store-memory: '83886080'
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: mlsecops-ray:latest
+              imagePullPolicy: IfNotPresent
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: "2.8Gi"
+                requests:
+                  cpu: "500m"
+                  memory: "512Mi"
+              livenessProbe:
+                exec:
+                  command:
+                    - bash
+                    - -c
+                    - wget -T 2 -q -O- http://localhost:52365/api/local_raylet_healthz | grep success && wget -T 2 -q -O- http://localhost:8265/api/gcs_healthz | grep success
+                initialDelaySeconds: 30
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 120
+              readinessProbe:
+                exec:
+                  command:
+                    - bash
+                    - -c
+                    - wget -T 2 -q -O- http://localhost:52365/api/local_raylet_healthz | grep success && wget -T 2 -q -O- http://localhost:8265/api/gcs_healthz | grep success
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 10
+              env:
+                - name: MLFLOW_TRACKING_URI
+                  value: "{{mlflow_tracking_uri}}"
+                - name: MLFLOW_S3_ENDPOINT_URL
+                  value: "{{mlflow_s3_endpoint_url}}"
+                - name: AWS_ACCESS_KEY_ID
+                  value: "{{aws_access_key_id}}"
+                - name: AWS_SECRET_ACCESS_KEY
+                  value: "{{aws_secret_access_key}}"
+                - name: MLFLOW_S3_IGNORE_TLS
+                  value: "{{mlflow_s3_ignore_tls}}"
+                - name: LAKEFS_ENDPOINT
+                  value: "{{lakefs_endpoint}}"
+                - name: LAKEFS_ACCESS_KEY_ID
+                  value: "{{lakefs_access_key_id}}"
+                - name: LAKEFS_SECRET_ACCESS_KEY
+                  value: "{{lakefs_secret_access_key}}"
+                - name: LAKEFS_DEFAULT_BRANCH
+                  value: "{{lakefs_default_branch}}"
+                - name: MINIO_ENDPOINT
+                  value: "{{minio_endpoint}}"
+              volumeMounts:
+                - name: workspace-volume
+                  mountPath: /app/workspace
+                - name: code-volume
+                  mountPath: /app/user_code
+          volumes:
+            - name: workspace-volume
+              hostPath:
+                path: {{project_root}}
+            - name: code-volume
+              configMap:
+                name: rayjob-code-{{job_id}}
