@@ -1,10 +1,13 @@
 from pydantic import BaseModel
+from typing import Optional
 
 
 class TrainModelSchema(BaseModel):
     dataset_id: str
+    ref: str = "main"  # The committed dataset version (branch, commit ID, or tag)
     epochs: int = 10
     hyperparameters: dict = {}
+    code: str = ""  # The custom python code containing the training class
 
 
 class DeployModelSchema(BaseModel):
@@ -19,6 +22,7 @@ class ManageDeploymentSchema(BaseModel):
 
 class TrainModelResponse(BaseModel):
     message: str
+    job_id: str
     dataset_id: str
     epochs: int
     started_by: str
