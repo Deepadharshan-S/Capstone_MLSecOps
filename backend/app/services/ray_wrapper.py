@@ -66,7 +66,7 @@ def download_dataset(repo_name: str, ref_id: str, dest_dir: str) -> str:
     return downloaded_files[0]
 
 
-def calculate_metrics(model, data_path) -> dict:
+def calculate_metrics(model, data_path, target_col=None) -> dict:
     """Calculates evaluation metrics (accuracy, precision, recall, f1_score) for the model."""
     import os
     import pandas as pd
@@ -78,18 +78,26 @@ def calculate_metrics(model, data_path) -> dict:
             print(f"Data path {data_path} does not exist. Skipping metrics.")
             return metrics
 
+        # Load dataframe as CSV format
+        ext = os.path.splitext(data_path.lower())[1]
+        if ext != ".csv":
+            raise ValueError(f"Dataset file must be a CSV file. Found extension: {ext}")
+
         df = pd.read_csv(data_path)
         if df.empty:
             print("Dataframe is empty. Skipping metrics.")
             return metrics
 
-        target_col = None
-        for col in ["label", "target"]:
-            if col in df.columns:
-                target_col = col
-                break
         if target_col is None:
-            target_col = df.columns[-1]
+            for col in ["label", "target"]:
+                if col in df.columns:
+                    target_col = col
+                    break
+            if target_col is None:
+                target_col = df.columns[-1]
+
+        if target_col not in df.columns:
+            raise ValueError(f"Target column '{target_col}' not found in dataset columns: {list(df.columns)}")
 
         y = df[target_col]
         
@@ -110,6 +118,7 @@ def calculate_metrics(model, data_path) -> dict:
         print(f"Calculated metrics: {metrics}")
     except Exception as e:
         print(f"Error calculating metrics on the Ray side: {str(e)}")
+        raise
     return metrics
 
 
@@ -120,6 +129,92 @@ def execute_training_task(trainer_class, data_path, epochs, hyperparameters):
     return model
 
 
+def execute_pipeline_task(data_path, target_column, model_type, hyperparameters):
+    """Executes generic preprocessing and trains an sklearn estimator on the data."""
+    import pandas as pd
+    from sklearn.compose import ColumnTransformer
+    from sklearn.pipeline import Pipeline
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import StandardScaler, OneHotEncoder
+    
+    # Supported sklearn model estimators
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.svm import SVC
+
+    estimators = {
+        "logistic_regression": LogisticRegression,
+        "random_forest": RandomForestClassifier,
+        "decision_tree": DecisionTreeClassifier,
+        "gradient_boosting": GradientBoostingClassifier,
+        "svm": SVC,
+    }
+
+    if model_type not in estimators:
+        raise ValueError(
+            f"Unsupported model type: {model_type}. Supported types: {list(estimators.keys())}"
+        )
+
+    # Load data
+    df = pd.read_csv(data_path)
+    if target_column not in df.columns:
+        raise ValueError(f"Target column '{target_column}' not found in dataset columns: {list(df.columns)}")
+
+    X = df.drop(columns=[target_column])
+    y = df[target_column]
+
+    # Automatic column typing
+    numeric_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
+    categorical_cols = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+
+    # Preprocessing pipelines
+    numeric_transformer = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+
+    categorical_transformer = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numeric_cols),
+            ("cat", categorical_transformer, categorical_cols),
+        ]
+    )
+
+    # Initialize model estimator
+    estimator_class = estimators[model_type]
+    
+    # Instantiate with user hyperparameters if provided, otherwise default
+    try:
+        model_instance = estimator_class(**hyperparameters)
+    except TypeError as te:
+        print(f"Error instantiating {model_type} with hyperparameters {hyperparameters}: {str(te)}")
+        print("Falling back to default hyperparameters.")
+        model_instance = estimator_class()
+
+    # Define final sklearn Pipeline
+    pipeline = Pipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("classifier", model_instance),
+        ]
+    )
+
+    # Fit pipeline
+    print(f"Fitting scikit-learn Pipeline with estimator: {model_type}...")
+    pipeline.fit(X, y)
+    return pipeline
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -127,10 +222,21 @@ def main():
     parser.add_argument("--ref", default="main")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--hyperparameters", default="{}")
-    parser.add_argument("--code_file", required=True)
+    parser.add_argument("--code_file", required=False)
+    parser.add_argument("--pipeline_mode", action="store_true")
+    parser.add_argument("--target_column", required=False)
+    parser.add_argument("--model_type", required=False)
     parser.add_argument("--output_model_name", required=True)
     parser.add_argument("--job_dir", required=True)
     args = parser.parse_args()
+
+    # Validate custom code vs pipeline mode arguments
+    if not args.pipeline_mode and not args.code_file:
+        parser.error("--code_file is required when not running in --pipeline_mode")
+    if args.pipeline_mode and not args.target_column:
+        parser.error("--target_column is required in --pipeline_mode")
+    if args.pipeline_mode and not args.model_type:
+        parser.error("--model_type is required in --pipeline_mode")
 
     # Parse hyperparameters
     try:
@@ -145,6 +251,11 @@ def main():
     try:
         data_path = download_dataset(repo_name, args.ref, dest_dir)
         print(f"Dataset downloaded successfully to: {data_path}")
+        
+        # Ensure that the dataset is in CSV format
+        ext = os.path.splitext(data_path.lower())[1]
+        if ext != ".csv":
+            raise ValueError(f"Dataset file must be a CSV file. Found extension: {ext}")
     except Exception as e:
         print(f"Error downloading dataset from lakeFS: {str(e)}")
         sys.exit(1)
@@ -153,35 +264,40 @@ def main():
     print("Initializing Ray...")
     ray.init(ignore_reinit_error=True)
 
-    # 3. Load user class code
-    print(f"Loading user code from: {args.code_file}")
+    # 3. Execute training task
     try:
-        spec = importlib.util.spec_from_file_location("user_code", args.code_file)
-        user_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(user_module)
-    except Exception as e:
-        print(f"Error loading user training code: {str(e)}")
-        sys.exit(1)
+        if args.pipeline_mode:
+            print("Running in pipeline mode. Initiating automated preprocessing and model fitting...")
+            model = execute_pipeline_task(
+                data_path, args.target_column, args.model_type, hyperparams
+            )
+        else:
+            # Load user class code
+            print(f"Loading user code from: {args.code_file}")
+            try:
+                spec = importlib.util.spec_from_file_location("user_code", args.code_file)
+                user_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(user_module)
+            except Exception as e:
+                print(f"Error loading user training code: {str(e)}")
+                sys.exit(1)
 
-    # Find the class containing a train method
-    trainer_class = None
-    for name, obj in inspect.getmembers(user_module, inspect.isclass):
-        if hasattr(obj, "train") and callable(getattr(obj, "train")):
-            trainer_class = obj
-            break
+            # Find the class containing a train method
+            trainer_class = None
+            for name, obj in inspect.getmembers(user_module, inspect.isclass):
+                if hasattr(obj, "train") and callable(getattr(obj, "train")):
+                    trainer_class = obj
+                    break
 
-    if not trainer_class:
-        print("Error: Could not find any class with a callable 'train' method in user code.")
-        sys.exit(1)
+            if not trainer_class:
+                print("Error: Could not find any class with a callable 'train' method in user code.")
+                sys.exit(1)
 
-    print(f"Found trainer class: '{trainer_class.__name__}'. Submitting task to Ray...")
+            print(f"Found trainer class: '{trainer_class.__name__}'. Submitting task to Ray...")
+            model = execute_training_task(
+                trainer_class, data_path, args.epochs, hyperparams
+            )
 
-    # 4. Run Ray task
-    try:
-        # Execute the training task locally (local_mode equivalent to save memory)
-        model = execute_training_task(
-            trainer_class, data_path, args.epochs, hyperparams
-        )
         print("Ray training task completed successfully.")
         print("Shutting down Ray connection...")
         ray.shutdown()
@@ -210,7 +326,7 @@ def main():
             
             # Calculate and log metrics
             print("Calculating evaluation metrics on the Ray side...")
-            metrics = calculate_metrics(model, data_path)
+            metrics = calculate_metrics(model, data_path, target_col=args.target_column)
             for name, val in metrics.items():
                 print(f"Logging metric to MLflow: {name}={val}")
                 mlflow.log_metric(name, val)

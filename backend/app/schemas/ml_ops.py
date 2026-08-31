@@ -10,6 +10,14 @@ class TrainModelSchema(BaseModel):
     code: str = ""  # The custom python code containing the training class
 
 
+class TrainPipelineSchema(BaseModel):
+    dataset_id: str
+    ref: str = "main"  # The committed dataset version (branch, commit ID, or tag)
+    target_column: str
+    model_type: str  # e.g. logistic_regression, random_forest, decision_tree, etc.
+    hyperparameters: dict = {}
+
+
 class DeployModelSchema(BaseModel):
     model_id: str
     environment: str = "staging"

@@ -274,6 +274,188 @@ class MLOpsService:
 
         return {"models": models_list}
 
+    def perform_pipeline_training(
+        self,
+        dataset_id: str,
+        ref: str,
+        target_column: str,
+        model_type: str,
+        hyperparameters: dict,
+        user: User,
+    ) -> dict:
+        """Submits an automated pipeline training job either via Kubernetes RayJob CRD or local fallback process."""
+        # Role checking (viewer cannot train)
+        if user.role == "viewer":
+            raise PermissionError("Role 'viewer' is not authorized to train models.")
+
+        job_id = uuid.uuid4().hex[:12]
+        log_audit_event(
+            "model_training_initiated",
+            user.username,
+            None,
+            f"Initiated automated pipeline training ({model_type}) on dataset '{dataset_id}' at ref '{ref}' (Job ID: {job_id}).",
+        )
+
+        from app.core.config import settings
+
+        # Get workspace root directory path
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+        # 1. Load the RayJob YAML template
+        template_path = os.path.join(os.path.dirname(__file__), "..", "templates", "rayjob_template.yaml")
+        with open(template_path, "r") as f:
+            template_content = f.read()
+
+        # Helper to convert localhost endpoints to host.docker.internal for K8s environment
+        def to_k8s_endpoint(url: str) -> str:
+            return url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+
+        # Indent empty user code content for YAML data block (4 spaces)
+        user_code_content_indented = "    # No custom code. Running in pipeline mode."
+
+        # Load and indent ray_wrapper.py content for YAML data block
+        wrapper_path = os.path.join(os.path.dirname(__file__), "ray_wrapper.py")
+        with open(wrapper_path, "r") as f:
+            wrapper_content = f.read()
+        ray_wrapper_content_indented = "\n".join("    " + line for line in wrapper_content.splitlines())
+
+        # Render the template in-memory
+        old_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --epochs {{epochs}} --hyperparameters '{{hyperparameters}}' --code_file /app/user_code/user_code.py --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}"
+        new_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --pipeline_mode --target_column '{{target_column}}' --model_type '{{model_type}}' --hyperparameters '{{hyperparameters}}' --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}"
+        rendered_yaml = template_content.replace(old_entrypoint_cmd, new_entrypoint_cmd)
+
+        replacements = {
+            "{{job_id}}": job_id,
+            "{{user_code_content_indented}}": user_code_content_indented,
+            "{{ray_wrapper_content_indented}}": ray_wrapper_content_indented,
+            "{{project_root}}": project_root,
+            "{{dataset_id}}": dataset_id,
+            "{{ref}}": ref,
+            "{{epochs}}": "0",  # Not used in pipeline mode
+            "{{hyperparameters}}": json.dumps(hyperparameters),
+            "{{target_column}}": target_column,
+            "{{model_type}}": model_type,
+            "{{mlflow_tracking_uri}}": to_k8s_endpoint(settings.MLFLOW_TRACKING_URI),
+            "{{mlflow_s3_endpoint_url}}": to_k8s_endpoint(os.getenv("MLFLOW_S3_ENDPOINT_URL", settings.MINIO_ENDPOINT)),
+            "{{aws_access_key_id}}": os.getenv("AWS_ACCESS_KEY_ID", settings.MINIO_ROOT_USER),
+            "{{aws_secret_access_key}}": os.getenv("AWS_SECRET_ACCESS_KEY", settings.MINIO_ROOT_PASSWORD),
+            "{{mlflow_s3_ignore_tls}}": "true",
+            "{{lakefs_endpoint}}": to_k8s_endpoint(settings.LAKEFS_ENDPOINT),
+            "{{lakefs_access_key_id}}": settings.LAKEFS_ACCESS_KEY_ID,
+            "{{lakefs_secret_access_key}}": settings.LAKEFS_SECRET_ACCESS_KEY,
+            "{{lakefs_default_branch}}": settings.LAKEFS_DEFAULT_BRANCH,
+            "{{minio_endpoint}}": to_k8s_endpoint(settings.MINIO_ENDPOINT),
+        }
+        for key, val in replacements.items():
+            rendered_yaml = rendered_yaml.replace(key, val)
+
+        # Write for debugging
+        try:
+            with open("/home/deepadharshan/Desktop/Capstone_MLSecOps/backend/logs/last_rendered_yaml.yaml", "w") as f:
+                f.write(rendered_yaml)
+        except Exception:
+            pass
+
+        # 2. Attempt Kubernetes RayJob CRD submission
+        k8s_submitted = False
+        try:
+            kubeconfig_path = os.path.expanduser("~/.kube/config")
+            env = os.environ.copy()
+            env["KUBECONFIG"] = kubeconfig_path
+            
+            res = subprocess.run(
+                ["kubectl", "apply", "-f", "-"],
+                input=rendered_yaml,
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            )
+            k8s_submitted = True
+            log_audit_event(
+                "model_training_k8s_submit",
+                user.username,
+                None,
+                f"Submitted RayJob CRD to Kubernetes cluster for automated pipeline: rayjob-{job_id}",
+            )
+        except Exception as e:
+            stderr_msg = ""
+            if isinstance(e, subprocess.CalledProcessError):
+                stderr_msg = f" | stderr: {e.stderr} | stdout: {e.stdout}"
+            log_audit_event(
+                "model_training_submit_warning",
+                user.username,
+                None,
+                f"Kubernetes cluster offline. Using local Ray fallback: {str(e)}{stderr_msg}",
+            )
+
+        # 3. Trigger training run locally if Kubernetes submission failed
+        if not k8s_submitted:
+            import tempfile
+            import shutil
+            temp_job_dir = tempfile.mkdtemp(prefix=f"rayjob-{job_id}-")
+
+            cmd = [
+                sys.executable,
+                "app/services/ray_wrapper.py",
+                "--dataset_id",
+                dataset_id,
+                "--ref",
+                ref,
+                "--pipeline_mode",
+                "--target_column",
+                target_column,
+                "--model_type",
+                model_type,
+                "--hyperparameters",
+                json.dumps(hyperparameters),
+                "--output_model_name",
+                f"{dataset_id}-model",
+                "--job_dir",
+                temp_job_dir,
+            ]
+
+            def run_training_subprocess():
+                try:
+                    env = os.environ.copy()
+                    env["PYTHONPATH"] = os.path.abspath(".")
+                    env["MLFLOW_TRACKING_URI"] = settings.MLFLOW_TRACKING_URI
+                    env["AWS_ACCESS_KEY_ID"] = settings.MINIO_ROOT_USER
+                    env["AWS_SECRET_ACCESS_KEY"] = settings.MINIO_ROOT_PASSWORD
+                    env["MLFLOW_S3_ENDPOINT_URL"] = settings.MINIO_ENDPOINT
+                    env["MLFLOW_S3_IGNORE_TLS"] = "true"
+                    env["LAKEFS_ENDPOINT"] = settings.LAKEFS_ENDPOINT
+                    env["LAKEFS_ACCESS_KEY_ID"] = settings.LAKEFS_ACCESS_KEY_ID
+                    env["LAKEFS_SECRET_ACCESS_KEY"] = settings.LAKEFS_SECRET_ACCESS_KEY
+                    subprocess.run(cmd, check=True, env=env)
+                    log_audit_event(
+                        "model_training_completed",
+                        user.username,
+                        None,
+                        f"Successfully trained automated pipeline model ({model_type}) for dataset '{dataset_id}' (Job: {job_id}).",
+                    )
+                except Exception as subprocess_err:
+                    log_audit_event(
+                        "model_training_error",
+                        user.username,
+                        None,
+                        f"Error in Ray training background process: {str(subprocess_err)}",
+                    )
+                finally:
+                    shutil.rmtree(temp_job_dir, ignore_errors=True)
+
+            thread = threading.Thread(target=run_training_subprocess)
+            thread.start()
+
+        return {
+            "message": f"Model training job '{job_id}' started on Ray cluster.",
+            "job_id": job_id,
+            "dataset_id": dataset_id,
+            "epochs": 0,
+            "started_by": user.username,
+            "status": "training",
+        }
+
     def perform_model_deploy(self, model_id: str, environment: str, user: User) -> dict:
         """Logs model deployment audit event and returns status payload."""
         log_audit_event(

@@ -9,6 +9,7 @@ from app.schemas.user import (
 from app.schemas.token import Token
 from app.schemas.ml_ops import (
     TrainModelSchema,
+    TrainPipelineSchema,
     DeployModelSchema,
     ManageDeploymentSchema,
     TrainModelResponse,
@@ -38,6 +39,7 @@ __all__ = [
     "MessageResponse",
     "Token",
     "TrainModelSchema",
+    "TrainPipelineSchema",
     "DeployModelSchema",
     "ManageDeploymentSchema",
     "TrainModelResponse",

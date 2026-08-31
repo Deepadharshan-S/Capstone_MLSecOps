@@ -5,6 +5,7 @@ from app.api.permissions import get_current_active_user
 from app.models.user import User
 from app.schemas import (
     TrainModelSchema,
+    TrainPipelineSchema,
     DeployModelSchema,
     ManageDeploymentSchema,
     TrainModelResponse,
@@ -38,6 +39,30 @@ def train_model(
         epochs=train_info.epochs,
         hyperparameters=train_info.hyperparameters,
         code=train_info.code,
+        user=user,
+    )
+
+
+@router.post(
+    "/models/train-pipeline",
+    response_model=TrainModelResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(RateLimiter(times=2, seconds=60))],
+)
+def train_pipeline(
+    train_info: TrainPipelineSchema,
+    user: User = Security(get_current_active_user, scopes=["models:train"]),
+    ml_ops_service: MLOpsService = Depends(get_ml_ops_service),
+):
+    """
+    Start automated pipeline training. Accessible to Data Scientists and Admins.
+    """
+    return ml_ops_service.perform_pipeline_training(
+        dataset_id=train_info.dataset_id,
+        ref=train_info.ref,
+        target_column=train_info.target_column,
+        model_type=train_info.model_type,
+        hyperparameters=train_info.hyperparameters,
         user=user,
     )
 
