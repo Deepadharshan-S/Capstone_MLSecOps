@@ -295,3 +295,84 @@ def test_pipeline_training_flow(user_tokens):
     assert registered_model["f1_score"] >= 0.0
 
 
+def test_custom_experiment_tracking_flow(user_tokens):
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+
+    # 1. Register a test dataset
+    dataset_name = f"train-exp-{uuid.uuid4().hex[:8]}"
+    reg_payload = {
+        "name": dataset_name,
+        "description": "Dataset for experiment tracking tests",
+    }
+    dummy_csv_content = (
+        b"feat_num1,feat_num2,feat_cat1,feat_cat2,target\n"
+        b"1.5,2.5,low,yes,0\n"
+        b"3.5,4.5,high,no,1\n"
+        b"2.0,1.0,medium,yes,0\n"
+        b"4.0,5.0,high,yes,1\n"
+    )
+    dummy_file = ("data.csv", dummy_csv_content)
+
+    resp = client.post(
+        "/api/datasets",
+        data=reg_payload,
+        files={"file": dummy_file},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 201
+
+    # Commit the dataset
+    commit_payload = {
+        "message": "Initial commit for experiment training",
+        "metadata": {"author": "ds_user"},
+    }
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/commit?branch=main",
+        json=commit_payload,
+        headers=ds_headers,
+    )
+    assert resp.status_code == 200
+
+    # 2. Submit pipeline model training with a custom experiment name
+    custom_exp_name = f"custom-exp-{uuid.uuid4().hex[:8]}"
+    train_payload = {
+        "dataset_id": dataset_name,
+        "ref": "main",
+        "target_column": "target",
+        "model_type": "logistic_regression",
+        "hyperparameters": {"max_iter": 500},
+        "experiment_name": custom_exp_name,
+    }
+
+    resp = client.post("/api/models/train-pipeline", json=train_payload, headers=ds_headers)
+    assert resp.status_code == 202
+
+    res_data = resp.json()
+    assert res_data["status"] == "training"
+    assert res_data["dataset_id"] == dataset_name
+
+    model_name = f"{dataset_name}-model"
+
+    # Poll /api/models for up to 180 seconds (120 attempts with 1.5s sleep)
+    registered_model = None
+    for _ in range(120):
+        time.sleep(1.5)
+        resp_models = client.get("/api/models", headers=ds_headers)
+        assert resp_models.status_code == 200
+        models = resp_models.json()["models"]
+        for m in models:
+            if m["name"] == model_name:
+                registered_model = m
+                break
+        if registered_model:
+            break
+
+    assert (
+        registered_model is not None
+    ), f"Model '{model_name}' was not registered in MLflow registry within the timeout."
+
+    # Assert custom experiment name is correctly logged and returned
+    assert registered_model["experiment_name"] == custom_exp_name
+
+
+

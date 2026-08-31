@@ -40,6 +40,7 @@ def train_model(
         hyperparameters=train_info.hyperparameters,
         code=train_info.code,
         user=user,
+        experiment_name=train_info.experiment_name,
     )
 
 
@@ -64,6 +65,7 @@ def train_pipeline(
         model_type=train_info.model_type,
         hyperparameters=train_info.hyperparameters,
         user=user,
+        experiment_name=train_info.experiment_name,
     )
 
 

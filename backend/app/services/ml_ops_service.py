@@ -27,12 +27,14 @@ class MLOpsService:
         hyperparameters: dict,
         code: str,
         user: User,
+        experiment_name: Optional[str] = None,
     ) -> dict:
         """
         Submits a custom training job to Ray by generating RayJobs CRD manifests
         and running a local Ray runner background process fallback.
         """
         job_id = str(uuid.uuid4())
+        experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         
         if not code:
             log_audit_event(
@@ -72,7 +74,10 @@ class MLOpsService:
         ray_wrapper_content_indented = "\n".join("    " + line for line in wrapper_content.splitlines())
 
         # Render the template in-memory
-        rendered_yaml = template_content
+        old_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --epochs {{epochs}} --hyperparameters '{{hyperparameters}}' --code_file /app/user_code/user_code.py --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}"
+        new_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --epochs {{epochs}} --hyperparameters '{{hyperparameters}}' --code_file /app/user_code/user_code.py --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}} --experiment_name '{{experiment_name}}'"
+        rendered_yaml = template_content.replace(old_entrypoint_cmd, new_entrypoint_cmd)
+
         replacements = {
             "{{job_id}}": job_id,
             "{{user_code_content_indented}}": user_code_content_indented,
@@ -82,6 +87,7 @@ class MLOpsService:
             "{{ref}}": ref,
             "{{epochs}}": str(epochs),
             "{{hyperparameters}}": json.dumps(hyperparameters),
+            "{{experiment_name}}": experiment_name,
             "{{mlflow_tracking_uri}}": to_k8s_endpoint(settings.MLFLOW_TRACKING_URI),
             "{{mlflow_s3_endpoint_url}}": to_k8s_endpoint(os.getenv("MLFLOW_S3_ENDPOINT_URL", settings.MINIO_ENDPOINT)),
             "{{aws_access_key_id}}": os.getenv("AWS_ACCESS_KEY_ID", settings.MINIO_ROOT_USER),
@@ -163,6 +169,8 @@ class MLOpsService:
                 f"{dataset_id}-model",
                 "--job_dir",
                 temp_job_dir,
+                "--experiment_name",
+                experiment_name,
             ]
 
             def run_training_subprocess():
@@ -238,6 +246,7 @@ class MLOpsService:
                 precision = 0.0
                 recall = 0.0
                 f1_score = 0.0
+                experiment_name = "unknown"
                 
                 if rm.latest_versions:
                     latest_v = rm.latest_versions[-1]
@@ -255,8 +264,13 @@ class MLOpsService:
                         precision = run_metrics.get("precision", 0.0)
                         recall = run_metrics.get("recall", 0.0)
                         f1_score = run_metrics.get("f1_score", 0.0)
+                        try:
+                            exp = client.get_experiment(run.info.experiment_id)
+                            experiment_name = exp.name
+                        except Exception as ee:
+                            print(f"Error retrieving experiment details: {str(ee)}")
                     except Exception as e:
-                        print(f"Error retrieving run metrics from MLflow: {str(e)}")
+                        print(f"Error retrieving run details from MLflow: {str(e)}")
 
                 models_list.append(
                     {
@@ -267,6 +281,7 @@ class MLOpsService:
                         "recall": recall,
                         "f1_score": f1_score,
                         "created_at": created_at_str,
+                        "experiment_name": experiment_name,
                     }
                 )
         except Exception as e:
@@ -282,6 +297,7 @@ class MLOpsService:
         model_type: str,
         hyperparameters: dict,
         user: User,
+        experiment_name: Optional[str] = None,
     ) -> dict:
         """Submits an automated pipeline training job either via Kubernetes RayJob CRD or local fallback process."""
         # Role checking (viewer cannot train)
@@ -289,6 +305,7 @@ class MLOpsService:
             raise PermissionError("Role 'viewer' is not authorized to train models.")
 
         job_id = uuid.uuid4().hex[:12]
+        experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         log_audit_event(
             "model_training_initiated",
             user.username,
@@ -321,7 +338,7 @@ class MLOpsService:
 
         # Render the template in-memory
         old_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --epochs {{epochs}} --hyperparameters '{{hyperparameters}}' --code_file /app/user_code/user_code.py --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}"
-        new_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --pipeline_mode --target_column '{{target_column}}' --model_type '{{model_type}}' --hyperparameters '{{hyperparameters}}' --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}"
+        new_entrypoint_cmd = "python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --pipeline_mode --target_column '{{target_column}}' --model_type '{{model_type}}' --hyperparameters '{{hyperparameters}}' --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}} --experiment_name '{{experiment_name}}'"
         rendered_yaml = template_content.replace(old_entrypoint_cmd, new_entrypoint_cmd)
 
         replacements = {
@@ -335,6 +352,7 @@ class MLOpsService:
             "{{hyperparameters}}": json.dumps(hyperparameters),
             "{{target_column}}": target_column,
             "{{model_type}}": model_type,
+            "{{experiment_name}}": experiment_name,
             "{{mlflow_tracking_uri}}": to_k8s_endpoint(settings.MLFLOW_TRACKING_URI),
             "{{mlflow_s3_endpoint_url}}": to_k8s_endpoint(os.getenv("MLFLOW_S3_ENDPOINT_URL", settings.MINIO_ENDPOINT)),
             "{{aws_access_key_id}}": os.getenv("AWS_ACCESS_KEY_ID", settings.MINIO_ROOT_USER),
@@ -413,6 +431,8 @@ class MLOpsService:
                 f"{dataset_id}-model",
                 "--job_dir",
                 temp_job_dir,
+                "--experiment_name",
+                experiment_name,
             ]
 
             def run_training_subprocess():

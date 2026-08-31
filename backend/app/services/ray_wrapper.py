@@ -228,6 +228,7 @@ def main():
     parser.add_argument("--model_type", required=False)
     parser.add_argument("--output_model_name", required=True)
     parser.add_argument("--job_dir", required=True)
+    parser.add_argument("--experiment_name", required=False)
     args = parser.parse_args()
 
     # Validate custom code vs pipeline mode arguments
@@ -313,7 +314,8 @@ def main():
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
         print(f"Setting MLflow tracking URI to: {tracking_uri}")
         mlflow.set_tracking_uri(tracking_uri)
-        mlflow.set_experiment(f"dataset-{args.dataset_id}-experiment")
+        exp_name = args.experiment_name if args.experiment_name else f"dataset-{args.dataset_id}-experiment"
+        mlflow.set_experiment(exp_name)
 
         with mlflow.start_run() as run:
             print("Registering model via mlflow.pyfunc with ModelWrapper...")

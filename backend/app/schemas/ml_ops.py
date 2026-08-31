@@ -8,6 +8,7 @@ class TrainModelSchema(BaseModel):
     epochs: int = 10
     hyperparameters: dict = {}
     code: str = ""  # The custom python code containing the training class
+    experiment_name: Optional[str] = None
 
 
 class TrainPipelineSchema(BaseModel):
@@ -16,6 +17,7 @@ class TrainPipelineSchema(BaseModel):
     target_column: str
     model_type: str  # e.g. logistic_regression, random_forest, decision_tree, etc.
     hyperparameters: dict = {}
+    experiment_name: Optional[str] = None
 
 
 class DeployModelSchema(BaseModel):
@@ -45,6 +47,7 @@ class ModelItem(BaseModel):
     recall: Optional[float] = 0.0
     f1_score: Optional[float] = 0.0
     created_at: str
+    experiment_name: Optional[str] = "unknown"
 
 
 class ModelListResponse(BaseModel):
