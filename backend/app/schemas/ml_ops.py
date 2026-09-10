@@ -9,15 +9,17 @@ class TrainModelSchema(BaseModel):
     hyperparameters: dict = {}
     code: str = ""  # The custom python code containing the training class
     experiment_name: Optional[str] = None
+    model_name: Optional[str] = None  # Optional registered model name in MLflow
 
 
 class TrainPipelineSchema(BaseModel):
     dataset_id: str
     ref: str = "main"  # The committed dataset version (branch, commit ID, or tag)
     target_column: str
-    model_type: str  # e.g. logistic_regression, random_forest, decision_tree, etc.
+    model_type: str  # e.g. logistic_regression, random_forest, or comma-separated for multi-model sweep
     hyperparameters: dict = {}
     experiment_name: Optional[str] = None
+    model_name: Optional[str] = None  # Optional registered model name in MLflow
 
 
 class DeployModelSchema(BaseModel):
@@ -37,6 +39,7 @@ class TrainModelResponse(BaseModel):
     epochs: int
     started_by: str
     status: str
+    model_name: Optional[str] = None
 
 
 class ModelItem(BaseModel):
@@ -48,6 +51,8 @@ class ModelItem(BaseModel):
     f1_score: Optional[float] = 0.0
     created_at: str
     experiment_name: Optional[str] = "unknown"
+    parameters: Optional[dict] = {}
+    tags: Optional[dict] = {}
 
 
 class ModelListResponse(BaseModel):

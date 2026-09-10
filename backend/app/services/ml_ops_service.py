@@ -96,6 +96,7 @@ class MLOpsService:
         code: str,
         user: User,
         experiment_name: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> dict:
         """
         Submits a custom training job to Ray by generating RayJobs CRD manifests
@@ -103,6 +104,7 @@ class MLOpsService:
         """
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
+        output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
         
         if not code or not code.strip():
             log_audit_event(
@@ -137,8 +139,9 @@ class MLOpsService:
         entrypoint_cmd = (
             f"python /app/user_code/ray_wrapper.py --dataset_id {dataset_id} --ref {ref} "
             f"--epochs {epochs} --hyperparameters '{json.dumps(hyperparameters)}' "
-            f"--code_file /app/user_code/user_code.py --output_model_name {dataset_id}-model "
-            f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}'"
+            f"--code_file /app/user_code/user_code.py --output_model_name '{output_model_name}' "
+            f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}' "
+            f"--user '{user.username}' --job_id '{job_id}'"
         )
 
         scoped_creds = self._get_scoped_training_credentials(job_id)
@@ -257,11 +260,15 @@ class MLOpsService:
                 "--code_file",
                 code_file,
                 "--output_model_name",
-                f"{dataset_id}-model",
+                output_model_name,
                 "--job_dir",
                 temp_job_dir,
                 "--experiment_name",
                 experiment_name,
+                "--user",
+                user.username,
+                "--job_id",
+                job_id,
             ]
 
             def run_training_subprocess():
@@ -313,6 +320,7 @@ class MLOpsService:
             "epochs": epochs,
             "started_by": user.username,
             "status": "training",
+            "model_name": output_model_name,
         }
 
     def retrieve_models(self, user: User) -> dict:
@@ -350,6 +358,8 @@ class MLOpsService:
                     )
                     created_at_str = dt.isoformat()
                     run_id = latest_v.run_id
+                    run_params = {}
+                    run_tags = {}
                     
                     try:
                         run = client.get_run(run_id)
@@ -358,6 +368,8 @@ class MLOpsService:
                         precision = run_metrics.get("precision", 0.0)
                         recall = run_metrics.get("recall", 0.0)
                         f1_score = run_metrics.get("f1_score", 0.0)
+                        run_params = run.data.params or {}
+                        run_tags = run.data.tags or {}
                         try:
                             exp = client.get_experiment(run.info.experiment_id)
                             experiment_name = exp.name
@@ -376,6 +388,8 @@ class MLOpsService:
                         "f1_score": f1_score,
                         "created_at": created_at_str,
                         "experiment_name": experiment_name,
+                        "parameters": run_params,
+                        "tags": run_tags,
                     }
                 )
         except Exception as e:
@@ -392,6 +406,7 @@ class MLOpsService:
         hyperparameters: dict,
         user: User,
         experiment_name: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> dict:
         """Submits an automated pipeline training job either via Kubernetes RayJob CRD or local fallback process."""
         # Role checking (viewer cannot train)
@@ -403,6 +418,7 @@ class MLOpsService:
 
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
+        output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
         log_audit_event(
             "model_training_initiated",
             user.username,
@@ -433,8 +449,9 @@ class MLOpsService:
         entrypoint_cmd = (
             f"python /app/user_code/ray_wrapper.py --dataset_id {dataset_id} --ref {ref} "
             f"--pipeline_mode --target_column '{target_column}' --model_type '{model_type}' "
-            f"--hyperparameters '{json.dumps(hyperparameters)}' --output_model_name {dataset_id}-model "
-            f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}'"
+            f"--hyperparameters '{json.dumps(hyperparameters)}' --output_model_name '{output_model_name}' "
+            f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}' "
+            f"--user '{user.username}' --job_id '{job_id}'"
         )
 
         scoped_creds = self._get_scoped_training_credentials(job_id)
@@ -552,11 +569,15 @@ class MLOpsService:
                 "--hyperparameters",
                 json.dumps(hyperparameters),
                 "--output_model_name",
-                f"{dataset_id}-model",
+                output_model_name,
                 "--job_dir",
                 temp_job_dir,
                 "--experiment_name",
                 experiment_name,
+                "--user",
+                user.username,
+                "--job_id",
+                job_id,
             ]
 
             def run_training_subprocess():
@@ -601,6 +622,7 @@ class MLOpsService:
             "epochs": 0,
             "started_by": user.username,
             "status": "training",
+            "model_name": output_model_name,
         }
 
     def perform_model_deploy(self, model_id: str, environment: str, user: User) -> dict:
@@ -758,11 +780,16 @@ class MLOpsService:
             mlflow.set_experiment(exp_name)
 
             # 6. Log and register model in MLflow
-            with mlflow.start_run() as run:
+            import re
+            clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-", final_model_name).strip("-_")
+            upload_run_name = f"upload_{clean_name[:20]}_{uuid.uuid4().hex[:8]}"
+            with mlflow.start_run(run_name=upload_run_name) as run:
                 run_id = run.info.run_id
 
+                tags_to_set = {"uploaded_by": user.username, "upload_filename": file.filename}
                 if parsed_metadata:
-                    mlflow.set_tags(parsed_metadata)
+                    tags_to_set.update(parsed_metadata)
+                mlflow.set_tags(tags_to_set)
 
                 if parsed_metrics:
                     for k, v in parsed_metrics.items():
