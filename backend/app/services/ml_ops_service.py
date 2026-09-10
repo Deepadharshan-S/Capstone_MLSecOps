@@ -37,52 +37,53 @@ class MLOpsService:
             "scoped_sts": False,
         }
 
-        try:
-            import boto3
-            from botocore.client import Config
+        if not settings.MINIO_TRAINING_ACCESS_KEY_ID:
+            try:
+                import boto3
+                from botocore.client import Config
 
-            sts_client = boto3.client(
-                "sts",
-                endpoint_url=settings.MINIO_ENDPOINT,
-                aws_access_key_id=settings.MINIO_ROOT_USER,
-                aws_secret_access_key=settings.MINIO_ROOT_PASSWORD,
-                config=Config(signature_version="s3v4", connect_timeout=1, read_timeout=1, retries={"max_attempts": 1}),
-                region_name="us-east-1",
-            )
-            policy_doc = json.dumps(
-                {
-                    "Version": "2012-10-17",
-                    "Statement": [
-                        {
-                            "Effect": "Allow",
-                            "Action": [
-                                "s3:GetBucketLocation",
-                                "s3:ListBucket",
-                                "s3:GetObject",
-                                "s3:PutObject",
-                            ],
-                            "Resource": [
-                                "arn:aws:s3:::mlflow",
-                                "arn:aws:s3:::mlflow/*",
-                            ],
-                        }
-                    ],
-                }
-            )
-            response = sts_client.assume_role(
-                RoleArn="arn:aws:iam:::role/RayTrainingJobRole",
-                RoleSessionName=f"rayjob-{job_id[:16]}",
-                Policy=policy_doc,
-                DurationSeconds=3600,
-            )
-            sts_creds = response.get("Credentials", {})
-            if sts_creds.get("AccessKeyId"):
-                creds["aws_access_key_id"] = sts_creds["AccessKeyId"]
-                creds["aws_secret_access_key"] = sts_creds["SecretAccessKey"]
-                creds["aws_session_token"] = sts_creds.get("SessionToken", "")
-                creds["scoped_sts"] = True
-        except Exception:
-            pass
+                sts_client = boto3.client(
+                    "sts",
+                    endpoint_url=settings.MINIO_ENDPOINT,
+                    aws_access_key_id=settings.MINIO_ROOT_USER,
+                    aws_secret_access_key=settings.MINIO_ROOT_PASSWORD,
+                    config=Config(signature_version="s3v4", connect_timeout=1, read_timeout=1, retries={"max_attempts": 1}),
+                    region_name="us-east-1",
+                )
+                policy_doc = json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": [
+                                    "s3:GetBucketLocation",
+                                    "s3:ListBucket",
+                                    "s3:GetObject",
+                                    "s3:PutObject",
+                                ],
+                                "Resource": [
+                                    "arn:aws:s3:::mlflow",
+                                    "arn:aws:s3:::mlflow/*",
+                                ],
+                            }
+                        ],
+                    }
+                )
+                response = sts_client.assume_role(
+                    RoleArn="arn:aws:iam:::role/RayTrainingJobRole",
+                    RoleSessionName=f"rayjob-{job_id[:16]}",
+                    Policy=policy_doc,
+                    DurationSeconds=3600,
+                )
+                sts_creds = response.get("Credentials", {})
+                if sts_creds.get("AccessKeyId"):
+                    creds["aws_access_key_id"] = sts_creds["AccessKeyId"]
+                    creds["aws_secret_access_key"] = sts_creds["SecretAccessKey"]
+                    creds["aws_session_token"] = sts_creds.get("SessionToken", "")
+                    creds["scoped_sts"] = True
+            except Exception:
+                pass
 
         return creds
 
@@ -100,7 +101,7 @@ class MLOpsService:
         Submits a custom training job to Ray by generating RayJobs CRD manifests
         and running a local Ray runner background process fallback.
         """
-        job_id = str(uuid.uuid4())
+        job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         
         if not code or not code.strip():
@@ -395,7 +396,10 @@ class MLOpsService:
         """Submits an automated pipeline training job either via Kubernetes RayJob CRD or local fallback process."""
         # Role checking (viewer cannot train)
         if user.role == "viewer":
-            raise PermissionError("Role 'viewer' is not authorized to train models.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role 'viewer' is not authorized to train models.",
+            )
 
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"

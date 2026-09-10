@@ -85,7 +85,7 @@ async def register_dataset(
 @router.get("", response_model=list[DatasetResponse])
 def list_datasets(
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """
@@ -98,7 +98,7 @@ def list_datasets(
 def delete_dataset(
     dataset_name: str,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    user: User = Security(get_current_active_user, scopes=["datasets:delete"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """
@@ -146,7 +146,7 @@ def download_file(
     path: str,
     ref: Optional[str] = "main",
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """
@@ -193,7 +193,7 @@ def view_commit_history(
     ref: Optional[str] = "main",
     limit: Optional[int] = None,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """
@@ -209,7 +209,7 @@ def compare_dataset_versions(
     right_ref: str,
     type: str = Query("three_dot", pattern="^(three_dot|two_dot)$"),
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """
@@ -242,7 +242,7 @@ def rollback_changes(
 def get_dataset_metadata(
     dataset_name: str,
     db: Session = Depends(get_db),
-    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """

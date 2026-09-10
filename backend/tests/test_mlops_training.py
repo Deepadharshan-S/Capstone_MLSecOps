@@ -24,6 +24,29 @@ def user_tokens():
     return tokens
 
 
+@pytest.fixture(autouse=True)
+def clean_k8s_ray_environment():
+    """Ensure no leftover RayJobs or RayClusters exist before and after each test."""
+    import subprocess
+    def _cleanup():
+        try:
+            subprocess.run(
+                ["kubectl", "delete", "rayjobs,rayclusters,configmaps", "-l", "app.kubernetes.io/name=mlsecops-rayjob", "-n", "default", "--wait=false"],
+                capture_output=True,
+                timeout=10,
+            )
+            for _ in range(15):
+                res = subprocess.run(["kubectl", "get", "pods", "-n", "default"], capture_output=True, text=True)
+                if "No resources found" in res.stderr or "No resources found" in res.stdout or not res.stdout.strip():
+                    break
+                time.sleep(1.0)
+        except Exception:
+            pass
+    _cleanup()
+    yield
+    _cleanup()
+
+
 def test_model_training_flow(user_tokens):
     ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
 

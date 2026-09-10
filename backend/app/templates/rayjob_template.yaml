@@ -25,20 +25,22 @@ metadata:
     ray.io/job-id: "{{job_id}}"
     app.kubernetes.io/name: "mlsecops-rayjob"
 spec:
+  submissionMode: "HTTPMode"
   entrypoint: bash /app/user_code/entrypoint.sh
   shutdownAfterJobFinishes: true
+  ttlSecondsAfterFinished: 5
   rayClusterSpec:
     rayVersion: '2.57.0'
     headGroupSpec:
       rayStartParams:
         dashboard-host: '0.0.0.0'
-        memory: '268435456'
-        object-store-memory: '83886080'
+        memory: '536870912'
+        object-store-memory: '268435456'
       template:
         metadata:
           labels:
             ray.io/job-id: "{{job_id}}"
-            app.kubernetes.io/name: "mlsecops-rayjob"
+            app.kubernetes.io/name: "kuberay"
         spec:
           automountServiceAccountToken: false
           securityContext:
@@ -59,11 +61,11 @@ spec:
                     - ALL
               resources:
                 limits:
-                  cpu: "1"
-                  memory: "2.8Gi"
+                  cpu: "1.5"
+                  memory: "2.5Gi"
                 requests:
                   cpu: "500m"
-                  memory: "512Mi"
+                  memory: "768Mi"
               livenessProbe:
                 exec:
                   command:

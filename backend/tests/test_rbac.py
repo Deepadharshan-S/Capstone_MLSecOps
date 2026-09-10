@@ -266,8 +266,8 @@ def test_rbac_permissions_matrix():
     """
     Test the full permission matrix for all roles:
     - Admin: Full access to all endpoints.
-    - Data Scientist: Upload datasets, start training, view models.
-    - ML Engineer: Deploy models, manage deployments, view models.
+    - Data Scientist: Upload/view/delete datasets, train models, view models, deploy models, manage deployments.
+    - ML Engineer: View datasets, train models, view models, deploy models, manage deployments.
     - Viewer: Read-only access to view models.
     """
     # Helper to get headers for a user
@@ -284,15 +284,29 @@ def test_rbac_permissions_matrix():
 
     # 1. Dataset Upload (Admin and Data Scientist only)
     suffix = uuid.uuid4().hex[:8]
-    dataset_payload_admin = {"name": f"test-dataset-admin-{suffix}", "description": "Classification dataset"}
-    dataset_payload_ds = {"name": f"test-dataset-ds-{suffix}", "description": "Classification dataset"}
+    dataset_name_admin = f"test-dataset-admin-{suffix}"
+    dataset_name_ds = f"test-dataset-ds-{suffix}"
+    dataset_payload_admin = {"name": dataset_name_admin, "description": "Classification dataset"}
+    dataset_payload_ds = {"name": dataset_name_ds, "description": "Classification dataset"}
     
     assert client.post("/api/datasets", data=dataset_payload_admin, files={"file": ("data.csv", b"content")}, headers=admin_headers).status_code == 201
     assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=ds_headers).status_code == 201
     assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=mle_headers).status_code == 403
     assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=viewer_headers).status_code == 403
 
-    # 2. Model Training (Admin and Data Scientist only)
+    # 2. Dataset Viewing (Admin, Data Scientist, and ML Engineer)
+    assert client.get("/api/datasets", headers=admin_headers).status_code == 200
+    assert client.get("/api/datasets", headers=ds_headers).status_code == 200
+    assert client.get("/api/datasets", headers=mle_headers).status_code == 200
+    assert client.get("/api/datasets", headers=viewer_headers).status_code == 403
+
+    # 3. Dataset Deletion (Admin and Data Scientist only)
+    assert client.delete(f"/api/datasets/{dataset_name_ds}", headers=viewer_headers).status_code == 403
+    assert client.delete(f"/api/datasets/{dataset_name_ds}", headers=mle_headers).status_code == 403
+    assert client.delete(f"/api/datasets/{dataset_name_ds}", headers=ds_headers).status_code == 200
+    assert client.delete(f"/api/datasets/{dataset_name_admin}", headers=admin_headers).status_code == 200
+
+    # 4. Model Training (Admin, Data Scientist, and ML Engineer)
     train_payload = {
         "dataset_id": "iris-uuid",
         "epochs": 5,
@@ -300,32 +314,33 @@ def test_rbac_permissions_matrix():
     }
     assert client.post("/api/models/train", json=train_payload, headers=admin_headers).status_code == 202
     assert client.post("/api/models/train", json=train_payload, headers=ds_headers).status_code == 202
-    assert client.post("/api/models/train", json=train_payload, headers=mle_headers).status_code == 403
+    assert client.post("/api/models/train", json=train_payload, headers=mle_headers).status_code == 202
     assert client.post("/api/models/train", json=train_payload, headers=viewer_headers).status_code == 403
 
     # Verify empty code returns HTTP 400
     empty_train_payload = {"dataset_id": "iris-uuid", "epochs": 5, "code": ""}
     assert client.post("/api/models/train", json=empty_train_payload, headers=ds_headers).status_code == 400
 
-    # 3. Model Viewing (All roles)
+    # 5. Model Viewing (All roles)
     assert client.get("/api/models", headers=admin_headers).status_code == 200
     assert client.get("/api/models", headers=ds_headers).status_code == 200
     assert client.get("/api/models", headers=mle_headers).status_code == 200
     assert client.get("/api/models", headers=viewer_headers).status_code == 200
 
-    # 4. Model Deployment (Admin and ML Engineer only)
+    # 6. Model Deployment (Admin, ML Engineer, and Data Scientist)
     deploy_payload = {"model_id": "model-uuid-1", "environment": "production"}
     assert client.post("/api/models/deploy", json=deploy_payload, headers=admin_headers).status_code == 201
     assert client.post("/api/models/deploy", json=deploy_payload, headers=mle_headers).status_code == 201
-    assert client.post("/api/models/deploy", json=deploy_payload, headers=ds_headers).status_code == 403
+    assert client.post("/api/models/deploy", json=deploy_payload, headers=ds_headers).status_code == 201
     assert client.post("/api/models/deploy", json=deploy_payload, headers=viewer_headers).status_code == 403
 
-    # 5. Deployment Management (Admin and ML Engineer only)
+    # 7. Deployment Management (Admin, ML Engineer, and Data Scientist)
     manage_payload = {"deployment_id": "deploy-uuid-1", "action": "restart"}
     assert client.post("/api/deployments/manage", json=manage_payload, headers=admin_headers).status_code == 200
     assert client.post("/api/deployments/manage", json=manage_payload, headers=mle_headers).status_code == 200
-    assert client.post("/api/deployments/manage", json=manage_payload, headers=ds_headers).status_code == 403
+    assert client.post("/api/deployments/manage", json=manage_payload, headers=ds_headers).status_code == 200
     assert client.post("/api/deployments/manage", json=manage_payload, headers=viewer_headers).status_code == 403
+
 
 
 def test_admin_user_management():

@@ -1,7 +1,18 @@
-FROM rayproject/ray:2.57.0
+FROM python:3.10-slim
 
-# Install dependencies needed for training and registry logging
+# Install system dependencies needed for K8s probes and process monitoring
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    curl \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create ray user (UID 1000, GID 100) matching rayjob_template.yaml security context
+RUN useradd -ms /bin/bash -u 1000 -g 100 ray
+
+# Install minimal ray runtime + specific ML training & communication libraries
 RUN pip install --no-cache-dir \
+    "ray[default]==2.57.0" \
     mlflow==3.15.1 \
     scikit-learn \
     pandas \
@@ -10,3 +21,7 @@ RUN pip install --no-cache-dir \
     psycopg2-binary \
     lakefs==0.16.0 \
     lakefs-sdk==1.86.0
+
+USER ray
+WORKDIR /home/ray
+
