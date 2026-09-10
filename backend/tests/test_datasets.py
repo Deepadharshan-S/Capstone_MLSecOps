@@ -5,14 +5,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from fastapi import Depends
-
 from app.main import app
 from app.db.session import get_db
 from app.db.base import Base
 from app.models.user import User
-from app.models.dataset import Dataset
-from app.core.rate_limiter import RateLimiter
 from app.core.logging_config import get_all_audit_logs
 
 # Isolated Test Database setup (using in-memory SQLite)
@@ -201,7 +197,7 @@ def test_dataset_lifecycle(user_tokens):
     commit1 = resp.json()
     assert commit1["message"] == commit_payload["message"]
     assert commit1["metadata"]["framework"] == "pytest"
-    commit1_id = commit1["id"]
+    assert "id" in commit1
 
     # 5. Create branch & List branches (using data_service directly since HTTP endpoints are removed)
     from app.services.data_service import data_service

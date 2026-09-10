@@ -293,11 +293,19 @@ def test_rbac_permissions_matrix():
     assert client.post("/api/datasets", data=dataset_payload_ds, files={"file": ("data.csv", b"content")}, headers=viewer_headers).status_code == 403
 
     # 2. Model Training (Admin and Data Scientist only)
-    train_payload = {"dataset_id": "iris-uuid", "epochs": 5}
+    train_payload = {
+        "dataset_id": "iris-uuid",
+        "epochs": 5,
+        "code": "class MyTrainer:\n    def train(self, *args, **kwargs):\n        pass",
+    }
     assert client.post("/api/models/train", json=train_payload, headers=admin_headers).status_code == 202
     assert client.post("/api/models/train", json=train_payload, headers=ds_headers).status_code == 202
     assert client.post("/api/models/train", json=train_payload, headers=mle_headers).status_code == 403
     assert client.post("/api/models/train", json=train_payload, headers=viewer_headers).status_code == 403
+
+    # Verify empty code returns HTTP 400
+    empty_train_payload = {"dataset_id": "iris-uuid", "epochs": 5, "code": ""}
+    assert client.post("/api/models/train", json=empty_train_payload, headers=ds_headers).status_code == 400
 
     # 3. Model Viewing (All roles)
     assert client.get("/api/models", headers=admin_headers).status_code == 200

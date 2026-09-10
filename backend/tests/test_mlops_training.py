@@ -88,7 +88,6 @@ class MyTrainer:
     assert "job_id" in res_data
 
     # 3. Wait for the training job to complete (asynchronous background execution)
-    model_registered = False
     model_name = f"{dataset_name}-model"
 
     # Poll /api/models for up to 180 seconds (120 attempts with 1.5s sleep)
@@ -257,7 +256,6 @@ def test_pipeline_training_flow(user_tokens):
     assert "job_id" in res_data
 
     # 3. Wait for the training job to complete
-    model_registered = False
     model_name = f"{dataset_name}-model"
 
     # Poll /api/models for up to 180 seconds (120 attempts with 1.5s sleep)

@@ -1,0 +1,53 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlsecops-rayjob-network-policy
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "mlsecops-rayjob"
+    app.kubernetes.io/part-of: "mlsecops-platform"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: "mlsecops-rayjob"
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 1. Allow communication among Ray cluster pods (head and worker nodes)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: "mlsecops-rayjob"
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 6379   # GCS / Redis
+        - protocol: TCP
+          port: 8265   # Ray Dashboard / Jobs API
+        - protocol: TCP
+          port: 10001  # Ray Client
+        - protocol: TCP
+          port: 52365  # Raylet health check
+  egress:
+    # 1. Allow internal cluster DNS lookups (CoreDNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. Allow communication between Ray cluster nodes
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: "mlsecops-rayjob"
+    # 3. Allow egress strictly to MLSecOps platform data services
+    - ports:
+        - protocol: TCP
+          port: 8000   # LakeFS data versioning API
+        - protocol: TCP
+          port: 9000   # MinIO S3 object storage
+        - protocol: TCP
+          port: 5000   # MLflow tracking server

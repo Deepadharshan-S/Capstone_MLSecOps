@@ -317,7 +317,7 @@ def main():
         exp_name = args.experiment_name if args.experiment_name else f"dataset-{args.dataset_id}-experiment"
         mlflow.set_experiment(exp_name)
 
-        with mlflow.start_run() as run:
+        with mlflow.start_run():
             print("Registering model via mlflow.pyfunc with ModelWrapper...")
             mlflow.pyfunc.log_model(
                 artifact_path="model",

@@ -3,6 +3,9 @@ kind: ConfigMap
 metadata:
   name: rayjob-code-{{job_id}}
   namespace: default
+  labels:
+    ray.io/job-id: "{{job_id}}"
+    app.kubernetes.io/name: "mlsecops-rayjob"
 data:
   user_code.py: |
 {{user_code_content_indented}}
@@ -11,13 +14,16 @@ data:
   entrypoint.sh: |
     #!/bin/bash
     set -e
-    python /app/user_code/ray_wrapper.py --dataset_id {{dataset_id}} --ref {{ref}} --epochs {{epochs}} --hyperparameters '{{hyperparameters}}' --code_file /app/user_code/user_code.py --output_model_name {{dataset_id}}-model --job_dir /tmp/rayjob-{{job_id}}
+    {{entrypoint_cmd}}
 ---
 apiVersion: ray.io/v1
 kind: RayJob
 metadata:
   name: rayjob-{{job_id}}
   namespace: default
+  labels:
+    ray.io/job-id: "{{job_id}}"
+    app.kubernetes.io/name: "mlsecops-rayjob"
 spec:
   entrypoint: bash /app/user_code/entrypoint.sh
   shutdownAfterJobFinishes: true
@@ -29,11 +35,28 @@ spec:
         memory: '268435456'
         object-store-memory: '83886080'
       template:
+        metadata:
+          labels:
+            ray.io/job-id: "{{job_id}}"
+            app.kubernetes.io/name: "mlsecops-rayjob"
         spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 100
+            fsGroup: 100
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: ray-head
               image: mlsecops-ray:latest
               imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
               resources:
                 limits:
                   cpu: "1"
@@ -70,6 +93,8 @@ spec:
                   value: "{{aws_access_key_id}}"
                 - name: AWS_SECRET_ACCESS_KEY
                   value: "{{aws_secret_access_key}}"
+                - name: AWS_SESSION_TOKEN
+                  value: "{{aws_session_token}}"
                 - name: MLFLOW_S3_IGNORE_TLS
                   value: "{{mlflow_s3_ignore_tls}}"
                 - name: LAKEFS_ENDPOINT
@@ -83,14 +108,67 @@ spec:
                 - name: MINIO_ENDPOINT
                   value: "{{minio_endpoint}}"
               volumeMounts:
-                - name: workspace-volume
-                  mountPath: /app/workspace
                 - name: code-volume
                   mountPath: /app/user_code
+                - name: tmp-volume
+                  mountPath: /tmp
           volumes:
-            - name: workspace-volume
-              hostPath:
-                path: {{project_root}}
             - name: code-volume
               configMap:
                 name: rayjob-code-{{job_id}}
+            - name: tmp-volume
+              emptyDir: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rayjob-netpol-{{job_id}}
+  namespace: default
+  labels:
+    ray.io/job-id: "{{job_id}}"
+    app.kubernetes.io/name: "mlsecops-rayjob"
+spec:
+  podSelector:
+    matchLabels:
+      ray.io/job-id: "{{job_id}}"
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow communication within Ray cluster and health probes
+    - from:
+        - podSelector:
+            matchLabels:
+              ray.io/job-id: "{{job_id}}"
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 8265
+        - protocol: TCP
+          port: 10001
+        - protocol: TCP
+          port: 52365
+  egress:
+    # 1. Allow DNS lookups
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. Allow communication within the Ray cluster
+    - to:
+        - podSelector:
+            matchLabels:
+              ray.io/job-id: "{{job_id}}"
+    # 3. Allow egress strictly to MLSecOps platform services
+    - ports:
+        - protocol: TCP
+          port: 8000   # LakeFS
+        - protocol: TCP
+          port: 9000   # MinIO
+        - protocol: TCP
+          port: 5000   # MLflow

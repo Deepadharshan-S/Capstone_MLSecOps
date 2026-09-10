@@ -1,11 +1,10 @@
 import re
-from typing import Optional, Any
+from typing import Optional
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.user import User
 from app.models.dataset import Dataset
 from app.core.logging_config import log_audit_event
 from app.services.interfaces import VersionControlService, ObjectStorageService

@@ -67,3 +67,12 @@ class ManageDeploymentResponse(BaseModel):
     deployment_id: str
     action_taken: str
     triggered_by: str
+
+class UploadModelResponse(BaseModel):
+    message: str
+    model_id: str
+    model_name: str
+    version: Optional[str] = None
+    experiment_name: str
+    uploaded_by: str
+    status: str
