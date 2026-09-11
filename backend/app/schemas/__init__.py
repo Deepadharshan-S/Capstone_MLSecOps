@@ -9,12 +9,14 @@ from app.schemas.user import (
 from app.schemas.token import Token
 from app.schemas.ml_ops import (
     TrainModelSchema,
+    TrainPipelineSchema,
     DeployModelSchema,
     ManageDeploymentSchema,
     TrainModelResponse,
     ModelListResponse,
     DeployModelResponse,
     ManageDeploymentResponse,
+    UploadModelResponse,
 )
 from app.schemas.dataset import (
     DatasetResponse,
@@ -38,12 +40,14 @@ __all__ = [
     "MessageResponse",
     "Token",
     "TrainModelSchema",
+    "TrainPipelineSchema",
     "DeployModelSchema",
     "ManageDeploymentSchema",
     "TrainModelResponse",
     "ModelListResponse",
     "DeployModelResponse",
     "ManageDeploymentResponse",
+    "UploadModelResponse",
     "DatasetResponse",
     "DatasetCommitRequest",
     "CommitResponse",

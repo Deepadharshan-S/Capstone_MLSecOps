@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     # MLflow config
     MLFLOW_TRACKING_URI: str = "http://localhost:5000"
 
+    # Upload limits
+    MAX_MODEL_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024  # 100MB default limit
+
+    # Training Execution & Sandboxing
+    ALLOW_LOCAL_RAY_FALLBACK: bool = False
+
+    # Optional dedicated scoped training credentials (if not set, MinIO STS assume_role is used)
+    MINIO_TRAINING_ACCESS_KEY_ID: Optional[str] = None
+    MINIO_TRAINING_SECRET_ACCESS_KEY: Optional[str] = None
+    LAKEFS_TRAINING_ACCESS_KEY_ID: Optional[str] = None
+    LAKEFS_TRAINING_SECRET_ACCESS_KEY: Optional[str] = None
+
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         if not self.DATABASE_URL:

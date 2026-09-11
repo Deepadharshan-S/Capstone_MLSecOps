@@ -14,7 +14,9 @@ from app.models.user import User
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/auth/login",
     scopes={
-        "datasets:upload": "Upload new datasets to the MLSecOps platform",
+        "datasets:view": "View and inspect datasets, metadata, and version history",
+        "datasets:upload": "Upload new datasets and commit changes to the platform",
+        "datasets:delete": "Delete datasets and underlying repositories",
         "models:train": "Start and monitor training jobs",
         "models:view": "View details of trained ML models",
         "models:deploy": "Deploy trained models to target environments",
@@ -22,6 +24,7 @@ oauth2_scheme = OAuth2PasswordBearer(
         "users:manage": "Manage user accounts, roles, and view security audit logs",
     },
 )
+
 
 
 def get_current_user(
