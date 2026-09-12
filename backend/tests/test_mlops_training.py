@@ -7,7 +7,7 @@ from app.main import app
 client = TestClient(app, base_url="https://testserver.local")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def user_tokens():
     """
     Retrieves OAuth2 access tokens for test users.

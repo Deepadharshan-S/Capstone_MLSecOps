@@ -17,6 +17,10 @@ from app.schemas.ml_ops import (
     DeployModelResponse,
     ManageDeploymentResponse,
     UploadModelResponse,
+    PredictionRequestSchema,
+    PredictionResponseSchema,
+    DeploymentItem,
+    DeploymentListResponse,
 )
 from app.schemas.dataset import (
     DatasetResponse,
@@ -48,6 +52,10 @@ __all__ = [
     "DeployModelResponse",
     "ManageDeploymentResponse",
     "UploadModelResponse",
+    "PredictionRequestSchema",
+    "PredictionResponseSchema",
+    "DeploymentItem",
+    "DeploymentListResponse",
     "DatasetResponse",
     "DatasetCommitRequest",
     "CommitResponse",
