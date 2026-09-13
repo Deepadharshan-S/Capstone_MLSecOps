@@ -140,6 +140,7 @@ def test_upload_model_success_with_explicit_name(
     mock_version = MagicMock()
     mock_version.version = "1"
     mock_client.get_latest_versions.return_value = [mock_version]
+    mock_client.search_model_versions.return_value = [mock_version]
     mock_mlflow_client_cls.return_value = mock_client
 
     model_bytes = pickle.dumps(DummyModel())
@@ -195,6 +196,7 @@ def test_upload_model_defaults_name_from_filename(
     mock_version = MagicMock()
     mock_version.version = "2"
     mock_client.get_latest_versions.return_value = [mock_version]
+    mock_client.search_model_versions.return_value = [mock_version]
     mock_mlflow_client_cls.return_value = mock_client
 
     model_bytes = pickle.dumps(DummyModel())

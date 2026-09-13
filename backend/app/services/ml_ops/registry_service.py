@@ -238,11 +238,22 @@ class ModelRegistryService:
             client = MlflowClient()
             model_version = None
             try:
-                latest_versions = client.get_latest_versions(final_model_name)
-                if latest_versions:
-                    model_version = str(latest_versions[-1].version)
+                all_versions = client.search_model_versions(
+                    f"name = '{final_model_name}'", order_by=["version_number DESC"], max_results=1
+                )
+                if all_versions:
+                    model_version = str(all_versions[0].version)
+                else:
+                    latest_versions = client.get_latest_versions(final_model_name)
+                    if latest_versions:
+                        model_version = str(latest_versions[-1].version)
             except Exception:
-                pass
+                try:
+                    latest_versions = client.get_latest_versions(final_model_name)
+                    if latest_versions:
+                        model_version = str(latest_versions[-1].version)
+                except Exception:
+                    pass
 
             log_audit_event(
                 "model_upload_success",

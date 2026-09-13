@@ -1,13 +1,10 @@
 import uuid
-import time
 import pytest
 from fastapi.testclient import TestClient
 from mlflow.tracking import MlflowClient
 
 from app.main import app
 from app.core.config import settings
-from app.db.session import SessionLocal
-from app.models.user import User
 
 client = TestClient(app, base_url="https://testserver.local")
 
@@ -109,11 +106,6 @@ def test_model_deploy_production_alias(user_tokens, deployed_model_name):
 def test_real_time_prediction_dataframe_records(user_tokens, deployed_model_name):
     """Tests real-time prediction using dataframe_records format."""
     viewer_headers = {"Authorization": f"Bearer {user_tokens['viewer_user']}"}
-
-    # Fetch model to know number of features
-    mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
-    version_obj = mlflow_client.get_model_version(deployed_model_name, "1")
-    run = mlflow_client.get_run(version_obj.run_id)
     
     # Try sample input
     predict_payload = {

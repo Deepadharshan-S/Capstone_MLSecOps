@@ -404,7 +404,6 @@ def test_multimodel_nested_runs_and_custom_model_name(user_tokens):
     3. The best candidate model (champion) is automatically selected and registered.
     4. Each child run has its own isolated metrics with zero collision.
     """
-    import os
     from mlflow.tracking import MlflowClient
     from app.core.config import settings
 

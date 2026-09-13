@@ -1,7 +1,7 @@
 from typing import Optional
 
 from app.models.user import User
-from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
+from app.services.ml_ops.utils import get_scoped_training_credentials
 from app.services.ml_ops.training_service import ModelTrainingService
 from app.services.ml_ops.deployment_service import ModelDeploymentService
 from app.services.ml_ops.serving_service import ModelServingService

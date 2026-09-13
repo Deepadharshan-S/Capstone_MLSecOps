@@ -23,7 +23,7 @@ class DatasetDiffService:
         self, db: Session, dataset_name: str, left_ref: str, right_ref: str, compare_type: str = "three_dot"
     ) -> list[dict]:
         """Compares two references (e.g. branches or commit IDs) and returns a diff list."""
-        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        _, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
         try:
             return self.version_control_service.compare(sanitized_repo_name, left_ref, right_ref, compare_type)
         except Exception as e:

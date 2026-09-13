@@ -8,7 +8,7 @@ from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
 from app.services.ml_ops.utils import get_scoped_training_credentials
-from app.services.ml_ops.ray_wrapper import get_repo_name
+from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
 
 
@@ -30,7 +30,6 @@ class ModelDeploymentService:
         Deploys a registered MLflow model to a live Kubernetes RayService CRD.
         Updates model version stages, aliases, and deployment metadata tags directly in MLflow.
         """
-        import mlflow
         from mlflow.tracking import MlflowClient
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
@@ -42,19 +41,21 @@ class ModelDeploymentService:
         try:
             # 1. Resolve model version from MLflow Model Registry
             try:
-                reg_model = mlflow_client.get_registered_model(model_id)
+                mlflow_client.get_registered_model(model_id)
                 registered = True
                 if version and version != "latest":
                     mv = mlflow_client.get_model_version(model_id, str(version))
                     target_version = str(mv.version)
                 else:
-                    latest_versions = mlflow_client.get_latest_versions(model_id)
-                    if latest_versions:
-                        target_version = str(latest_versions[-1].version)
+                    all_versions = mlflow_client.search_model_versions(
+                        f"name = '{model_id}'", order_by=["version_number DESC"], max_results=1
+                    )
+                    if all_versions:
+                        target_version = str(all_versions[0].version)
                     else:
-                        all_versions = mlflow_client.search_model_versions(f"name = '{model_id}'")
-                        if all_versions:
-                            target_version = str(all_versions[0].version)
+                        latest_versions = mlflow_client.get_latest_versions(model_id)
+                        if latest_versions:
+                            target_version = str(latest_versions[-1].version)
                 model_uri = f"models:/{model_id}/{target_version}"
             except Exception as ml_err:
                 print(f"Notice: Model '{model_id}' not found in MLflow registry ({ml_err}). Using mock/fallback deployment.")
@@ -70,9 +71,12 @@ class ModelDeploymentService:
             if registered:
                 stage = "Production" if environment.lower() == "production" else "Staging"
                 try:
-                    mlflow_client.transition_model_version_stage(
-                        name=model_id, version=target_version, stage=stage
-                    )
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=FutureWarning)
+                        mlflow_client.transition_model_version_stage(
+                            name=model_id, version=target_version, stage=stage
+                        )
                 except Exception as st_err:
                     print(f"Notice: Could not transition stage in MLflow: {st_err}")
 
@@ -180,7 +184,6 @@ class ModelDeploymentService:
         Supports filtering by status ('active', 'stopped'), environment ('staging', 'production'),
         or active_only (hides stopped deployments).
         """
-        import mlflow
         from mlflow.tracking import MlflowClient
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
@@ -242,7 +245,6 @@ class ModelDeploymentService:
         Executes lifecycle actions (restart, stop, rollback) on a model deployment.
         Updates MLflow tags and deletes/restarts Kubernetes RayService resources.
         """
-        import mlflow
         from mlflow.tracking import MlflowClient
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
