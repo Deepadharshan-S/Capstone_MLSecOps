@@ -166,10 +166,8 @@ class ModelServingService:
                             err_detail = exec_res.stderr.strip() or exec_res.stdout.strip()
                             raise HTTPException(status_code=400, detail=f"Inference error: {err_detail}")
                         else:
-                            raise HTTPException(
-                                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                                detail=f"RayService deployment for '{matched_model}' is initializing or not ready to accept traffic. Please try again shortly."
-                            )
+                            print(f"Notice: RayService pod inference returned {exec_res.returncode}. Falling back to local loader.")
+                            break
             except HTTPException:
                 raise
             except Exception as k8s_err:

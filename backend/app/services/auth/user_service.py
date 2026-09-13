@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.models.user import User
-from app.schemas.user import UserUpdateRole
+from app.schemas.auth import UserUpdateRole
 from app.core.logging_config import log_audit_event, get_all_audit_logs
 
 

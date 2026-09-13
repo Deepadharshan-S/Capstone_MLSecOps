@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Security, status, Depends, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, Security, status, Depends, File, UploadFile, Form, HTTPException, Query
 from typing import Optional
 from app.core.rate_limiter import RateLimiter
 
 from app.api.permissions import get_current_active_user
 from app.models.user import User
-from app.schemas import (
+from app.schemas.ml_ops import (
     TrainModelSchema,
     TrainPipelineSchema,
     DeployModelSchema,
@@ -24,10 +24,12 @@ from app.services.dependencies import (
     get_model_serving_service,
     get_model_registry_service,
 )
-from app.services.model_training_service import ModelTrainingService
-from app.services.model_deployment_service import ModelDeploymentService
-from app.services.model_serving_service import ModelServingService
-from app.services.model_registry_service import ModelRegistryService
+from app.services.ml_ops import (
+    ModelTrainingService,
+    ModelDeploymentService,
+    ModelServingService,
+    ModelRegistryService,
+)
 
 router = APIRouter(prefix="", tags=["mlops"])
 
@@ -160,14 +162,23 @@ def deploy_model(
     dependencies=[Depends(RateLimiter(times=30, seconds=60))],
 )
 def list_deployments(
+    status: Optional[str] = Query(None, description="Filter by deployment status (e.g. 'active', 'stopped')"),
+    environment: Optional[str] = Query(None, description="Filter by environment (e.g. 'staging', 'production')"),
+    active_only: bool = Query(False, description="When true, returns only active/running deployments"),
     user: User = Security(get_current_active_user, scopes=["models:view"]),
     deployment_service: ModelDeploymentService = Depends(get_model_deployment_service),
 ):
     """
-    List all model deployments with their MLflow metadata and live Kubernetes RayService status.
+    List model deployments with optional filtering by status, environment, or active-only.
+    Reconciles MLflow metadata with live Kubernetes RayService status.
     Accessible to all authenticated roles.
     """
-    return deployment_service.retrieve_deployments(user)
+    return deployment_service.retrieve_deployments(
+        user=user,
+        status=status,
+        environment=environment,
+        active_only=active_only,
+    )
 
 
 @router.post(

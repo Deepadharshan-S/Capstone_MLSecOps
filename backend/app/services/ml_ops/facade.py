@@ -1,11 +1,11 @@
 from typing import Optional
 
 from app.models.user import User
-from app.services.ml_ops_utils import get_scoped_training_credentials, to_k8s_endpoint
-from app.services.model_training_service import ModelTrainingService
-from app.services.model_deployment_service import ModelDeploymentService
-from app.services.model_serving_service import ModelServingService
-from app.services.model_registry_service import ModelRegistryService
+from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
+from app.services.ml_ops.training_service import ModelTrainingService
+from app.services.ml_ops.deployment_service import ModelDeploymentService
+from app.services.ml_ops.serving_service import ModelServingService
+from app.services.ml_ops.registry_service import ModelRegistryService
 
 
 class MLOpsService:
@@ -114,8 +114,19 @@ class MLOpsService:
             replicas=replicas,
         )
 
-    def retrieve_deployments(self, user: User) -> dict:
-        return self.deployment.retrieve_deployments(user=user)
+    def retrieve_deployments(
+        self,
+        user: User,
+        status: Optional[str] = None,
+        environment: Optional[str] = None,
+        active_only: bool = False,
+    ) -> dict:
+        return self.deployment.retrieve_deployments(
+            user=user,
+            status=status,
+            environment=environment,
+            active_only=active_only,
+        )
 
     def perform_deployment_management(
         self, deployment_id: str, action: str, user: User

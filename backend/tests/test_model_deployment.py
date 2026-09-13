@@ -174,6 +174,17 @@ def test_deployment_listing(user_tokens, deployed_model_name):
     assert "rayservice_name" in dep
     assert "endpoint_url" in dep
 
+    # Test filtering by active_only and environment
+    resp_active = client.get("/api/deployments?active_only=true", headers=viewer_headers)
+    assert resp_active.status_code == 200
+    for d in resp_active.json()["deployments"]:
+        assert d["status"] not in ["stopped", "failed"]
+
+    resp_env = client.get("/api/deployments?environment=production", headers=viewer_headers)
+    assert resp_env.status_code == 200
+    for d in resp_env.json()["deployments"]:
+        assert d["environment"] == "production"
+
 
 def test_deployment_management_stop_and_restart(user_tokens, deployed_model_name):
     """Verifies stopping and restarting a deployment."""

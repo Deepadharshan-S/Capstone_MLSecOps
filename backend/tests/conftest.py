@@ -4,7 +4,7 @@ import boto3
 from botocore.client import Config
 
 from app.core.config import settings
-from app.services.data_service import data_service
+from app.services.dataset import data_service
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_after_tests():

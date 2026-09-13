@@ -1,26 +1,11 @@
-from app.schemas.user import (
+from app.schemas.auth import (
     UserBase,
     UserCreate,
     UserResponse,
     UserUpdateRole,
     AuditLogResponse,
     MessageResponse,
-)
-from app.schemas.token import Token
-from app.schemas.ml_ops import (
-    TrainModelSchema,
-    TrainPipelineSchema,
-    DeployModelSchema,
-    ManageDeploymentSchema,
-    TrainModelResponse,
-    ModelListResponse,
-    DeployModelResponse,
-    ManageDeploymentResponse,
-    UploadModelResponse,
-    PredictionRequestSchema,
-    PredictionResponseSchema,
-    DeploymentItem,
-    DeploymentListResponse,
+    Token,
 )
 from app.schemas.dataset import (
     DatasetResponse,
@@ -34,8 +19,25 @@ from app.schemas.dataset import (
     DatasetMetadataResponse,
     DatasetMetadataUpdateResponse,
 )
+from app.schemas.ml_ops import (
+    TrainModelSchema,
+    TrainPipelineSchema,
+    DeployModelSchema,
+    ManageDeploymentSchema,
+    TrainModelResponse,
+    ModelItem,
+    ModelListResponse,
+    DeployModelResponse,
+    ManageDeploymentResponse,
+    UploadModelResponse,
+    PredictionRequestSchema,
+    PredictionResponseSchema,
+    DeploymentItem,
+    DeploymentListResponse,
+)
 
 __all__ = [
+    # Auth & User
     "UserBase",
     "UserCreate",
     "UserResponse",
@@ -43,19 +45,7 @@ __all__ = [
     "AuditLogResponse",
     "MessageResponse",
     "Token",
-    "TrainModelSchema",
-    "TrainPipelineSchema",
-    "DeployModelSchema",
-    "ManageDeploymentSchema",
-    "TrainModelResponse",
-    "ModelListResponse",
-    "DeployModelResponse",
-    "ManageDeploymentResponse",
-    "UploadModelResponse",
-    "PredictionRequestSchema",
-    "PredictionResponseSchema",
-    "DeploymentItem",
-    "DeploymentListResponse",
+    # Dataset
     "DatasetResponse",
     "DatasetCommitRequest",
     "CommitResponse",
@@ -66,4 +56,19 @@ __all__ = [
     "RollbackResponse",
     "DatasetMetadataResponse",
     "DatasetMetadataUpdateResponse",
+    # MLOps
+    "TrainModelSchema",
+    "TrainPipelineSchema",
+    "DeployModelSchema",
+    "ManageDeploymentSchema",
+    "TrainModelResponse",
+    "ModelItem",
+    "ModelListResponse",
+    "DeployModelResponse",
+    "ManageDeploymentResponse",
+    "UploadModelResponse",
+    "PredictionRequestSchema",
+    "PredictionResponseSchema",
+    "DeploymentItem",
+    "DeploymentListResponse",
 ]

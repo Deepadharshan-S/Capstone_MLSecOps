@@ -1,14 +1,23 @@
 from app.services.interfaces import VersionControlService, ObjectStorageService
-from app.services.lakefs_service import lakefs_service
-from app.services.s3_storage_service import S3StorageService
-from app.services.data_service import data_service, DataService
-from app.services.auth_service import auth_service, AuthService
-from app.services.user_service import user_service, UserService
-from app.services.ml_ops_service import ml_ops_service, MLOpsService
-from app.services.model_training_service import ModelTrainingService
-from app.services.model_deployment_service import ModelDeploymentService
-from app.services.model_serving_service import ModelServingService
-from app.services.model_registry_service import ModelRegistryService
+from app.services.dataset import (
+    lakefs_service,
+    S3StorageService,
+    data_service,
+    DataService,
+    DatasetCatalogService,
+    DatasetVersioningService,
+    DatasetStorageService,
+    DatasetDiffService,
+)
+from app.services.auth import auth_service, AuthService, user_service, UserService
+from app.services.ml_ops import (
+    ml_ops_service,
+    MLOpsService,
+    ModelTrainingService,
+    ModelDeploymentService,
+    ModelServingService,
+    ModelRegistryService,
+)
 
 # Shared Singletons
 _storage_service = S3StorageService()
@@ -30,8 +39,28 @@ def get_version_control_service() -> VersionControlService:
 
 
 def get_data_service() -> DataService:
-    """Returns the singleton DataService instance."""
+    """Returns the singleton DataService facade instance."""
     return _data_service
+
+
+def get_dataset_catalog_service() -> DatasetCatalogService:
+    """Returns the singleton DatasetCatalogService instance."""
+    return _data_service.catalog
+
+
+def get_dataset_versioning_service() -> DatasetVersioningService:
+    """Returns the singleton DatasetVersioningService instance."""
+    return _data_service.versioning
+
+
+def get_dataset_storage_service() -> DatasetStorageService:
+    """Returns the singleton DatasetStorageService instance."""
+    return _data_service.storage
+
+
+def get_dataset_diff_service() -> DatasetDiffService:
+    """Returns the singleton DatasetDiffService instance."""
+    return _data_service.diff
 
 
 def get_auth_service() -> AuthService:

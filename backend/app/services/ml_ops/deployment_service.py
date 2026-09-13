@@ -7,8 +7,8 @@ from typing import Optional
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
-from app.services.ml_ops_utils import get_scoped_training_credentials
-from app.services.ray_wrapper import get_repo_name
+from app.services.ml_ops.utils import get_scoped_training_credentials
+from app.services.ml_ops.ray_wrapper import get_repo_name
 from fastapi import HTTPException, status
 
 
@@ -102,7 +102,7 @@ class ModelDeploymentService:
                         print(f"Notice: Could not set tag {tk} on model version: {tag_err}")
 
             # 3. Render and apply KubeRay RayService Manifest
-            template_path = os.path.join(os.path.dirname(__file__), "..", "templates", "rayservice_template.yaml")
+            template_path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "rayservice_template.yaml")
             serve_wrapper_path = os.path.join(os.path.dirname(__file__), "serve_wrapper.py")
 
             if os.path.exists(template_path) and os.path.exists(serve_wrapper_path):
@@ -167,10 +167,18 @@ class ModelDeploymentService:
             print(f"Error during perform_model_deploy: {e}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-    def retrieve_deployments(self, user: User) -> dict:
+    def retrieve_deployments(
+        self,
+        user: User,
+        status: Optional[str] = None,
+        environment: Optional[str] = None,
+        active_only: bool = False,
+    ) -> dict:
         """
-        Retrieves all model deployments tracked via MLflow Model Version tags,
+        Retrieves model deployments tracked via MLflow Model Version tags,
         reconciling them with live Kubernetes RayService status.
+        Supports filtering by status ('active', 'stopped'), environment ('staging', 'production'),
+        or active_only (hides stopped deployments).
         """
         import mlflow
         from mlflow.tracking import MlflowClient
@@ -216,7 +224,15 @@ class ModelDeploymentService:
         except Exception as e:
             print(f"Error searching deployments in MLflow: {e}")
 
-        log_audit_event("deployments_view", user.username, None, "Viewed active model deployments list.")
+        # Apply optional filtering
+        if active_only:
+            deployments = [d for d in deployments if d["status"].lower() not in ["stopped", "failed"]]
+        if status:
+            deployments = [d for d in deployments if d["status"].lower() == status.strip().lower()]
+        if environment:
+            deployments = [d for d in deployments if d["environment"].lower() == environment.strip().lower()]
+
+        log_audit_event("deployments_view", user.username, None, "Viewed model deployments list.")
         return {"deployments": deployments}
 
     def perform_deployment_management(

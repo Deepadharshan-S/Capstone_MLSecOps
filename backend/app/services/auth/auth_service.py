@@ -18,7 +18,7 @@ from app.core.security import (
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.models.blacklisted_token import BlacklistedToken
-from app.schemas.user import UserCreate
+from app.schemas.auth import UserCreate
 from app.core.logging_config import log_audit_event
 
 

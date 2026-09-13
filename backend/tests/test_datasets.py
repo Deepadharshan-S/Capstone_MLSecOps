@@ -200,7 +200,7 @@ def test_dataset_lifecycle(user_tokens):
     assert "id" in commit1
 
     # 5. Create branch & List branches (using data_service directly since HTTP endpoints are removed)
-    from app.services.data_service import data_service
+    from app.services.dataset import data_service
     db = TestingSessionLocal()
     try:
         data_service.create_branch(db, dataset_name, "experiment-v1", "main", username="ds_user")

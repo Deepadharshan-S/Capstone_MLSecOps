@@ -5,7 +5,7 @@ from fastapi import HTTPException
 
 from app.core.config import settings
 from app.models.user import User
-from app.services.ml_ops_service import ml_ops_service
+from app.services.ml_ops import ml_ops_service
 
 
 @pytest.fixture(scope="session", autouse=True)

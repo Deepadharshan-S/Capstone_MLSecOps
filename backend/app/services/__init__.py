@@ -1,11 +1,57 @@
-from app.services.ml_ops_service import MLOpsService, ml_ops_service
-from app.services.model_training_service import ModelTrainingService
-from app.services.model_deployment_service import ModelDeploymentService
-from app.services.model_serving_service import ModelServingService
-from app.services.model_registry_service import ModelRegistryService
-from app.services.ml_ops_utils import get_scoped_training_credentials, to_k8s_endpoint
+from app.services.dataset import (
+    DataService,
+    data_service,
+    DatasetCatalogService,
+    DatasetVersioningService,
+    DatasetStorageService,
+    DatasetDiffService,
+    LakeFSService,
+    lakefs_service,
+    S3StorageService,
+    get_repo_name,
+    get_dataset_or_404,
+)
+from app.services.ml_ops import (
+    MLOpsService,
+    ml_ops_service,
+    ModelTrainingService,
+    ModelDeploymentService,
+    ModelServingService,
+    ModelRegistryService,
+    get_scoped_training_credentials,
+    to_k8s_endpoint,
+    render_rayjob_manifest,
+    submit_rayjob_to_k8s,
+    spawn_local_ray_subprocess,
+)
+from app.services.auth import (
+    AuthService,
+    auth_service,
+    UserService,
+    user_service,
+)
+from app.services.interfaces import (
+    VersionControlService,
+    ObjectStorageService,
+)
 
 __all__ = [
+    # Interfaces
+    "VersionControlService",
+    "ObjectStorageService",
+    # Dataset Domain
+    "DataService",
+    "data_service",
+    "DatasetCatalogService",
+    "DatasetVersioningService",
+    "DatasetStorageService",
+    "DatasetDiffService",
+    "LakeFSService",
+    "lakefs_service",
+    "S3StorageService",
+    "get_repo_name",
+    "get_dataset_or_404",
+    # MLOps Domain
     "MLOpsService",
     "ml_ops_service",
     "ModelTrainingService",
@@ -14,4 +60,12 @@ __all__ = [
     "ModelRegistryService",
     "get_scoped_training_credentials",
     "to_k8s_endpoint",
+    "render_rayjob_manifest",
+    "submit_rayjob_to_k8s",
+    "spawn_local_ray_subprocess",
+    # Auth Domain
+    "AuthService",
+    "auth_service",
+    "UserService",
+    "user_service",
 ]

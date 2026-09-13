@@ -105,7 +105,7 @@ class ModelRegistryService:
         import pickle
         import mlflow
         from mlflow.tracking import MlflowClient
-        from app.services.ray_wrapper import ModelWrapper
+        from app.services.ml_ops.ray_wrapper import ModelWrapper
 
         log_audit_event(
             "model_upload_initiated",
