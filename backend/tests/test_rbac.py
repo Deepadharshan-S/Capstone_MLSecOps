@@ -491,7 +491,7 @@ def test_registration_integrity_error_handling():
 def test_health_endpoint_failure_modes(monkeypatch):
     """Verify that /health returns 503 if database or lakeFS is unhealthy."""
     from unittest.mock import MagicMock
-    from app.services.data_service import data_service
+    from app.services.dataset import data_service
 
     # Case 1: Database failure
     original_get_db = app.dependency_overrides.get(get_db)

@@ -29,7 +29,8 @@ env/
 *.db
 *.sqlite
 *.sqlite3
-backend/logs/
+logs/
+**/logs/
 
 # ===================================
 # Testing
@@ -37,6 +38,8 @@ backend/logs/
 
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # ===================================
@@ -118,11 +121,26 @@ mlruns/
 artifacts/
 checkpoints/
 data/
+*.pkl
+*.joblib
 
 # ===================================
 # Ray
 # ===================================
 
 ray_results/
+ray_logs/
+.ray/
+
+# ===================================
+# Frontend / Node
+# ===================================
+
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
 **/.env

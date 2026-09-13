@@ -18,7 +18,8 @@ from app.core.rate_limiter import RateLimiter
 from app.api.permissions import get_current_active_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas import (
+from app.schemas.auth import MessageResponse
+from app.schemas.dataset import (
     DatasetResponse,
     DatasetCommitRequest,
     CommitResponse,
@@ -29,10 +30,9 @@ from app.schemas import (
     RollbackResponse,
     DatasetMetadataResponse,
     DatasetMetadataUpdateResponse,
-    MessageResponse,
 )
 from app.services.dependencies import get_data_service
-from app.services.data_service import DataService
+from app.services.dataset import DataService
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 

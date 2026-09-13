@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rayservice-code-{{deployment_id}}
+  namespace: default
+  labels:
+    app.kubernetes.io/name: mlsecops-rayservice
+    deployment_id: "{{deployment_id}}"
+data:
+  serve_wrapper.py: |
+{{serve_wrapper_content_indented}}
+---
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: {{rayservice_name}}
+  namespace: default
+  labels:
+    app.kubernetes.io/name: mlsecops-rayservice
+    deployment_id: "{{deployment_id}}"
+    model_name: "{{model_name_label}}"
+    environment: "{{environment}}"
+spec:
+  serviceUnhealthySecondThreshold: 300
+  rayClusterConfig:
+    rayVersion: '2.57.0'
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: '0.0.0.0'
+        memory: '536870912'
+        object-store-memory: '268435456'
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: kuberay
+            deployment_id: "{{deployment_id}}"
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 100
+            fsGroup: 100
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: code-volume
+              configMap:
+                name: rayservice-code-{{deployment_id}}
+            - name: tmp-volume
+              emptyDir: {}
+          containers:
+            - name: ray-head
+              image: mlsecops-ray:latest
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: code-volume
+                  mountPath: /app/user_code
+                - name: tmp-volume
+                  mountPath: /tmp
+              resources:
+                limits:
+                  cpu: "1500m"
+                  memory: "2560Mi"
+                requests:
+                  cpu: "500m"
+                  memory: "768Mi"
+              env:
+                - name: MLFLOW_TRACKING_URI
+                  value: "http://host.docker.internal:5000"
+                - name: MLFLOW_S3_ENDPOINT_URL
+                  value: "http://host.docker.internal:9000"
+                - name: AWS_ACCESS_KEY_ID
+                  value: "{{aws_access_key_id}}"
+                - name: AWS_SECRET_ACCESS_KEY
+                  value: "{{aws_secret_access_key}}"
+                - name: AWS_SESSION_TOKEN
+                  value: "{{aws_session_token}}"
+                - name: MLFLOW_S3_IGNORE_TLS
+                  value: "true"
+                - name: MODEL_URI
+                  value: "{{model_uri}}"
+                - name: PYTHONPATH
+                  value: "/app/user_code"
+  serveConfigV2: |
+    applications:
+      - name: mlsecops_serve_app
+        route_prefix: /
+        import_path: serve_wrapper:entrypoint
+        runtime_env:
+          env_vars:
+            PYTHONPATH: "/app/user_code"
+            MLFLOW_TRACKING_URI: "http://host.docker.internal:5000"
+            MLFLOW_S3_ENDPOINT_URL: "http://host.docker.internal:9000"
+            AWS_ACCESS_KEY_ID: "{{aws_access_key_id}}"
+            AWS_SECRET_ACCESS_KEY: "{{aws_secret_access_key}}"
+            AWS_SESSION_TOKEN: "{{aws_session_token}}"
+            MLFLOW_S3_IGNORE_TLS: "true"
+            MODEL_URI: "{{model_uri}}"

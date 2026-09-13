@@ -6,10 +6,9 @@ from sqlalchemy.orm import Session
 from app.core.rate_limiter import RateLimiter
 
 from app.db.session import get_db
-from app.schemas.token import Token
-from app.schemas.user import UserCreate, UserResponse, MessageResponse
+from app.schemas.auth import Token, UserCreate, UserResponse, MessageResponse
 from app.services.dependencies import get_auth_service
-from app.services.auth_service import AuthService
+from app.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
