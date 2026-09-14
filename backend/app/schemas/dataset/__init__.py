@@ -9,6 +9,10 @@ from app.schemas.dataset.versioning import (
     CommitResponse,
     RollbackRequest,
     RollbackResponse,
+    CreateBranchRequest,
+    BranchResponse,
+    CreateTagRequest,
+    TagResponse,
 )
 from app.schemas.dataset.storage import FileUploadResponse
 from app.schemas.dataset.diff import CompareResponse
@@ -22,6 +26,10 @@ __all__ = [
     "CommitResponse",
     "RollbackRequest",
     "RollbackResponse",
+    "CreateBranchRequest",
+    "BranchResponse",
+    "CreateTagRequest",
+    "TagResponse",
     "FileUploadResponse",
     "CompareResponse",
 ]

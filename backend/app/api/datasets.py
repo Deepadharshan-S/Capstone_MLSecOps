@@ -30,6 +30,10 @@ from app.schemas.dataset import (
     RollbackResponse,
     DatasetMetadataResponse,
     DatasetMetadataUpdateResponse,
+    CreateBranchRequest,
+    BranchResponse,
+    CreateTagRequest,
+    TagResponse,
 )
 from app.services.dependencies import get_data_service
 from app.services.dataset import DataService
@@ -264,4 +268,124 @@ def update_dataset_metadata(
     """
     return data_service.update_dataset_metadata(
         db, dataset_name, req.metadata, username=user.username
+    )
+
+
+# --- Branch Management Endpoints ---
+
+
+@router.get("/{dataset_name}/branches", response_model=list[BranchResponse])
+def list_branches(
+    dataset_name: str,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Lists all branches in the dataset's lakeFS repository.
+    """
+    return data_service.list_branches(db, dataset_name)
+
+
+@router.post(
+    "/{dataset_name}/branches",
+    response_model=BranchResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
+def create_branch(
+    dataset_name: str,
+    req: CreateBranchRequest,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Creates a new branch from a source branch in the dataset repository.
+    """
+    return data_service.create_branch(
+        db=db,
+        dataset_name=dataset_name,
+        branch_name=req.branch_name,
+        source_branch=req.source_branch or "main",
+        username=user.username,
+    )
+
+
+@router.delete("/{dataset_name}/branches/{branch_name}", response_model=MessageResponse)
+def delete_branch(
+    dataset_name: str,
+    branch_name: str,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:delete"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Deletes a branch in the dataset repository (default branch cannot be deleted).
+    """
+    return data_service.delete_branch(
+        db=db,
+        dataset_name=dataset_name,
+        branch_name=branch_name,
+        username=user.username,
+    )
+
+
+# --- Tag Management Endpoints ---
+
+
+@router.get("/{dataset_name}/tags", response_model=list[TagResponse])
+def list_tags(
+    dataset_name: str,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Lists all tags in the dataset repository.
+    """
+    return data_service.list_tags(db, dataset_name)
+
+
+@router.post(
+    "/{dataset_name}/tags",
+    response_model=TagResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
+def create_tag(
+    dataset_name: str,
+    req: CreateTagRequest,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Creates a tag pointing to a specific commit or branch reference in the dataset repository.
+    """
+    return data_service.create_tag(
+        db=db,
+        dataset_name=dataset_name,
+        tag_name=req.tag_name,
+        target_ref=req.target_ref or "main",
+        username=user.username,
+    )
+
+
+@router.delete("/{dataset_name}/tags/{tag_name}", response_model=MessageResponse)
+def delete_tag(
+    dataset_name: str,
+    tag_name: str,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:delete"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Deletes a tag in the dataset repository.
+    """
+    return data_service.delete_tag(
+        db=db,
+        dataset_name=dataset_name,
+        tag_name=tag_name,
+        username=user.username,
     )
