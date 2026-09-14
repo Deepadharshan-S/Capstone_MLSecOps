@@ -18,6 +18,10 @@ from app.schemas.dataset import (
     RollbackResponse,
     DatasetMetadataResponse,
     DatasetMetadataUpdateResponse,
+    CreateBranchRequest,
+    BranchResponse,
+    CreateTagRequest,
+    TagResponse,
 )
 from app.schemas.ml_ops import (
     TrainModelSchema,
@@ -56,6 +60,10 @@ __all__ = [
     "RollbackResponse",
     "DatasetMetadataResponse",
     "DatasetMetadataUpdateResponse",
+    "CreateBranchRequest",
+    "BranchResponse",
+    "CreateTagRequest",
+    "TagResponse",
     # MLOps
     "TrainModelSchema",
     "TrainPipelineSchema",

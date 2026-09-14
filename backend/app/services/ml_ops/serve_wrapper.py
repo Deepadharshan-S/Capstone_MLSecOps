@@ -1,11 +1,10 @@
 import os
-import sys
 import time
-import ray
-from ray import serve
-from fastapi import FastAPI, Request, HTTPException
+import mlflow
 import mlflow.pyfunc
 import pandas as pd
+from fastapi import FastAPI, Request, HTTPException
+from ray import serve
 
 app = FastAPI(title="MLSecOps Model Serving")
 

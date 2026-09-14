@@ -9,6 +9,7 @@ from app.core.roles import Role, ROLE_PERMISSIONS
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User
+from app.models.blacklisted_token import BlacklistedToken
 
 # Define the OAuth2 security scheme with all available permissions/scopes
 oauth2_scheme = OAuth2PasswordBearer(
@@ -60,8 +61,6 @@ def get_current_user(
 
     # Check if access token is blacklisted
     if jti:
-        from app.models.blacklisted_token import BlacklistedToken
-
         is_blacklisted = (
             db.query(BlacklistedToken).filter(BlacklistedToken.jti == jti).first()
         )

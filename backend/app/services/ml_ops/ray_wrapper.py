@@ -70,7 +70,6 @@ def download_dataset(repo_name: str, ref_id: str, dest_dir: str) -> str:
 def calculate_metrics(model, data_path, target_col=None) -> tuple:
     """Calculates evaluation metrics (accuracy, precision, recall, f1_score) for the model,
     and returns (metrics_dict, X_features, y_pred)."""
-    import os
     import pandas as pd
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 

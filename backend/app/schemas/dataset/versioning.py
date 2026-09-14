@@ -25,3 +25,23 @@ class RollbackResponse(BaseModel):
     message: str
     new_commit_id: str
     reverted_commit_id: str
+
+
+class CreateBranchRequest(BaseModel):
+    branch_name: str
+    source_branch: Optional[str] = "main"
+
+
+class BranchResponse(BaseModel):
+    name: str
+    head_commit_id: Optional[str] = None
+
+
+class CreateTagRequest(BaseModel):
+    tag_name: str
+    target_ref: Optional[str] = "main"
+
+
+class TagResponse(BaseModel):
+    name: str
+    commit_id: Optional[str] = None

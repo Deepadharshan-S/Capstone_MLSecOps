@@ -30,7 +30,7 @@ class DatasetStorageService:
         username: str,
     ) -> dict:
         """Uploads a file to a branch in the dataset's lakeFS repository."""
-        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        _, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
         try:
             self.version_control_service.upload_file(sanitized_repo_name, branch_name, file_path, content)
             log_audit_event(
@@ -61,7 +61,7 @@ class DatasetStorageService:
         self, db: Session, dataset_name: str, file_path: str, ref_id: str
     ) -> bytes:
         """Downloads / reads file content from a specific ref in the dataset repository."""
-        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        _, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
         try:
             return self.version_control_service.download_file(sanitized_repo_name, ref_id, file_path)
         except Exception as e:

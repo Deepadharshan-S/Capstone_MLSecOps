@@ -473,3 +473,134 @@ def test_dataset_compare_types(user_tokens):
     resp = client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)
     assert resp.status_code == 200
 
+
+def test_dataset_branching_and_tagging_lifecycle(user_tokens):
+    """
+    Tests the complete lifecycle of dataset branching and tagging:
+    1. Register dataset and upload/commit file on 'main'.
+    2. Verify listing branches returns 'main'.
+    3. RBAC: Verify viewer is forbidden (403) from creating branches or tags.
+    4. Create new branch 'feature-exp' from 'main'.
+    5. List branches: confirm both 'main' and 'feature-exp' are returned.
+    6. Upload and commit a file to 'feature-exp'.
+    7. Create tag 'v1.0-test' on 'main'.
+    8. List tags: confirm 'v1.0-test' is present.
+    9. Delete tag 'v1.0-test' and confirm removal.
+    10. Verify default branch ('main') deletion is rejected with 400 Bad Request.
+    11. Delete branch 'feature-exp' and confirm removal.
+    12. Clean up dataset.
+    """
+    dataset_name = f"branch-ds-{uuid.uuid4().hex[:8]}"
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    admin_headers = {"Authorization": f"Bearer {user_tokens['admin_user']}"}
+    viewer_headers = {"Authorization": f"Bearer {user_tokens['viewer_user']}"}
+
+    # 1. Register dataset and commit initial data on 'main'
+    reg_payload = {"name": dataset_name, "description": "Branching & tagging test dataset"}
+    dummy_file = ("init.csv", b"col1,col2\n10,20\n30,40")
+    resp = client.post("/api/datasets", data=reg_payload, files={"file": dummy_file}, headers=ds_headers)
+    assert resp.status_code == 201
+
+    commit_payload = {"message": "Initial commit on main", "metadata": {"author": "ds_user"}}
+    resp = client.post(f"/api/datasets/{dataset_name}/commit?branch=main", json=commit_payload, headers=ds_headers)
+    assert resp.status_code == 200
+
+    # 2. List branches: 'main' must be present
+    resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=ds_headers)
+    assert resp.status_code == 200
+    branches = resp.json()
+    branch_names = [b["name"] for b in branches]
+    assert "main" in branch_names
+
+    # 3. RBAC checks: viewer cannot create branches or tags
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/branches",
+        json={"branch_name": "feature-exp", "source_branch": "main"},
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403
+
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/tags",
+        json={"tag_name": "v1.0-test", "target_ref": "main"},
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403
+
+    # 4. Create new branch 'feature-exp' from 'main'
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/branches",
+        json={"branch_name": "feature-exp", "source_branch": "main"},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 201
+    created_branch = resp.json()
+    assert created_branch["name"] == "feature-exp"
+
+    # 5. List branches: confirm both exist
+    resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=ds_headers)
+    assert resp.status_code == 200
+    branch_names = [b["name"] for b in resp.json()]
+    assert "main" in branch_names
+    assert "feature-exp" in branch_names
+
+    # 6. Upload and commit file on 'feature-exp'
+    feature_file = ("feature.csv", b"feat_a,feat_b\n1,2\n3,4")
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/upload?branch=feature-exp",
+        files={"file": feature_file},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 200
+
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/commit?branch=feature-exp",
+        json={"message": "Feature branch commit"},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 200
+
+    # 7. Create tag 'v1.0-test' on 'main'
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/tags",
+        json={"tag_name": "v1.0-test", "target_ref": "main"},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["name"] == "v1.0-test"
+
+    # 8. List tags
+    resp = client.get(f"/api/datasets/{dataset_name}/tags", headers=ds_headers)
+    assert resp.status_code == 200
+    tag_names = [t["name"] for t in resp.json()]
+    assert "v1.0-test" in tag_names
+
+    # 9. Delete tag
+    resp = client.delete(f"/api/datasets/{dataset_name}/tags/v1.0-test", headers=ds_headers)
+    assert resp.status_code == 200
+    assert "deleted" in resp.json()["message"].lower()
+
+    # Verify tag is removed
+    resp = client.get(f"/api/datasets/{dataset_name}/tags", headers=ds_headers)
+    assert resp.status_code == 200
+    assert "v1.0-test" not in [t["name"] for t in resp.json()]
+
+    # 10. Verify default branch deletion is rejected
+    resp = client.delete(f"/api/datasets/{dataset_name}/branches/main", headers=ds_headers)
+    assert resp.status_code == 400
+    assert "cannot delete default branch" in resp.json()["detail"].lower()
+
+    # 11. Delete branch 'feature-exp'
+    resp = client.delete(f"/api/datasets/{dataset_name}/branches/feature-exp", headers=ds_headers)
+    assert resp.status_code == 200
+    assert "deleted" in resp.json()["message"].lower()
+
+    # Confirm branch removal
+    resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=ds_headers)
+    assert resp.status_code == 200
+    assert "feature-exp" not in [b["name"] for b in resp.json()]
+
+    # 12. Clean up dataset
+    resp = client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)
+    assert resp.status_code == 200
+
