@@ -285,3 +285,15 @@ class ModelRegistryService:
             )
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def check_health(self) -> tuple[bool, str]:
+        """Checks connection/health of the MLflow tracking server."""
+        try:
+            from mlflow.tracking import MlflowClient
+
+            client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
+            client.search_experiments(max_results=1)
+            return True, "connected"
+        except Exception as e:
+            return False, f"error: {str(e)}"
+

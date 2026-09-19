@@ -124,6 +124,9 @@ def test_public_endpoints():
     assert res["status"] == "healthy"
     assert res["database"] == "connected"
     assert res["lakefs"] == "connected"
+    assert res["minio"] == "connected"
+    assert res["mlflow"] == "connected"
+
 
 
 def test_password_complexity():
@@ -489,9 +492,10 @@ def test_registration_integrity_error_handling():
 
 
 def test_health_endpoint_failure_modes(monkeypatch):
-    """Verify that /health returns 503 if database or lakeFS is unhealthy."""
+    """Verify that /health returns 503 if any of database, lakeFS, MinIO, or MLflow is unhealthy."""
     from unittest.mock import MagicMock
     from app.services.dataset import data_service
+    from app.services.dependencies import get_storage_service, get_ml_ops_service
 
     # Case 1: Database failure
     original_get_db = app.dependency_overrides.get(get_db)
@@ -510,6 +514,8 @@ def test_health_endpoint_failure_modes(monkeypatch):
         assert res["status"] == "unhealthy"
         assert "error: DB Connection Lost" in res["database"]
         assert res["lakefs"] == "connected"
+        assert res["minio"] == "connected"
+        assert res["mlflow"] == "connected"
     finally:
         if original_get_db:
             app.dependency_overrides[get_db] = original_get_db
@@ -533,5 +539,48 @@ def test_health_endpoint_failure_modes(monkeypatch):
         assert res["status"] == "unhealthy"
         assert res["database"] == "connected"
         assert "error: lakeFS Offline" in res["lakefs"]
+        assert res["minio"] == "connected"
+        assert res["mlflow"] == "connected"
     finally:
         data_service.client = original_client
+
+    # Case 3: MinIO S3 failure
+    original_storage = app.dependency_overrides.get(get_storage_service)
+    mock_storage = MagicMock()
+    mock_storage.check_health.return_value = (False, "error: MinIO Storage Unreachable")
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    try:
+        r_health = client.get("/health")
+        assert r_health.status_code == 503
+        res = r_health.json()
+        assert res["status"] == "unhealthy"
+        assert res["database"] == "connected"
+        assert res["lakefs"] == "connected"
+        assert "error: MinIO Storage Unreachable" in res["minio"]
+        assert res["mlflow"] == "connected"
+    finally:
+        if original_storage:
+            app.dependency_overrides[get_storage_service] = original_storage
+        else:
+            del app.dependency_overrides[get_storage_service]
+
+    # Case 4: MLflow failure
+    original_mlops = app.dependency_overrides.get(get_ml_ops_service)
+    mock_mlops = MagicMock()
+    mock_mlops.check_health.return_value = (False, "error: MLflow Tracking Server Down")
+    app.dependency_overrides[get_ml_ops_service] = lambda: mock_mlops
+    try:
+        r_health = client.get("/health")
+        assert r_health.status_code == 503
+        res = r_health.json()
+        assert res["status"] == "unhealthy"
+        assert res["database"] == "connected"
+        assert res["lakefs"] == "connected"
+        assert res["minio"] == "connected"
+        assert "error: MLflow Tracking Server Down" in res["mlflow"]
+    finally:
+        if original_mlops:
+            app.dependency_overrides[get_ml_ops_service] = original_mlops
+        else:
+            del app.dependency_overrides[get_ml_ops_service]
+

@@ -150,5 +150,11 @@ class MLOpsService:
             version=version,
         )
 
+    # 5. Health Check Operations
+    def check_health(self) -> tuple[bool, str]:
+        """Checks connection/health of the underlying MLOps backend services (MLflow)."""
+        return self.registry.check_health()
+
 
 ml_ops_service = MLOpsService()
+

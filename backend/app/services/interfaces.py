@@ -7,6 +7,12 @@ class ObjectStorageService(ABC):
         """Deletes all objects in a bucket under the given prefix."""
         pass
 
+    @abstractmethod
+    def check_health(self) -> tuple[bool, str]:
+        """Checks connection/health of the object storage backend. Returns (is_healthy, status_message)."""
+        pass
+
+
 
 class VersionControlService(ABC):
     @property
