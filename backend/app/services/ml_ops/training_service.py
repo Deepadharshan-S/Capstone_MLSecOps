@@ -3,10 +3,13 @@ import sys
 import uuid
 import json
 import tempfile
+from datetime import datetime
 from typing import Optional
 from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.models.user import User
+from app.models.training_job import TrainingJob
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
 from app.services.ml_ops.utils import (
@@ -20,8 +23,124 @@ from app.services.ml_ops.utils import (
 class ModelTrainingService:
     """
     Handles model training jobs, generating Kubernetes RayJob CRD manifests,
-    and executing background local Ray training fallbacks.
+    executing background local Ray training fallbacks, and managing permanent
+    training job lifecycle tracking in PostgreSQL and MinIO.
     """
+
+    def _get_k8s_apis(self):
+        """Returns initialized Kubernetes CustomObjectsApi and CoreV1Api instances."""
+        from kubernetes import client, config
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+        return client.CustomObjectsApi(), client.CoreV1Api()
+
+    @staticmethod
+    def normalize_status(job_status: Optional[str], dep_status: Optional[str]) -> str:
+        """
+        Normalizes KubeRay status fields into one of the 4 API statuses:
+        PENDING, RUNNING, SUCCEEDED, FAILED.
+        """
+        from app.services.ml_ops.rayjob_service import RayJobService
+        return RayJobService.normalize_status(job_status, dep_status)
+
+    def _record_job(
+        self,
+        db: Optional[Session],
+        job_id: str,
+        rayjob_name: str,
+        dataset_id: str,
+        ref: str,
+        model_name: Optional[str],
+        experiment_name: Optional[str],
+        epochs: int,
+        hyperparameters: dict,
+        entrypoint: str,
+        user: User,
+    ) -> None:
+        """Persists the initial TrainingJob record via TrainingJobRepository."""
+        from app.repositories import TrainingJobRepository
+        should_close_db = False
+        if db is None:
+            from app.db.session import SessionLocal
+            db_conn = SessionLocal()
+            should_close_db = True
+        else:
+            db_conn = db
+
+        try:
+            repo = TrainingJobRepository(db_conn)
+            repo.create(TrainingJob(
+                job_id=job_id,
+                rayjob_name=rayjob_name,
+                status="PENDING",
+                dataset_id=dataset_id,
+                ref=ref,
+                model_name=model_name,
+                experiment_name=experiment_name,
+                epochs=epochs,
+                hyperparameters=hyperparameters,
+                entrypoint=entrypoint,
+                created_by_id=getattr(user, "id", None) or uuid.uuid4(),
+                created_by_username=getattr(user, "username", "unknown"),
+                log_path=f"logs/{job_id}/training.log",
+            ))
+        except Exception as db_err:
+            print(f"Notice: Could not persist TrainingJob record to DB ({db_err}).")
+        finally:
+            if should_close_db:
+                db_conn.close()
+
+    @staticmethod
+    def _parse_iso(val: Optional[str]) -> Optional[datetime]:
+        """Parses an ISO format timestamp string into a timezone-aware datetime."""
+        if not val:
+            return None
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    def _archive_pod_logs_if_needed(self, core_api, storage_service, job: TrainingJob) -> None:
+        """Archives head pod logs to MinIO if not already archived."""
+        key = f"logs/{job.job_id}/training.log"
+        existing = storage_service.get_log_content("mlflow", key)
+        if existing is not None and len(existing.strip()) > 0:
+            return
+
+        try:
+            pods = core_api.list_namespaced_pod(
+                namespace="default",
+                label_selector=f"ray.io/job-id={job.job_id}",
+            )
+            if pods.items:
+                pod_name = pods.items[0].metadata.name
+                logs = core_api.read_namespaced_pod_log(
+                    name=pod_name,
+                    namespace="default",
+                    container="ray-head",
+                )
+                if logs:
+                    storage_service.put_log_content("mlflow", key, logs)
+        except Exception as e:
+            print(f"Notice: Could not archive pod logs for {job.job_id} ({e}).")
+
+    def _check_model_in_mlflow(self, model_name: Optional[str], job_id: str) -> bool:
+        """Checks if a model was successfully registered or logged in MLflow for the given job_id."""
+        if not model_name:
+            return False
+        try:
+            from mlflow.tracking import MlflowClient
+            client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
+            model_versions = client.search_model_versions(f"name = '{model_name}'")
+            for mv in model_versions:
+                tags = mv.tags or {}
+                if tags.get("mlsecops.job_id") == job_id or tags.get("job_id") == job_id:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def perform_model_training(
         self,
@@ -33,10 +152,12 @@ class ModelTrainingService:
         user: User,
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> dict:
         """
         Submits a custom training job to Ray by generating RayJobs CRD manifests
         and running a local Ray runner background process fallback.
+        Persists the initial PENDING job record in PostgreSQL.
         """
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
@@ -71,7 +192,22 @@ class ModelTrainingService:
                 f"Generated temporary MinIO STS session token for RayJob {job_id} scoped to s3://mlflow/*",
             )
 
-        # 1. Render RayJob manifest using centralized utility
+        # 1. Create persistent PostgreSQL record via repository
+        self._record_job(
+            db=db,
+            job_id=job_id,
+            rayjob_name=f"rayjob-{job_id}",
+            dataset_id=dataset_id,
+            ref=ref,
+            model_name=output_model_name,
+            experiment_name=experiment_name,
+            epochs=epochs,
+            hyperparameters=hyperparameters,
+            entrypoint=entrypoint_cmd,
+            user=user,
+        )
+
+        # 2. Render RayJob manifest using centralized utility
         rendered_yaml = render_rayjob_manifest(
             job_id=job_id,
             entrypoint_cmd=entrypoint_cmd,
@@ -84,7 +220,7 @@ class ModelTrainingService:
             epochs=epochs,
         )
 
-        # 2. Submit RayJob CRD to Kubernetes cluster
+        # 3. Submit RayJob CRD to Kubernetes cluster
         k8s_submitted = submit_rayjob_to_k8s(
             rendered_yaml=rendered_yaml,
             job_id=job_id,
@@ -92,7 +228,7 @@ class ModelTrainingService:
             mode_description="custom code",
         )
 
-        # 3. Trigger training run locally if Kubernetes submission failed
+        # 4. Trigger training run locally if Kubernetes submission failed
         if not k8s_submitted:
             if not settings.ALLOW_LOCAL_RAY_FALLBACK:
                 log_audit_event(
@@ -174,10 +310,12 @@ class ModelTrainingService:
         user: User,
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> dict:
         """
         Submits an automated pipeline training job either via Kubernetes RayJob CRD
         or local fallback process.
+        Persists the initial PENDING job record in PostgreSQL.
         """
         if user.role == "viewer":
             raise HTTPException(
@@ -212,7 +350,22 @@ class ModelTrainingService:
                 f"Generated temporary MinIO STS session token for automated pipeline RayJob {job_id} scoped to s3://mlflow/*",
             )
 
-        # 1. Render RayJob manifest using centralized utility
+        # 1. Create persistent PostgreSQL record via repository
+        self._record_job(
+            db=db,
+            job_id=job_id,
+            rayjob_name=f"rayjob-{job_id}",
+            dataset_id=dataset_id,
+            ref=ref,
+            model_name=output_model_name,
+            experiment_name=experiment_name,
+            epochs=0,
+            hyperparameters=hyperparameters,
+            entrypoint=entrypoint_cmd,
+            user=user,
+        )
+
+        # 2. Render RayJob manifest using centralized utility
         rendered_yaml = render_rayjob_manifest(
             job_id=job_id,
             entrypoint_cmd=entrypoint_cmd,
@@ -226,7 +379,7 @@ class ModelTrainingService:
             model_type=model_type,
         )
 
-        # 2. Submit RayJob CRD to Kubernetes cluster
+        # 3. Submit RayJob CRD to Kubernetes cluster
         k8s_submitted = submit_rayjob_to_k8s(
             rendered_yaml=rendered_yaml,
             job_id=job_id,
@@ -234,7 +387,7 @@ class ModelTrainingService:
             mode_description=f"automated pipeline ({model_type})",
         )
 
-        # 3. Trigger training run locally if Kubernetes submission failed
+        # 4. Trigger training run locally if Kubernetes submission failed
         if not k8s_submitted:
             if not settings.ALLOW_LOCAL_RAY_FALLBACK:
                 log_audit_event(
@@ -302,3 +455,53 @@ class ModelTrainingService:
             "status": "training",
             "model_name": output_model_name,
         }
+
+    def _get_job_service(self, db: Session):
+        """Builds a TrainingJobService instance with standard dependencies."""
+        from app.repositories import TrainingJobRepository
+        from app.services.ml_ops.rayjob_service import RayJobService
+        from app.services.ml_ops.training_log_service import TrainingLogService
+        from app.services.ml_ops.training_job_service import TrainingJobService
+        from app.services.dataset.s3_storage_service import S3StorageService
+
+        repo = TrainingJobRepository(db)
+        ray_svc = RayJobService()
+        log_svc = TrainingLogService(S3StorageService(), ray_svc)
+        return TrainingJobService(
+            repository=repo,
+            rayjob_service=ray_svc,
+            log_service=log_svc,
+        )
+
+    def reconcile_active_jobs(self, db: Session) -> None:
+        """Delegates reconciliation to TrainingJobService."""
+        self._get_job_service(db).reconcile_active_jobs()
+
+    def retrieve_training_jobs(self, db: Session, user: User, limit: int = 100) -> dict:
+        """Delegates job listing to TrainingJobService."""
+        return self._get_job_service(db).list_jobs(user=user, limit=limit)
+
+    def retrieve_training_job_detail(self, db: Session, job_id: str, user: User) -> dict:
+        """Delegates job detail retrieval to TrainingJobService."""
+        from app.services.ml_ops.exceptions import JobNotFoundError, JobAccessDeniedError
+        try:
+            return self._get_job_service(db).get_job(job_id=job_id, user=user)
+        except JobNotFoundError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except JobAccessDeniedError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+    def retrieve_training_job_logs(
+        self, db: Session, job_id: str, user: User, tail_lines: Optional[int] = 1000
+    ) -> dict:
+        """Delegates log retrieval to TrainingJobService."""
+        from app.services.ml_ops.exceptions import JobNotFoundError, JobAccessDeniedError
+        try:
+            return self._get_job_service(db).get_job_logs(
+                job_id=job_id, user=user, tail_lines=tail_lines
+            )
+        except JobNotFoundError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except JobAccessDeniedError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
