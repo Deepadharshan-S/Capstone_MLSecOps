@@ -1,3 +1,6 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -29,10 +32,39 @@ from app.services.auth.exceptions import (
     UserNotFoundError,
     SelfRoleModificationError,
 )
+from app.services.auth.token_cleanup import token_cleanup_loop
+
+logger = logging.getLogger("main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    cleanup_task = None
+    if settings.TOKEN_CLEANUP_ENABLED:
+        cleanup_task = asyncio.create_task(
+            token_cleanup_loop(),
+            name="sentinelml_token_cleanup",
+        )
+        logger.info("Started automated token cleanup background task.")
+    try:
+        yield
+    finally:
+        if cleanup_task is not None:
+            logger.info("Stopping automated token cleanup background task...")
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Error while stopping token cleanup task: {e}")
+            logger.info("Automated token cleanup background task stopped.")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
+    lifespan=lifespan,
 )
 
 app.add_middleware(

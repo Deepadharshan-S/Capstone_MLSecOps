@@ -12,11 +12,18 @@ from app.services.auth.exceptions import (
     SelfRoleModificationError,
 )
 
+from app.services.auth.token_cleanup import (
+    run_token_cleanup_once,
+    token_cleanup_loop,
+)
+
 __all__ = [
     "AuthService",
     "auth_service",
     "UserService",
     "user_service",
+    "run_token_cleanup_once",
+    "token_cleanup_loop",
     "AuthDomainError",
     "WeakPasswordError",
     "UserAlreadyExistsError",

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
+    # Token Cleanup Background Task
+    TOKEN_CLEANUP_INTERVAL_SECONDS: int = 3600
+    TOKEN_CLEANUP_ENABLED: bool = True
+
     # CORS config
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
