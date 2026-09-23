@@ -47,7 +47,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
-async def register_dataset(
+def register_dataset(
     name: str = Form(...),
     description: Optional[str] = Form(None),
     file: UploadFile = File(...),
@@ -56,7 +56,7 @@ async def register_dataset(
     data_service: DataService = Depends(get_data_service),
 ):
     """
-    Registers a new dataset (creates database record and lakeFS repository) and uploads the dataset file.
+    Registers a new dataset (creates database record and lakeFS repository) and uploads the dataset file via streaming.
     """
     db_dataset = data_service.register_dataset(
         db=db,
@@ -66,7 +66,6 @@ async def register_dataset(
         username=user.username,
     )
 
-    content = await file.read()
     file_path = file.filename
     if not file_path:
         raise HTTPException(
@@ -78,7 +77,7 @@ async def register_dataset(
         db=db,
         dataset_name=name,
         file_path=file_path,
-        content=content,
+        content=file.file,
         branch_name=db_dataset.default_branch,
         username=user.username,
     )
@@ -116,7 +115,7 @@ def delete_dataset(
     response_model=FileUploadResponse,
     dependencies=[Depends(RateLimiter(times=20, seconds=60))],
 )
-async def upload_file(
+def upload_file(
     dataset_name: str,
     branch: Optional[str] = "main",
     file: UploadFile = File(...),
@@ -125,9 +124,8 @@ async def upload_file(
     data_service: DataService = Depends(get_data_service),
 ):
     """
-    Uploads a file to the lakeFS repository.
+    Uploads a file to the lakeFS repository via streaming.
     """
-    content = await file.read()
     file_path = file.filename
     if not file_path:
         raise HTTPException(
@@ -138,7 +136,7 @@ async def upload_file(
         db=db,
         dataset_name=dataset_name,
         file_path=file_path,
-        content=content,
+        content=file.file,
         branch_name=branch,
         username=user.username,
     )
@@ -154,12 +152,12 @@ def download_file(
     data_service: DataService = Depends(get_data_service),
 ):
     """
-    Downloads/retrieves a file stream from a reference (branch/commit/tag).
+    Downloads/retrieves a chunked file stream from a reference (branch/commit/tag).
     """
-    content = data_service.download_file(db, dataset_name, file_path=path, ref_id=ref)
     filename = path.split("/")[-1]
+    chunk_stream = data_service.stream_file(db, dataset_name, file_path=path, ref_id=ref)
     return StreamingResponse(
-        io.BytesIO(content),
+        chunk_stream,
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

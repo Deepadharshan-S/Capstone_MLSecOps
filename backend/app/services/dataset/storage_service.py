@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, BinaryIO, Iterator
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -25,7 +25,7 @@ class DatasetStorageService:
         db: Session,
         dataset_name: str,
         file_path: str,
-        content: bytes,
+        content: Union[bytes, BinaryIO],
         branch_name: str,
         username: str,
     ) -> dict:
@@ -69,3 +69,19 @@ class DatasetStorageService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"File '{file_path}' not found at reference '{ref_id}': {str(e)}",
             )
+
+    def stream_file(
+        self, db: Session, dataset_name: str, file_path: str, ref_id: str, chunk_size: int = 65536
+    ) -> Iterator[bytes]:
+        """Streams file content in chunks from a specific ref in the dataset repository."""
+        _, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        try:
+            return self.version_control_service.stream_file(
+                sanitized_repo_name, ref_id, file_path, chunk_size=chunk_size
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File '{file_path}' not found at reference '{ref_id}': {str(e)}",
+            )
+

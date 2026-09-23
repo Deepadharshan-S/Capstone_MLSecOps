@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, BinaryIO, Iterator
 from uuid import UUID
 from sqlalchemy.orm import Session
 
@@ -99,7 +99,7 @@ class DataService:
         db: Session,
         dataset_name: str,
         file_path: str,
-        content: bytes,
+        content: Union[bytes, BinaryIO],
         branch_name: str,
         username: str,
     ) -> dict:
@@ -120,6 +120,17 @@ class DataService:
             dataset_name=dataset_name,
             file_path=file_path,
             ref_id=ref_id,
+        )
+
+    def stream_file(
+        self, db: Session, dataset_name: str, file_path: str, ref_id: str, chunk_size: int = 65536
+    ) -> Iterator[bytes]:
+        return self.storage.stream_file(
+            db=db,
+            dataset_name=dataset_name,
+            file_path=file_path,
+            ref_id=ref_id,
+            chunk_size=chunk_size,
         )
 
     # 3. Dataset Versioning Operations
