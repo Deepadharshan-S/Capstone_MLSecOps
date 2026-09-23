@@ -85,10 +85,11 @@ class DatasetCatalogService:
             db.refresh(db_dataset)
 
             log_audit_event(
-                "dataset_register",
+                "dataset_registration",
                 username,
                 None,
                 f"Registered dataset '{dataset_name}' with lakeFS repository '{sanitized_repo_name}'.",
+                db=db,
             )
             return db_dataset
         except Exception as e:
@@ -151,6 +152,7 @@ class DatasetCatalogService:
                 username,
                 None,
                 f"Updated metadata for dataset '{dataset_name}'.",
+                db=db,
             )
             return {"dataset_name": dataset_name, "db_metadata": dataset.metadata_info}
         except Exception as e:
@@ -213,6 +215,7 @@ class DatasetCatalogService:
                 username,
                 None,
                 f"Deleted dataset '{dataset_name}' registration.",
+                db=db,
             )
             return {"message": f"Dataset '{dataset_name}' deleted successfully."}
         except Exception as e:

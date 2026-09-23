@@ -40,6 +40,7 @@ class AuthService:
                 user_in.username,
                 ip_address,
                 "Weak password policy validation failed.",
+                db=db,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -58,6 +59,7 @@ class AuthService:
                 user_in.username,
                 ip_address,
                 "Username or email already exists.",
+                db=db,
             )
             # Use generic message to prevent username/email enumeration
             raise HTTPException(
@@ -85,6 +87,7 @@ class AuthService:
                 user_in.username,
                 ip_address,
                 "Integrity constraint violation (username or email collision).",
+                db=db,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -102,6 +105,7 @@ class AuthService:
             new_user.username,
             ip_address,
             f"Registered with role '{new_user.role}'.",
+            db=db,
         )
         return new_user
 
@@ -128,6 +132,7 @@ class AuthService:
                 form_data.username,
                 ip_address,
                 "Attempted login for non-existent user.",
+                db=db,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -148,6 +153,7 @@ class AuthService:
                     user.username,
                     ip_address,
                     f"Login blocked. Locked until {locked_until}.",
+                    db=db,
                 )
                 # Use generic message to hide exact lockout settings and remaining time
                 raise HTTPException(
@@ -167,6 +173,7 @@ class AuthService:
                         user.username,
                         ip_address,
                         "Account locked due to 5 failed attempts.",
+                        db=db,
                     )
                     db.commit()
                     raise HTTPException(
@@ -188,6 +195,7 @@ class AuthService:
                 user.username,
                 ip_address,
                 f"Attempt {user.failed_login_attempts}/5.",
+                db=db,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -234,6 +242,7 @@ class AuthService:
             user.username,
             ip_address,
             "Successful login. Access token issued.",
+            db=db,
         )
         return {"access_token": access_token, "token_type": "bearer"}
 
@@ -282,6 +291,7 @@ class AuthService:
                 username,
                 ip_address,
                 f"REUSE DETECTION! Revoked refresh token '{jti}' was reused. Revoking all active sessions.",
+                db=db,
             )
             try:
                 # Revoke all tokens for this user immediately
@@ -355,6 +365,7 @@ class AuthService:
             username,
             ip_address,
             f"Rotated refresh token. New JTI: '{new_jti}'.",
+            db=db,
         )
         return {"access_token": new_access_token, "token_type": "bearer"}
 
@@ -429,13 +440,14 @@ class AuthService:
                             username,
                             ip_address,
                             f"Logged out. Revoked refresh token '{jti}' and blacklisted access token.",
+                            db=db,
                         )
                         response.delete_cookie(key="refresh_token", path="/api/auth")
                         return {"message": "Successfully logged out."}
                 except Exception:
                     db.rollback()
 
-        log_audit_event("logout_success", username, ip_address, "Logged out.")
+        log_audit_event("logout_success", username, ip_address, "Logged out.", db=db)
         response.delete_cookie(key="refresh_token", path="/api/auth")
         return {"message": "Successfully logged out."}
 

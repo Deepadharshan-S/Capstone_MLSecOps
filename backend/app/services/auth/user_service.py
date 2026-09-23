@@ -25,8 +25,12 @@ class UserService:
         return db.query(User).all()
 
     def get_all_audit_logs(self, db: Session) -> list[dict]:
-        """Retrieve all security audit logs parsed from the rotated log file."""
-        return get_all_audit_logs()
+        """Retrieve all security audit logs with authoritative PostgreSQL persistence."""
+        return get_all_audit_logs(db=db, limit=100, offset=0)
+
+    def get_audit_logs(self, db: Session, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Retrieve paginated security audit logs."""
+        return get_all_audit_logs(db=db, limit=limit, offset=offset)
 
     def update_user_role(
         self,
@@ -74,6 +78,7 @@ class UserService:
             user.username,
             ip_address,
             f"Admin '{admin_user.username}' changed role from '{old_role}' to '{user.role}'.",
+            db=db,
         )
         return user
 

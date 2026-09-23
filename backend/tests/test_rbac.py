@@ -434,6 +434,15 @@ def test_audit_logging_and_retrieval():
     actions = [log["action"] for log in logs]
     assert "login_success" in actions
 
+    # 4. Verify pagination limit & offset
+    paginated_resp = client.get("/api/users/audit-logs?limit=2&offset=0", headers=admin_headers)
+    assert paginated_resp.status_code == 200
+    p_logs = paginated_resp.json()
+    assert len(p_logs) <= 2
+    if len(logs) > 2:
+        offset_resp = client.get("/api/users/audit-logs?limit=2&offset=2", headers=admin_headers)
+        assert offset_resp.status_code == 200
+
 
 def test_rate_limiting_enforcement():
     """Verify that exceeding the rate limit triggers HTTP 429 Too Many Requests."""
@@ -583,4 +592,38 @@ def test_health_endpoint_failure_modes(monkeypatch):
             app.dependency_overrides[get_ml_ops_service] = original_mlops
         else:
             del app.dependency_overrides[get_ml_ops_service]
+
+
+def test_audit_log_repository_isolated_crud():
+    """Verifies AuditLogRepository CRUD operations in isolation against PostgreSQL."""
+    import uuid
+    from app.db.session import SessionLocal
+    from app.models.audit_log import AuditLog
+    from app.repositories.audit_log_repository import AuditLogRepository
+
+    unique_action = f"test_isolated_action_{uuid.uuid4().hex[:6]}"
+
+    with SessionLocal() as db:
+        repo = AuditLogRepository(db)
+
+        # 1. Create
+        record = AuditLog(
+            action=unique_action,
+            username="isolated_auditor",
+            ip_address="127.0.0.1",
+            details="Testing AuditLogRepository isolation",
+        )
+        saved = repo.create(record)
+        assert saved.id is not None
+        assert saved.action == unique_action
+
+        # 2. List
+        logs = repo.list(limit=10, offset=0)
+        assert len(logs) > 0
+        assert any(l.action == unique_action for l in logs)
+
+        # 3. Count
+        total_count = repo.count()
+        assert total_count > 0
+
 
