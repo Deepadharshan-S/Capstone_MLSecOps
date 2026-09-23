@@ -31,7 +31,7 @@ def clean_k8s_ray_environment():
     def _cleanup():
         try:
             subprocess.run(
-                ["kubectl", "delete", "rayjobs,rayclusters,configmaps", "-l", "app.kubernetes.io/name=mlsecops-rayjob", "-n", "default", "--wait=false"],
+                ["kubectl", "delete", "rayjobs,rayclusters,configmaps", "-l", "app.kubernetes.io/name=sentinelml-rayjob", "-n", "default", "--wait=false"],
                 capture_output=True,
                 timeout=10,
             )
@@ -507,7 +507,7 @@ def test_xgboost_and_lightgbm_pipeline_training(user_tokens):
     """
     Validates end-to-end multi-model pipeline training for non-sklearn models (XGBoost & LightGBM):
     1. Submits model_type="xgboost,lightgbm" with custom hyperparameters and custom model_name.
-    2. Runs on live Kubernetes Ray cluster using mlsecops-ray image.
+    2. Runs on live Kubernetes Ray cluster using sentinelml-ray image.
     3. Evaluates both candidates, creates nested child runs with Option A run names (xgb_..., lgb_...).
     4. Automatically selects champion model and registers under custom model_name in MLflow.
     5. Confirms child runs have isolated metrics and parent run stores multi-model metadata.

@@ -1,1 +1,1 @@
-# Capstone_MLSecOps
+# SentinelML

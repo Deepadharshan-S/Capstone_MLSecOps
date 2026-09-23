@@ -53,25 +53,25 @@ def setup_test_database():
         seed_data = [
             {
                 "username": "admin_user",
-                "email": "admin@mlsecops.com",
+                "email": "admin@sentinelml.com",
                 "password": "AdminPassword123!",
                 "role": "admin",
             },
             {
                 "username": "ds_user",
-                "email": "ds@mlsecops.com",
+                "email": "ds@sentinelml.com",
                 "password": "DataScientist123!",
                 "role": "data_scientist",
             },
             {
                 "username": "mle_user",
-                "email": "mle@mlsecops.com",
+                "email": "mle@sentinelml.com",
                 "password": "MLEngineerPassword123!",
                 "role": "ml_engineer",
             },
             {
                 "username": "viewer_user",
-                "email": "viewer@mlsecops.com",
+                "email": "viewer@sentinelml.com",
                 "password": "ViewerPassword123!",
                 "role": "viewer",
             },
@@ -116,7 +116,7 @@ def test_public_endpoints():
     """Verify that root and health endpoints do not require authentication."""
     r_root = client.get("/")
     assert r_root.status_code == 200
-    assert r_root.json() == {"message": "Welcome to MLSecOps"}
+    assert r_root.json() == {"message": "Welcome to SentinelML"}
 
     r_health = client.get("/health")
     assert r_health.status_code == 200
@@ -134,7 +134,7 @@ def test_password_complexity():
     # Case 1: Fails Pydantic schema validation (length < 8) -> returns 422
     payload_short = {
         "username": "short_pwd_user",
-        "email": "short@mlsecops.com",
+        "email": "short@sentinelml.com",
         "password": "123",
         "role": "viewer",
     }
@@ -145,7 +145,7 @@ def test_password_complexity():
     # Case 2: Passes schema check but fails complexity rules -> returns 400
     payload_weak = {
         "username": "weak_pwd_user",
-        "email": "weak@mlsecops.com",
+        "email": "weak@sentinelml.com",
         "password": "weakpassword123",  # 15 chars, but no uppercase or special chars
         "role": "viewer",
     }
@@ -156,7 +156,7 @@ def test_password_complexity():
     # Case 3: Register with a valid complex password
     payload_ok = {
         "username": "complex_pwd_user",
-        "email": "complex@mlsecops.com",
+        "email": "complex@sentinelml.com",
         "password": "StrongPassword123!",
         "role": "viewer",
     }
@@ -227,7 +227,7 @@ def test_brute_force_lockout():
     # We will register a fresh user to test lockout without affecting standard seeds
     register_payload = {
         "username": "lockout_user",
-        "email": "lockout@mlsecops.com",
+        "email": "lockout@sentinelml.com",
         "password": "LockoutPassword123!",
         "role": "viewer",
     }
@@ -463,7 +463,7 @@ def test_registration_always_assigns_viewer_role():
     # Register requesting 'admin' role
     payload = {
         "username": "attacker_admin",
-        "email": "attacker@mlsecops.com",
+        "email": "attacker@sentinelml.com",
         "password": "StrongPassword123!",
         "role": "admin"
     }
@@ -488,7 +488,7 @@ def test_registration_integrity_error_handling():
     # Register first user
     payload1 = {
         "username": "duplicate_user",
-        "email": "duplicate@mlsecops.com",
+        "email": "duplicate@sentinelml.com",
         "password": "StrongPassword123!"
     }
     response1 = client.post("/api/auth/register", json=payload1)

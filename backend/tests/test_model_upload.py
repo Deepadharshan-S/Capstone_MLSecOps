@@ -58,19 +58,19 @@ def setup_test_database():
         seed_data = [
             {
                 "username": "admin_user",
-                "email": "admin@mlsecops.com",
+                "email": "admin@sentinelml.com",
                 "password": "AdminPassword123!",
                 "role": "admin",
             },
             {
                 "username": "ds_user",
-                "email": "ds@mlsecops.com",
+                "email": "ds@sentinelml.com",
                 "password": "DataScientist123!",
                 "role": "data_scientist",
             },
             {
                 "username": "viewer_user",
-                "email": "viewer@mlsecops.com",
+                "email": "viewer@sentinelml.com",
                 "password": "ViewerPassword123!",
                 "role": "viewer",
             },

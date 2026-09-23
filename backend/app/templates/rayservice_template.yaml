@@ -4,7 +4,7 @@ metadata:
   name: rayservice-code-{{deployment_id}}
   namespace: default
   labels:
-    app.kubernetes.io/name: mlsecops-rayservice
+    app.kubernetes.io/name: sentinelml-rayservice
     deployment_id: "{{deployment_id}}"
 data:
   serve_wrapper.py: |
@@ -16,7 +16,7 @@ metadata:
   name: {{rayservice_name}}
   namespace: default
   labels:
-    app.kubernetes.io/name: mlsecops-rayservice
+    app.kubernetes.io/name: sentinelml-rayservice
     deployment_id: "{{deployment_id}}"
     model_name: "{{model_name_label}}"
     environment: "{{environment}}"
@@ -51,7 +51,7 @@ spec:
               emptyDir: {}
           containers:
             - name: ray-head
-              image: mlsecops-ray:latest
+              image: sentinelml-ray:latest
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -89,7 +89,7 @@ spec:
                   value: "/app/user_code"
   serveConfigV2: |
     applications:
-      - name: mlsecops_serve_app
+      - name: sentinelml_serve_app
         route_prefix: /
         import_path: serve_wrapper:entrypoint
         runtime_env:

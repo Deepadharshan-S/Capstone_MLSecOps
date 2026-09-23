@@ -76,6 +76,8 @@ def cleanup_after_tests():
             db_url = settings.DATABASE_URL
             if db_url.endswith("/mlsecops"):
                 mlflow_db_url = db_url[:-9] + "/mlflow"
+            elif db_url.endswith("/sentinelml"):
+                mlflow_db_url = db_url[:-11] + "/mlflow"
             else:
                 from urllib.parse import urlparse
                 parsed = urlparse(db_url)

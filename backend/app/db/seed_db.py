@@ -24,25 +24,25 @@ def seed():
         seed_data = [
             {
                 "username": "admin_user",
-                "email": "admin@mlsecops.com",
+                "email": "admin@sentinelml.com",
                 "password": "AdminPassword123!",
                 "role": "admin",
             },
             {
                 "username": "ds_user",
-                "email": "ds@mlsecops.com",
+                "email": "ds@sentinelml.com",
                 "password": "DataScientist123!",
                 "role": "data_scientist",
             },
             {
                 "username": "mle_user",
-                "email": "mle@mlsecops.com",
+                "email": "mle@sentinelml.com",
                 "password": "MLEngineerPassword123!",
                 "role": "ml_engineer",
             },
             {
                 "username": "viewer_user",
-                "email": "viewer@mlsecops.com",
+                "email": "viewer@sentinelml.com",
                 "password": "ViewerPassword123!",
                 "role": "viewer",
             },

@@ -5,7 +5,7 @@ metadata:
   namespace: default
   labels:
     ray.io/job-id: "{{job_id}}"
-    app.kubernetes.io/name: "mlsecops-rayjob"
+    app.kubernetes.io/name: "sentinelml-rayjob"
 data:
   user_code.py: |
 {{user_code_content_indented}}
@@ -25,7 +25,7 @@ data:
         try:
             s3 = boto3.client(
                 "s3",
-                endpoint_url=os.getenv("MINIO_ENDPOINT", "http://mlsecops-minio:9000"),
+                endpoint_url=os.getenv("MINIO_ENDPOINT", "http://sentinelml-minio:9000"),
                 aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
                 aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
                 aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
@@ -58,7 +58,7 @@ metadata:
   namespace: default
   labels:
     ray.io/job-id: "{{job_id}}"
-    app.kubernetes.io/name: "mlsecops-rayjob"
+    app.kubernetes.io/name: "sentinelml-rayjob"
 spec:
   submissionMode: "HTTPMode"
   entrypoint: bash /app/user_code/entrypoint.sh
@@ -87,7 +87,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: ray-head
-              image: mlsecops-ray:latest
+              image: sentinelml-ray:latest
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -163,7 +163,7 @@ metadata:
   namespace: default
   labels:
     ray.io/job-id: "{{job_id}}"
-    app.kubernetes.io/name: "mlsecops-rayjob"
+    app.kubernetes.io/name: "sentinelml-rayjob"
 spec:
   podSelector:
     matchLabels:
@@ -201,7 +201,7 @@ spec:
         - podSelector:
             matchLabels:
               ray.io/job-id: "{{job_id}}"
-    # 3. Allow egress strictly to MLSecOps platform services
+    # 3. Allow egress strictly to SentinelML platform services
     - ports:
         - protocol: TCP
           port: 8000   # LakeFS

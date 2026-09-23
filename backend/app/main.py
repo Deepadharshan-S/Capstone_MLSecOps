@@ -114,7 +114,7 @@ app.include_router(datasets.router, prefix="/api")
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to MLSecOps"}
+    return {"message": "Welcome to SentinelML"}
 
 
 @app.get("/health")

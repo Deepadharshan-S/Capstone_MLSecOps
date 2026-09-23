@@ -1,15 +1,15 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: mlsecops-rayjob-network-policy
+  name: sentinelml-rayjob-network-policy
   namespace: default
   labels:
-    app.kubernetes.io/name: "mlsecops-rayjob"
-    app.kubernetes.io/part-of: "mlsecops-platform"
+    app.kubernetes.io/name: "sentinelml-rayjob"
+    app.kubernetes.io/part-of: "sentinelml-platform"
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: "mlsecops-rayjob"
+      app.kubernetes.io/name: "sentinelml-rayjob"
   policyTypes:
     - Ingress
     - Egress
@@ -18,7 +18,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: "mlsecops-rayjob"
+              app.kubernetes.io/name: "sentinelml-rayjob"
         - namespaceSelector: {}
       ports:
         - protocol: TCP
@@ -42,12 +42,11 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: "mlsecops-rayjob"
-    # 3. Allow egress strictly to MLSecOps platform data services
+              app.kubernetes.io/name: "sentinelml-rayjob"
+    # 3. Allow egress strictly to SentinelML platform data services
     - ports:
         - protocol: TCP
           port: 8000   # LakeFS data versioning API
         - protocol: TCP
           port: 9000   # MinIO S3 object storage
-        - protocol: TCP
           port: 5000   # MLflow tracking server

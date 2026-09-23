@@ -256,8 +256,8 @@ def test_domain_exception_handlers():
 
 def test_internal_networking_configuration(monkeypatch):
     """Verify that configured cluster-internal endpoints override default networking in template rendering."""
-    monkeypatch.setattr(settings, "MLFLOW_INTERNAL_ENDPOINT", "http://mlsecops-mlflow.default.svc.cluster.local:5000")
-    monkeypatch.setattr(settings, "MINIO_INTERNAL_ENDPOINT", "http://mlsecops-minio.default.svc.cluster.local:9000")
+    monkeypatch.setattr(settings, "MLFLOW_INTERNAL_ENDPOINT", "http://sentinelml-mlflow.default.svc.cluster.local:5000")
+    monkeypatch.setattr(settings, "MINIO_INTERNAL_ENDPOINT", "http://sentinelml-minio.default.svc.cluster.local:9000")
 
     creds = get_scoped_training_credentials("test-job-p2")
     rendered = render_rayjob_manifest(
@@ -274,5 +274,5 @@ def test_internal_networking_configuration(monkeypatch):
         model_type="random_forest",
     )
 
-    assert "http://mlsecops-mlflow.default.svc.cluster.local:5000" in rendered
-    assert "http://mlsecops-minio.default.svc.cluster.local:9000" in rendered
+    assert "http://sentinelml-mlflow.default.svc.cluster.local:5000" in rendered
+    assert "http://sentinelml-minio.default.svc.cluster.local:9000" in rendered

@@ -493,14 +493,14 @@ def main():
                     "lakefs_repo": str(repo_name),
                     "lakefs_ref": str(args.ref),
                     "pipeline_mode": str(args.pipeline_mode),
-                    "mlsecops.framework": "ray-kubernetes",
+                    "sentinelml.framework": "ray-kubernetes",
                     "is_multi_model": "true",
                     "candidate_count": str(len(models_dict)),
                 })
                 if getattr(args, "user", None):
-                    mlflow.set_tag("mlsecops.user", str(args.user))
+                    mlflow.set_tag("sentinelml.user", str(args.user))
                 if getattr(args, "job_id", None):
-                    mlflow.set_tag("mlsecops.job_id", str(args.job_id))
+                    mlflow.set_tag("sentinelml.job_id", str(args.job_id))
 
                 parent_params = {
                     "candidates": ",".join(list(models_dict.keys())),
@@ -563,7 +563,7 @@ def main():
                             "candidate_name": str(cand_key),
                             "dataset_id": str(args.dataset_id),
                             "lakefs_ref": str(args.ref),
-                            "mlsecops.framework": "ray-kubernetes",
+                            "sentinelml.framework": "ray-kubernetes",
                         })
 
                         # Log candidate metrics
@@ -696,12 +696,12 @@ def main():
                     "lakefs_repo": str(repo_name),
                     "lakefs_ref": str(args.ref),
                     "pipeline_mode": str(args.pipeline_mode),
-                    "mlsecops.framework": "ray-kubernetes",
+                    "sentinelml.framework": "ray-kubernetes",
                 }
                 if getattr(args, "user", None):
-                    tags_to_log["mlsecops.user"] = str(args.user)
+                    tags_to_log["sentinelml.user"] = str(args.user)
                 if getattr(args, "job_id", None):
-                    tags_to_log["mlsecops.job_id"] = str(args.job_id)
+                    tags_to_log["sentinelml.job_id"] = str(args.job_id)
                 if getattr(args, "code_file", None) and not args.pipeline_mode:
                     tags_to_log["code_file"] = os.path.basename(args.code_file)
 

@@ -43,19 +43,19 @@ def setup_test_database():
         seed_data = [
             {
                 "username": "admin_user",
-                "email": "admin@mlsecops.com",
+                "email": "admin@sentinelml.com",
                 "password": "AdminPassword123!",
                 "role": "admin",
             },
             {
                 "username": "ds_user",
-                "email": "ds@mlsecops.com",
+                "email": "ds@sentinelml.com",
                 "password": "DataScientist123!",
                 "role": "data_scientist",
             },
             {
                 "username": "viewer_user",
-                "email": "viewer@mlsecops.com",
+                "email": "viewer@sentinelml.com",
                 "password": "ViewerPassword123!",
                 "role": "viewer",
             },
@@ -300,7 +300,7 @@ def test_dataset_lifecycle(user_tokens):
     assert resp.json()["lakefs_metadata"].get("description") == "A classification dataset for integration testing"
 
     # Update metadata
-    meta_payload = {"metadata": {"license": "MIT", "owner": "MLSecOps Team"}}
+    meta_payload = {"metadata": {"license": "MIT", "owner": "SentinelML Team"}}
     resp = client.put(f"/api/datasets/{dataset_name}", json=meta_payload, headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["db_metadata"]["license"] == "MIT"
@@ -309,7 +309,7 @@ def test_dataset_lifecycle(user_tokens):
     resp = client.get(f"/api/datasets/{dataset_name}", headers=ds_headers)
     assert resp.status_code == 200
     assert resp.json()["lakefs_metadata"].get("license") == "MIT"
-    assert resp.json()["lakefs_metadata"].get("owner") == "MLSecOps Team"
+    assert resp.json()["lakefs_metadata"].get("owner") == "SentinelML Team"
 
     # 10. Rollback / Revert a commit (RBAC: ds_user/admin can, viewer cannot)
     # On experiment-v1 branch, revert the second commit
