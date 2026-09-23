@@ -102,46 +102,6 @@ class ModelTrainingService:
         except Exception:
             return None
 
-    def _archive_pod_logs_if_needed(self, core_api, storage_service, job: TrainingJob) -> None:
-        """Archives head pod logs to MinIO if not already archived."""
-        key = f"logs/{job.job_id}/training.log"
-        existing = storage_service.get_log_content("mlflow", key)
-        if existing is not None and len(existing.strip()) > 0:
-            return
-
-        try:
-            pods = core_api.list_namespaced_pod(
-                namespace="default",
-                label_selector=f"ray.io/job-id={job.job_id}",
-            )
-            if pods.items:
-                pod_name = pods.items[0].metadata.name
-                logs = core_api.read_namespaced_pod_log(
-                    name=pod_name,
-                    namespace="default",
-                    container="ray-head",
-                )
-                if logs:
-                    storage_service.put_log_content("mlflow", key, logs)
-        except Exception as e:
-            print(f"Notice: Could not archive pod logs for {job.job_id} ({e}).")
-
-    def _check_model_in_mlflow(self, model_name: Optional[str], job_id: str) -> bool:
-        """Checks if a model was successfully registered or logged in MLflow for the given job_id."""
-        if not model_name:
-            return False
-        try:
-            from mlflow.tracking import MlflowClient
-            client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
-            model_versions = client.search_model_versions(f"name = '{model_name}'")
-            for mv in model_versions:
-                tags = mv.tags or {}
-                if tags.get("mlsecops.job_id") == job_id or tags.get("job_id") == job_id:
-                    return True
-        except Exception:
-            pass
-        return False
-
     def perform_model_training(
         self,
         dataset_id: str,
