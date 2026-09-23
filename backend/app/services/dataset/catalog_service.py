@@ -1,10 +1,12 @@
-from typing import Optional
+from __future__ import annotations
+from typing import Optional, List
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.dataset import Dataset
+from app.repositories.dataset_repository import DatasetRepository
 from app.core.logging_config import log_audit_event
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dataset.utils import get_repo_name, get_dataset_or_404
@@ -14,12 +16,14 @@ class DatasetCatalogService:
     """
     Manages dataset registration, database cataloging, metadata updates,
     and cascading deletion across PostgreSQL, lakeFS, and MinIO S3 storage.
+    Uses DatasetRepository for all relational database interactions.
     """
 
     def __init__(
         self,
         version_control_service: Optional[VersionControlService] = None,
         storage_service: Optional[ObjectStorageService] = None,
+        repository: Optional[DatasetRepository] = None,
     ):
         if version_control_service is None:
             from app.services.dataset.lakefs_service import lakefs_service
@@ -33,6 +37,13 @@ class DatasetCatalogService:
         else:
             self.storage_service = storage_service
 
+        self.repository = repository
+
+    def _get_repo(self, db: Session) -> DatasetRepository:
+        if self.repository is not None and self.repository.db == db:
+            return self.repository
+        return DatasetRepository(db)
+
     def register_dataset(
         self,
         db: Session,
@@ -44,7 +55,8 @@ class DatasetCatalogService:
         """
         Registers a new dataset in the DB and creates a corresponding lakeFS repository.
         """
-        existing = db.query(Dataset).filter(Dataset.name == dataset_name).first()
+        repo = self._get_repo(db)
+        existing = repo.get_by_name(dataset_name)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -80,9 +92,7 @@ class DatasetCatalogService:
                 created_by_id=user_id,
                 metadata_info={},
             )
-            db.add(db_dataset)
-            db.commit()
-            db.refresh(db_dataset)
+            db_dataset = repo.create(db_dataset)
 
             log_audit_event(
                 "dataset_registration",
@@ -116,13 +126,14 @@ class DatasetCatalogService:
                 detail=f"Database registration failed: {str(e)}",
             )
 
-    def list_datasets(self, db: Session) -> list[Dataset]:
+    def list_datasets(self, db: Session) -> List[Dataset]:
         """Lists all registered datasets in the database."""
-        return db.query(Dataset).all()
+        return self._get_repo(db).list_all()
 
     def get_dataset_metadata(self, db: Session, dataset_name: str) -> dict:
         """Gets dataset metadata from both Postgres and lakeFS."""
-        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        repo = self._get_repo(db)
+        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name, repository=repo)
         lakefs_meta = self.version_control_service.get_repository_metadata(sanitized_repo_name)
 
         return {
@@ -135,18 +146,17 @@ class DatasetCatalogService:
         self, db: Session, dataset_name: str, metadata: dict[str, str], username: str
     ) -> dict:
         """Updates the dataset metadata in Postgres database and synchronizes with lakeFS."""
-        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        repo = self._get_repo(db)
+        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name, repository=repo)
         previous_lakefs_meta = self.version_control_service.get_repository_metadata(sanitized_repo_name)
 
         try:
             dataset.metadata_info = metadata
-            db.add(dataset)
+            repo.save(dataset)
 
             # Synchronize metadata update to lakeFS repository KV store
             self.version_control_service.set_repository_metadata(sanitized_repo_name, metadata)
 
-            db.commit()
-            db.refresh(dataset)
             log_audit_event(
                 "dataset_metadata_update",
                 username,
@@ -182,7 +192,8 @@ class DatasetCatalogService:
         """
         Deletes the dataset repository in lakeFS, its MinIO storage folder, and the DB registration record.
         """
-        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        repo = self._get_repo(db)
+        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name, repository=repo)
 
         # 1. Delete matching objects under the repository prefix in MinIO
         try:
@@ -208,8 +219,7 @@ class DatasetCatalogService:
 
         # 3. Delete database entry
         try:
-            db.delete(dataset)
-            db.commit()
+            repo.delete(dataset)
             log_audit_event(
                 "dataset_delete",
                 username,

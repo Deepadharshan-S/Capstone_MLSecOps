@@ -1,6 +1,7 @@
 import logging
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.repositories import UserRepository
 from app.core.security import hash_password
 
 logging.basicConfig(level=logging.INFO)
@@ -10,8 +11,9 @@ logger = logging.getLogger("seed_db")
 def seed():
     db = SessionLocal()
     try:
+        user_repo = UserRepository(db)
         # Check if users already exist
-        users_count = db.query(User).count()
+        users_count = user_repo.count()
         if users_count > 0:
             logger.info("Database already seeded with users.")
             return

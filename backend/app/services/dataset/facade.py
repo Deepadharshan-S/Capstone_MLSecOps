@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.dataset import Dataset
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dataset.utils import get_repo_name
+from app.repositories.dataset_repository import DatasetRepository
 from app.services.dataset.catalog_service import DatasetCatalogService
 from app.services.dataset.versioning_service import DatasetVersioningService
 from app.services.dataset.storage_service import DatasetStorageService
@@ -22,6 +23,7 @@ class DataService:
         self,
         version_control_service: Optional[VersionControlService] = None,
         storage_service: Optional[ObjectStorageService] = None,
+        dataset_repository: Optional[DatasetRepository] = None,
     ):
         if version_control_service is None:
             from app.services.dataset.lakefs_service import lakefs_service
@@ -35,7 +37,11 @@ class DataService:
         else:
             self.storage_service = storage_service
 
-        self.catalog = DatasetCatalogService(self.version_control_service, self.storage_service)
+        self.catalog = DatasetCatalogService(
+            self.version_control_service,
+            self.storage_service,
+            repository=dataset_repository,
+        )
         self.versioning = DatasetVersioningService(self.version_control_service)
         self.storage = DatasetStorageService(self.version_control_service)
         self.diff = DatasetDiffService(self.version_control_service)

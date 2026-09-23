@@ -10,6 +10,7 @@ from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User
 from app.models.blacklisted_token import BlacklistedToken
+from app.repositories import UserRepository, BlacklistedTokenRepository
 
 # Define the OAuth2 security scheme with all available permissions/scopes
 oauth2_scheme = OAuth2PasswordBearer(
@@ -61,9 +62,7 @@ def get_current_user(
 
     # Check if access token is blacklisted
     if jti:
-        is_blacklisted = (
-            db.query(BlacklistedToken).filter(BlacklistedToken.jti == jti).first()
-        )
+        is_blacklisted = BlacklistedTokenRepository(db).get_by_jti(jti)
         if is_blacklisted:
             raise credentials_exception
 
@@ -72,7 +71,7 @@ def get_current_user(
     except ValueError:
         raise credentials_exception
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = UserRepository(db).get_by_id(user_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
