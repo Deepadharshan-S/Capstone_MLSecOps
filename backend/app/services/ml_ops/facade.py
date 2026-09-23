@@ -41,6 +41,7 @@ class MLOpsService:
         user: User,
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
+        db=None,
     ) -> dict:
         return self.training.perform_model_training(
             dataset_id=dataset_id,
@@ -51,6 +52,7 @@ class MLOpsService:
             user=user,
             experiment_name=experiment_name,
             model_name=model_name,
+            db=db,
         )
 
     def perform_pipeline_training(
@@ -63,6 +65,7 @@ class MLOpsService:
         user: User,
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
+        db=None,
     ) -> dict:
         return self.training.perform_pipeline_training(
             dataset_id=dataset_id,
@@ -73,7 +76,17 @@ class MLOpsService:
             user=user,
             experiment_name=experiment_name,
             model_name=model_name,
+            db=db,
         )
+
+    def retrieve_training_jobs(self, db, user: User, limit: int = 100) -> dict:
+        return self.training.retrieve_training_jobs(db=db, user=user, limit=limit)
+
+    def retrieve_training_job_detail(self, db, job_id: str, user: User) -> dict:
+        return self.training.retrieve_training_job_detail(db=db, job_id=job_id, user=user)
+
+    def retrieve_training_job_logs(self, db, job_id: str, user: User, tail_lines: Optional[int] = 1000) -> dict:
+        return self.training.retrieve_training_job_logs(db=db, job_id=job_id, user=user, tail_lines=tail_lines)
 
     # 2. Registry Operations
     def retrieve_models(self, user: User) -> dict:
@@ -134,6 +147,13 @@ class MLOpsService:
         return self.deployment.perform_deployment_management(
             deployment_id=deployment_id, action=action, user=user
         )
+
+    def retrieve_deployment_detail(self, deployment_id: str, user: User) -> dict:
+        return self.deployment.retrieve_deployment_detail(deployment_id, user)
+
+    def retrieve_model_detail(self, model_name: str, user: User) -> dict:
+        return self.registry.retrieve_model_detail(model_name, user)
+
 
     # 4. Serving / Prediction Operations
     def perform_model_prediction(

@@ -9,6 +9,7 @@ dependencies = [
     "boto3>=1.43.67",
     "email-validator>=2.3.0",
     "fastapi[standard]>=0.139.2",
+    "kubernetes>=32.0.0",
     "lakefs>=0.16.0",
     "lakefs-sdk>=1.86.0",
     "minio>=7.2.20",

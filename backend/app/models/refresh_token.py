@@ -21,6 +21,7 @@ class RefreshToken(BaseModel):
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     expires_at: Mapped[datetime] = mapped_column(
