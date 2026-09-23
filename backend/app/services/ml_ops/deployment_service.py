@@ -1,8 +1,8 @@
 import os
 import uuid
-import subprocess
 import datetime
 from typing import Optional
+from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.core.logging_config import log_audit_event
@@ -16,7 +16,18 @@ class ModelDeploymentService:
     """
     Manages model deployment lifecycles using KubeRay RayService CRDs
     and MLflow Model Version metadata tracking (stages, aliases, and tags).
+    Hides raw Kubernetes details from controllers using the official Kubernetes Python SDK.
     """
+
+    def _get_k8s_apis(self):
+        """Returns initialized Kubernetes CustomObjectsApi and CoreV1Api instances."""
+        from kubernetes import client, config
+
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+        return client.CustomObjectsApi(), client.CoreV1Api()
 
     def perform_model_deploy(
         self,
@@ -25,9 +36,10 @@ class ModelDeploymentService:
         user: User,
         version: Optional[str] = "latest",
         replicas: Optional[int] = 1,
+        db: Optional[Session] = None,
     ) -> dict:
         """
-        Deploys a registered MLflow model to a live Kubernetes RayService CRD.
+        Deploys a registered MLflow model to a live Kubernetes RayService CRD using the Kubernetes SDK.
         Updates model version stages, aliases, and deployment metadata tags directly in MLflow.
         """
         from mlflow.tracking import MlflowClient
@@ -58,7 +70,7 @@ class ModelDeploymentService:
                             target_version = str(latest_versions[-1].version)
                 model_uri = f"models:/{model_id}/{target_version}"
             except Exception as ml_err:
-                print(f"Notice: Model '{model_id}' not found in MLflow registry ({ml_err}). Using mock/fallback deployment.")
+                print(f"Notice: Model '{model_id}' not found in MLflow registry ({ml_err}). Using fallback version.")
                 target_version = str(version) if (version and version != "latest") else "1"
 
             sanitized_name = get_repo_name(model_id)[:16].rstrip("-")
@@ -88,7 +100,6 @@ class ModelDeploymentService:
                 except Exception as al_err:
                     print(f"Notice: Could not set alias in MLflow: {al_err}")
 
-                # Set metadata tags on the version
                 tags = {
                     "deployment.id": deployment_id,
                     "deployment.status": "running",
@@ -105,7 +116,7 @@ class ModelDeploymentService:
                     except Exception as tag_err:
                         print(f"Notice: Could not set tag {tk} on model version: {tag_err}")
 
-            # 3. Render and apply KubeRay RayService Manifest
+            # 3. Render and apply KubeRay RayService Manifest using Kubernetes Python SDK
             template_path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "rayservice_template.yaml")
             serve_wrapper_path = os.path.join(os.path.dirname(__file__), "serve_wrapper.py")
 
@@ -135,19 +146,73 @@ class ModelDeploymentService:
                     rendered_yaml = rendered_yaml.replace(placeholder, str(val))
 
                 try:
-                    k8s_res = subprocess.run(
-                        ["kubectl", "apply", "-f", "-"],
-                        input=rendered_yaml,
-                        text=True,
-                        capture_output=True,
-                        timeout=15,
-                    )
-                    if k8s_res.returncode != 0:
-                        print(f"Warning: kubectl apply returned {k8s_res.returncode}: {k8s_res.stderr}")
-                    else:
-                        print(f"Successfully applied RayService manifest: {k8s_res.stdout.strip()}")
+                    import yaml
+                    from kubernetes import client
+
+                    custom_api, core_api = self._get_k8s_apis()
+                    docs = list(yaml.safe_load_all(rendered_yaml))
+                    for doc in docs:
+                        if not doc:
+                            continue
+                        kind = doc.get("kind")
+                        ns = doc.get("metadata", {}).get("namespace", "default")
+                        name = doc.get("metadata", {}).get("name")
+                        if kind == "ConfigMap":
+                            try:
+                                core_api.create_namespaced_config_map(namespace=ns, body=doc)
+                            except client.exceptions.ApiException as api_err:
+                                if api_err.status == 409 and name:
+                                    core_api.replace_namespaced_config_map(name=name, namespace=ns, body=doc)
+                                else:
+                                    raise
+                        elif kind == "RayService":
+                            try:
+                                custom_api.create_namespaced_custom_object(
+                                    group="ray.io",
+                                    version="v1",
+                                    namespace=ns,
+                                    plural="rayservices",
+                                    body=doc,
+                                )
+                            except client.exceptions.ApiException as api_err:
+                                if api_err.status == 409 and name:
+                                    existing = custom_api.get_namespaced_custom_object(
+                                        group="ray.io", version="v1", namespace=ns, plural="rayservices", name=name
+                                    )
+                                    doc["metadata"]["resourceVersion"] = existing.get("metadata", {}).get("resourceVersion")
+                                    custom_api.replace_namespaced_custom_object(
+                                        group="ray.io", version="v1", namespace=ns, plural="rayservices", name=name, body=doc
+                                    )
+                                else:
+                                    raise
+                    print(f"Successfully applied RayService manifest via Kubernetes SDK: {rayservice_name}")
                 except Exception as k8s_err:
-                    print(f"Notice: Could not apply RayService manifest to Kubernetes: {k8s_err}")
+                    print(f"Notice: Could not apply RayService manifest to Kubernetes via SDK: {k8s_err}")
+
+            # Persist deployment record to PostgreSQL via DeploymentRepository
+            try:
+                from app.models.deployment import Deployment
+                from app.repositories.deployment_repository import DeploymentRepository
+                from app.db.session import SessionLocal
+
+                dep_record = Deployment(
+                    deployment_id=deployment_id,
+                    model_name=model_id,
+                    version=str(target_version),
+                    environment=environment,
+                    rayservice_name=rayservice_name,
+                    endpoint_url=endpoint_url,
+                    status="deployed",
+                    created_by_id=getattr(user, "id", None) or uuid.uuid4(),
+                    created_by_username=getattr(user, "username", "unknown"),
+                )
+                if db is not None:
+                    DeploymentRepository(db).create(dep_record)
+                else:
+                    with SessionLocal() as db_session:
+                        DeploymentRepository(db_session).create(dep_record)
+            except Exception as db_err:
+                print(f"Notice: Could not persist Deployment to PostgreSQL ({db_err}).")
 
             log_audit_event(
                 "model_deploy",
@@ -177,40 +242,90 @@ class ModelDeploymentService:
         status: Optional[str] = None,
         environment: Optional[str] = None,
         active_only: bool = False,
+        db: Optional[Session] = None,
     ) -> dict:
         """
-        Retrieves model deployments tracked via MLflow Model Version tags,
-        reconciling them with live Kubernetes RayService status.
-        Supports filtering by status ('active', 'stopped'), environment ('staging', 'production'),
-        or active_only (hides stopped deployments).
+        Retrieves model deployments tracked in PostgreSQL,
+        reconciling them with live Kubernetes RayService status using a single batch query.
+        Also scans legacy MLflow model version tags for backwards compatibility.
         """
         from mlflow.tracking import MlflowClient
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         deployments = []
 
+        # 1. Fetch live RayService statuses in a single bulk call
+        k8s_status_map = {}
+        try:
+            custom_api, _ = self._get_k8s_apis()
+            items = custom_api.list_namespaced_custom_object(
+                group="ray.io", version="v1", namespace="default", plural="rayservices"
+            ).get("items", [])
+            for item in items:
+                name = item.get("metadata", {}).get("name")
+                svc_st = item.get("status", {}).get("serviceStatus")
+                if name and svc_st:
+                    k8s_status_map[name] = svc_st
+        except Exception:
+            pass
+
+        seen_ids = set()
+
+        # 2. Query PostgreSQL DeploymentRepository (Authoritative DB)
+        try:
+            from app.repositories.deployment_repository import DeploymentRepository
+            from app.db.session import SessionLocal
+
+            db_deployments = []
+            if db is not None:
+                repo = DeploymentRepository(db)
+                db_deployments = list(repo.list(status=status, environment=environment))
+            else:
+                with SessionLocal() as db_session:
+                    repo = DeploymentRepository(db_session)
+                    db_deployments = list(repo.list(status=status, environment=environment))
+
+            for dep in db_deployments:
+                seen_ids.add(dep.deployment_id)
+                k8s_status = "Unknown"
+                if dep.rayservice_name:
+                    if dep.rayservice_name in k8s_status_map:
+                        k8s_status = k8s_status_map[dep.rayservice_name]
+                    else:
+                        k8s_status = "Not Found" if dep.status == "stopped" else "Initializing"
+
+                deployments.append({
+                    "deployment_id": dep.deployment_id,
+                    "model_name": dep.model_name,
+                    "version": str(dep.version),
+                    "environment": dep.environment,
+                    "status": dep.status,
+                    "rayservice_name": dep.rayservice_name,
+                    "endpoint_url": dep.endpoint_url or f"/api/deployments/{dep.deployment_id}/predict",
+                    "deployed_by": dep.created_by_username,
+                    "deployed_at": dep.created_at.isoformat() if dep.created_at else None,
+                    "k8s_status": k8s_status,
+                })
+        except Exception as db_err:
+            print(f"Notice: Failed to fetch deployments from DB ({db_err}).")
+
+        # 3. Fallback scan of MLflow tags for legacy deployments
         try:
             all_versions = mlflow_client.search_model_versions("")
             for mv in all_versions:
                 tags = mv.tags or {}
                 if "deployment.status" in tags:
                     dep_id = tags.get("deployment.id", f"{mv.name}-v{mv.version}")
+                    if dep_id in seen_ids:
+                        continue
+                    seen_ids.add(dep_id)
                     raysvc = tags.get("deployment.rayservice_name")
                     k8s_status = "Unknown"
                     if raysvc:
-                        try:
-                            res = subprocess.run(
-                                ["kubectl", "get", "rayservice", raysvc, "-n", "default", "-o", "jsonpath={.status.serviceStatus}"],
-                                capture_output=True,
-                                text=True,
-                                timeout=3,
-                            )
-                            if res.returncode == 0 and res.stdout.strip():
-                                k8s_status = res.stdout.strip()
-                            else:
-                                k8s_status = "Not Found" if tags.get("deployment.status") == "stopped" else "Initializing"
-                        except Exception:
-                            k8s_status = "Unknown"
+                        if raysvc in k8s_status_map:
+                            k8s_status = k8s_status_map[raysvc]
+                        else:
+                            k8s_status = "Not Found" if tags.get("deployment.status") == "stopped" else "Initializing"
 
                     deployments.append({
                         "deployment_id": dep_id,
@@ -225,7 +340,7 @@ class ModelDeploymentService:
                         "k8s_status": k8s_status,
                     })
         except Exception as e:
-            print(f"Error searching deployments in MLflow: {e}")
+            print(f"Notice: Error searching legacy deployments in MLflow: {e}")
 
         # Apply optional filtering
         if active_only:
@@ -235,15 +350,242 @@ class ModelDeploymentService:
         if environment:
             deployments = [d for d in deployments if d["environment"].lower() == environment.strip().lower()]
 
-        log_audit_event("deployments_view", user.username, None, "Viewed model deployments list.")
+        log_audit_event("deployments_view", user.username, None, "Viewed model deployments list.", db=db)
         return {"deployments": deployments}
 
+    def retrieve_deployment_detail(
+        self,
+        deployment_id: str,
+        user: User,
+        db: Optional[Session] = None,
+    ) -> dict:
+        """
+        Retrieves detailed RayService status, replica health, and internal endpoints
+        for a specific deployment using native Kubernetes SDK and PostgreSQL.
+        """
+        log_audit_event(
+            "deployment_detail_view",
+            user.username,
+            None,
+            f"Viewed details for deployment '{deployment_id}'.",
+            db=db,
+        )
+
+        db_dep = None
+        try:
+            from app.repositories.deployment_repository import DeploymentRepository
+            from app.db.session import SessionLocal
+
+            if db is not None:
+                repo = DeploymentRepository(db)
+                db_dep = repo.get_by_deployment_id(deployment_id)
+            else:
+                with SessionLocal() as db_session:
+                    repo = DeploymentRepository(db_session)
+                    db_dep = repo.get_by_deployment_id(deployment_id)
+        except Exception as db_err:
+            print(f"Notice: Failed to query deployment detail from DB: {db_err}")
+
+        model_name = deployment_id
+        version = "1"
+        environment = "staging"
+        dep_status = "unknown"
+        raysvc = None
+        endpoint_url = f"/api/deployments/{deployment_id}/predict"
+        deployed_by = None
+        deployed_at = None
+        tags = {}
+        dep_id = deployment_id
+
+        if db_dep:
+            dep_id = db_dep.deployment_id
+            model_name = db_dep.model_name
+            version = str(db_dep.version)
+            environment = db_dep.environment
+            dep_status = db_dep.status
+            raysvc = db_dep.rayservice_name
+            endpoint_url = db_dep.endpoint_url or f"/api/deployments/{dep_id}/predict"
+            deployed_by = db_dep.created_by_username
+            deployed_at = db_dep.created_at.isoformat() if db_dep.created_at else None
+        else:
+            from mlflow.tracking import MlflowClient
+
+            mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
+            target_item = None
+
+            try:
+                all_versions = mlflow_client.search_model_versions("")
+                for mv in all_versions:
+                    t = mv.tags or {}
+                    if (
+                        t.get("deployment.id") == deployment_id
+                        or t.get("deployment.rayservice_name") == deployment_id
+                        or deployment_id in [mv.name, f"{mv.name}-v{mv.version}"]
+                    ):
+                        target_item = (mv, t)
+                        break
+            except Exception as e:
+                print(f"Error searching deployments in MLflow: {e}")
+
+            if target_item:
+                mv, t = target_item
+                dep_id = t.get("deployment.id", deployment_id)
+                model_name = mv.name
+                version = str(mv.version)
+                environment = t.get("deployment.environment", "staging")
+                dep_status = t.get("deployment.status", "unknown")
+                raysvc = t.get("deployment.rayservice_name")
+                endpoint_url = t.get("deployment.endpoint_url", f"/api/deployments/{dep_id}/predict")
+                deployed_by = t.get("deployment.deployed_by")
+                deployed_at = t.get("deployment.deployed_at")
+                tags = dict(t)
+            elif deployment_id.startswith("raysvc-"):
+                try:
+                    custom_api, core_api = self._get_k8s_apis()
+                    k8s_json = custom_api.get_namespaced_custom_object(
+                        group="ray.io", version="v1", namespace="default", plural="rayservices", name=deployment_id
+                    )
+                    status_obj = k8s_json.get("status", {})
+                    svc_status = status_obj.get("serviceStatus", "Unknown")
+                    endpoints = status_obj.get("activeClusterStatus", {}).get("endpoints", {})
+                    num_endpoints = status_obj.get("numServeEndpoints", 0)
+                    return {
+                        "deployment_id": deployment_id,
+                        "model_name": deployment_id,
+                        "version": "1",
+                        "environment": "production",
+                        "status": "active" if svc_status == "Running" else svc_status.lower(),
+                        "rayservice_name": deployment_id,
+                        "endpoint_url": f"/api/deployments/{deployment_id}/predict",
+                        "internal_endpoints": {k: str(v) for k, v in endpoints.items()},
+                        "deployed_by": "system",
+                        "deployed_at": None,
+                        "k8s_status": svc_status,
+                        "service_status": svc_status,
+                        "replica_health": {
+                            "desired_replicas": 1,
+                            "ready_replicas": num_endpoints,
+                            "head_pod_status": svc_status,
+                            "details": status_obj.get("applicationStatuses", {}),
+                        },
+                        "ray_cluster_status": status_obj.get("activeClusterStatus", {}),
+                        "tags": {},
+                    }
+                except Exception:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Deployment '{deployment_id}' not found.",
+                    )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Deployment '{deployment_id}' not found.",
+                )
+
+        internal_endpoints = {}
+        if raysvc:
+            internal_endpoints["serve"] = f"http://{raysvc}-serve-svc.default.svc.cluster.local:8000/predict"
+
+        k8s_status = "Unknown"
+        service_status = "Unknown"
+        replica_health = {
+            "desired_replicas": 1,
+            "ready_replicas": 0,
+            "active_worker_pods": 0,
+            "total_worker_pods": 0,
+            "head_pod_status": "Unknown",
+            "details": {},
+        }
+        ray_cluster_status = {}
+
+        if raysvc:
+            try:
+                custom_api, core_api = self._get_k8s_apis()
+                k8s_json = custom_api.get_namespaced_custom_object(
+                    group="ray.io", version="v1", namespace="default", plural="rayservices", name=raysvc
+                )
+                status_obj = k8s_json.get("status", {})
+                service_status = status_obj.get("serviceStatus", "Unknown")
+                k8s_status = service_status
+
+                active_cluster = status_obj.get("activeClusterStatus", {})
+                ray_cluster_status = active_cluster
+                endpoints = active_cluster.get("endpoints", {})
+                for ep_name, ep_val in endpoints.items():
+                    internal_endpoints[ep_name] = str(ep_val)
+
+                num_endpoints = status_obj.get("numServeEndpoints", 0)
+
+                desired_reps = 1
+                try:
+                    spec = k8s_json.get("spec", {})
+                    serve_cfg = spec.get("serveConfigV2", {})
+                    apps = serve_cfg.get("applications", [])
+                    if apps and "deployments" in apps[0] and apps[0]["deployments"]:
+                        desired_reps = apps[0]["deployments"][0].get("num_replicas", 1)
+                except Exception:
+                    pass
+
+                total_workers = 0
+                head_status = service_status
+                try:
+                    pod_list = core_api.list_namespaced_pod(
+                        namespace="default",
+                        label_selector=f"ray.io/cluster={raysvc}",
+                    )
+                    items = getattr(pod_list, "items", [])
+                    total_workers = len([p for p in items if getattr(getattr(p, "metadata", None), "deletion_timestamp", None) is None])
+                    head_pod = next(
+                        (p for p in items if getattr(getattr(p, "metadata", None), "labels", {}).get("ray.io/node-type") == "head"),
+                        None,
+                    )
+                    if head_pod and head_pod.status:
+                        head_status = head_pod.status.phase or service_status
+                except Exception:
+                    pass
+
+                replica_health["desired_replicas"] = desired_reps
+                replica_health["ready_replicas"] = num_endpoints
+                replica_health["active_worker_pods"] = total_workers
+                replica_health["total_worker_pods"] = total_workers
+                replica_health["head_pod_status"] = "Running" if service_status == "Running" else head_status
+                replica_health["details"] = {
+                    "application_statuses": status_obj.get("applicationStatuses", {}),
+                }
+            except Exception as e:
+                k8s_status = "Not Found" if dep_status == "stopped" else "Initializing"
+                service_status = "Stopped" if dep_status == "stopped" else "Not Found"
+                replica_health["head_pod_status"] = "Stopped" if dep_status == "stopped" else "Not Found"
+                replica_health["desired_replicas"] = 0 if dep_status == "stopped" else 1
+
+        return {
+            "deployment_id": dep_id,
+            "model_name": model_name,
+            "version": str(version),
+            "environment": environment,
+            "status": dep_status,
+            "rayservice_name": raysvc,
+            "endpoint_url": endpoint_url,
+            "internal_endpoints": internal_endpoints,
+            "deployed_by": deployed_by,
+            "deployed_at": deployed_at,
+            "k8s_status": k8s_status,
+            "service_status": service_status,
+            "replica_health": replica_health,
+            "ray_cluster_status": ray_cluster_status,
+            "tags": dict(tags),
+        }
+
     def perform_deployment_management(
-        self, deployment_id: str, action: str, user: User
+        self,
+        deployment_id: str,
+        action: str,
+        user: User,
+        db: Optional[Session] = None,
     ) -> dict:
         """
         Executes lifecycle actions (restart, stop, rollback) on a model deployment.
-        Updates MLflow tags and deletes/restarts Kubernetes RayService resources.
+        Updates PostgreSQL deployment status, MLflow tags, and deletes/restarts Kubernetes RayService resources using native SDK.
         """
         from mlflow.tracking import MlflowClient
 
@@ -257,11 +599,39 @@ class ModelDeploymentService:
                 detail=f"Invalid action '{action}'. Supported actions are: {allowed_actions}."
             )
 
-        # Check if deployment_id is directly a rayservice name on Kubernetes
         if deployment_id.startswith("raysvc-"):
             rayservice_name = deployment_id
 
-        # Search MLflow across all model versions matching deployment_id, rayservice_name, or model_name
+        # 1. Update PostgreSQL Deployment entity if present
+        try:
+            from app.repositories.deployment_repository import DeploymentRepository
+            from app.db.session import SessionLocal
+
+            db_conn = db
+            should_close = False
+            if db_conn is None:
+                db_conn = SessionLocal()
+                should_close = True
+
+            repo = DeploymentRepository(db_conn)
+            dep = repo.get_by_deployment_id(deployment_id)
+            if dep:
+                if action.lower() == "stop":
+                    dep.status = "stopped"
+                elif action.lower() == "restart":
+                    dep.status = "active"
+                elif action.lower() == "rollback":
+                    dep.status = "rolled_back"
+                repo.save(dep)
+                if not rayservice_name and dep.rayservice_name:
+                    rayservice_name = dep.rayservice_name
+
+            if should_close:
+                db_conn.close()
+        except Exception as db_err:
+            print(f"Notice: Failed to update deployment in DB ({db_err}).")
+
+        # 2. Update MLflow Model Version tags for backward compatibility
         matched_items = []
         try:
             all_versions = mlflow_client.search_model_versions("")
@@ -283,7 +653,6 @@ class ModelDeploymentService:
             print(f"Notice: Could not search model versions in MLflow: {e}")
 
         if action.lower() == "stop":
-            # 1. Gather all labels and RayService names to clean
             labels_to_clean = {f"deployment_id={deployment_id}"}
             raysvc_names_to_clean = set()
             if rayservice_name:
@@ -299,41 +668,29 @@ class ModelDeploymentService:
                 except Exception:
                     pass
 
-            for lbl in labels_to_clean:
-                try:
-                    subprocess.run(
-                        ["kubectl", "delete", "rayservice,raycluster,configmap", "-l", lbl, "-n", "default", "--wait=false"],
-                        capture_output=True,
-                        timeout=5,
-                    )
-                except Exception:
-                    pass
-
-            for r_svc in raysvc_names_to_clean:
-                try:
-                    subprocess.run(
-                        ["kubectl", "delete", "rayservice", r_svc, "-n", "default", "--wait=false"],
-                        capture_output=True,
-                        timeout=5,
-                    )
-                except Exception:
-                    pass
-                try:
-                    subprocess.run(
-                        ["kubectl", "delete", "raycluster", "-l", f"ray.io/cluster={r_svc}", "-n", "default", "--wait=false"],
-                        capture_output=True,
-                        timeout=5,
-                    )
-                except Exception:
-                    pass
-
-            # Also try deleting directly by deployment_id as resource name
             try:
-                subprocess.run(
-                    ["kubectl", "delete", "rayservice", deployment_id, "-n", "default", "--wait=false"],
-                    capture_output=True,
-                    timeout=5,
-                )
+                custom_api, core_api = self._get_k8s_apis()
+                for r_svc in raysvc_names_to_clean:
+                    try:
+                        custom_api.delete_namespaced_custom_object(
+                            group="ray.io", version="v1", namespace="default", plural="rayservices", name=r_svc
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        custom_api.delete_namespaced_custom_object(
+                            group="ray.io", version="v1", namespace="default", plural="rayclusters", name=r_svc
+                        )
+                    except Exception:
+                        pass
+
+                for lbl in labels_to_clean:
+                    try:
+                        core_api.delete_collection_namespaced_config_map(
+                            namespace="default", label_selector=lbl
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -344,21 +701,27 @@ class ModelDeploymentService:
             for _, _, r_svc, _ in matched_items:
                 if r_svc:
                     targets.add(r_svc)
-            for target in targets:
-                try:
-                    subprocess.run(
-                        ["kubectl", "rollout", "restart", f"rayservice/{target}", "-n", "default"],
-                        capture_output=True,
-                        timeout=5,
-                    )
-                except Exception:
-                    pass
+
+            try:
+                _, core_api = self._get_k8s_apis()
+                for target in targets:
+                    try:
+                        # Deleting the head pod triggers KubeRay to recreate it and reload configuration
+                        core_api.delete_collection_namespaced_pod(
+                            namespace="default",
+                            label_selector=f"ray.io/cluster={target},ray.io/node-type=head",
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         log_audit_event(
             "deployment_management",
             user.username,
             None,
             f"Triggered action '{action}' on deployment '{deployment_id}'.",
+            db=db,
         )
         return {
             "message": f"Action '{action}' executed on deployment '{deployment_id}'.",

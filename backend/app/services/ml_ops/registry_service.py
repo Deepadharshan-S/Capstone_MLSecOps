@@ -91,6 +91,117 @@ class ModelRegistryService:
 
         return {"models": models_list}
 
+    def retrieve_model_detail(self, model_name: str, user: User) -> dict:
+        """
+        Retrieves detailed version history, tags, metrics, and production alias
+        for a specific model registered in MLflow.
+        """
+        log_audit_event(
+            "model_detail_view",
+            user.username,
+            None,
+            f"Viewed details for model '{model_name}'.",
+        )
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
+
+        try:
+            rm = client.get_registered_model(model_name)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model '{model_name}' not found.",
+            )
+
+        # Model timestamps
+        created_at_str = None
+        if getattr(rm, "creation_timestamp", None):
+            created_at_str = datetime.datetime.fromtimestamp(
+                rm.creation_timestamp / 1000.0, datetime.timezone.utc
+            ).isoformat()
+
+        updated_at_str = None
+        if getattr(rm, "last_updated_timestamp", None):
+            updated_at_str = datetime.datetime.fromtimestamp(
+                rm.last_updated_timestamp / 1000.0, datetime.timezone.utc
+            ).isoformat()
+
+        aliases = dict(getattr(rm, "aliases", {}) or {})
+        production_alias = aliases.get("production") or aliases.get("Production")
+
+        # Retrieve all versions for this model
+        try:
+            versions = client.search_model_versions(f"name = '{model_name}'")
+        except Exception:
+            versions = getattr(rm, "latest_versions", []) or []
+
+        version_details = []
+        for v in versions:
+            v_created = None
+            if getattr(v, "creation_timestamp", None):
+                v_created = datetime.datetime.fromtimestamp(
+                    v.creation_timestamp / 1000.0, datetime.timezone.utc
+                ).isoformat()
+
+            v_updated = None
+            if getattr(v, "last_updated_timestamp", None):
+                v_updated = datetime.datetime.fromtimestamp(
+                    v.last_updated_timestamp / 1000.0, datetime.timezone.utc
+                ).isoformat()
+
+            v_aliases = list(getattr(v, "aliases", []) or [])
+            for a_name, a_ver in aliases.items():
+                if str(a_ver) == str(v.version) and a_name not in v_aliases:
+                    v_aliases.append(a_name)
+
+            if not production_alias and getattr(v, "current_stage", "") == "Production":
+                production_alias = str(v.version)
+
+            v_metrics = {}
+            v_params = {}
+            if getattr(v, "run_id", None):
+                try:
+                    run = client.get_run(v.run_id)
+                    v_metrics = dict(run.data.metrics or {})
+                    v_params = dict(run.data.params or {})
+                except Exception:
+                    pass
+
+            version_details.append(
+                {
+                    "version": str(v.version),
+                    "current_stage": getattr(v, "current_stage", "None"),
+                    "status": getattr(v, "status", "READY"),
+                    "run_id": getattr(v, "run_id", None),
+                    "source": getattr(v, "source", None),
+                    "created_at": v_created,
+                    "last_updated_at": v_updated,
+                    "description": getattr(v, "description", None),
+                    "tags": dict(getattr(v, "tags", {}) or {}),
+                    "aliases": v_aliases,
+                    "metrics": v_metrics,
+                    "parameters": v_params,
+                }
+            )
+
+        try:
+            version_details.sort(key=lambda x: int(x["version"]), reverse=True)
+        except Exception:
+            pass
+
+        return {
+            "name": rm.name,
+            "description": getattr(rm, "description", None),
+            "created_at": created_at_str,
+            "last_updated_at": updated_at_str,
+            "tags": dict(getattr(rm, "tags", {}) or {}),
+            "aliases": aliases,
+            "production_alias": str(production_alias) if production_alias else None,
+            "versions": version_details,
+        }
+
+
     def perform_model_upload(
         self,
         file,
@@ -211,7 +322,15 @@ class ModelRegistryService:
 
             mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
             exp_name = experiment_name or "uploaded-models"
+            try:
+                temp_client = MlflowClient()
+                existing_exp = temp_client.get_experiment_by_name(exp_name)
+                if existing_exp and getattr(existing_exp, "lifecycle_stage", "") == "deleted":
+                    temp_client.restore_experiment(existing_exp.experiment_id)
+            except Exception:
+                pass
             mlflow.set_experiment(exp_name)
+
 
             # 6. Log and register model in MLflow
             clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-", final_model_name).strip("-_")
