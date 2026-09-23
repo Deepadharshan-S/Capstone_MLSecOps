@@ -417,5 +417,32 @@ class AuthService:
         log_audit_event("logout_success", username, ip_address, "Logged out.", db=db)
         return {"message": "Successfully logged out."}
 
+    def cleanup_expired_tokens(self, db: Session) -> dict[str, int]:
+        """
+        Prunes expired refresh tokens and expired blacklisted tokens from the database.
+        Safe, idempotent maintenance operation.
+        """
+        now = datetime.now(timezone.utc)
+        refresh_repo = RefreshTokenRepository(db)
+        blacklist_repo = BlacklistedTokenRepository(db)
+
+        deleted_refresh = refresh_repo.delete_expired(now=now)
+        deleted_blacklist = blacklist_repo.delete_expired(now=now)
+
+        log_audit_event(
+            "token_cleanup",
+            "system",
+            None,
+            f"Pruned {deleted_refresh} expired refresh tokens and {deleted_blacklist} expired blacklisted tokens.",
+            db=db,
+        )
+
+        return {
+            "deleted_refresh_tokens": deleted_refresh,
+            "deleted_blacklisted_tokens": deleted_blacklist,
+            "total_deleted": deleted_refresh + deleted_blacklist,
+        }
+
 
 auth_service = AuthService()
+

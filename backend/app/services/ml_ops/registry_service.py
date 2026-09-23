@@ -5,12 +5,15 @@ import datetime
 import tempfile
 import shutil
 import re
+import logging
 from typing import Optional
 
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
 from fastapi import HTTPException, status
+
+logger = logging.getLogger("registry_service")
 
 
 class ModelRegistryService:
@@ -165,8 +168,8 @@ class ModelRegistryService:
                     run = client.get_run(v.run_id)
                     v_metrics = dict(run.data.metrics or {})
                     v_params = dict(run.data.params or {})
-                except Exception:
-                    pass
+                except Exception as run_err:
+                    logger.debug(f"Could not fetch run data for {v.run_id}: {run_err}")
 
             version_details.append(
                 {
@@ -187,8 +190,8 @@ class ModelRegistryService:
 
         try:
             version_details.sort(key=lambda x: int(x["version"]), reverse=True)
-        except Exception:
-            pass
+        except Exception as sort_err:
+            logger.debug(f"Version sort fallback for model {rm.name}: {sort_err}")
 
         return {
             "name": rm.name,
@@ -276,8 +279,8 @@ class ModelRegistryService:
         try:
             try:
                 file.file.seek(0)
-            except Exception:
-                pass
+            except Exception as seek_err:
+                logger.debug(f"Seek error on upload file: {seek_err}")
 
             with open(temp_file_path, "wb") as buffer:
                 while True:
@@ -313,8 +316,8 @@ class ModelRegistryService:
                     )
 
             # Configure S3/MinIO credentials for artifact storage
-            os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", settings.MINIO_ROOT_USER)
-            os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", settings.MINIO_ROOT_PASSWORD)
+            os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", settings.minio_app_user)
+            os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", settings.minio_app_password)
             os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", settings.MINIO_ENDPOINT)
             os.environ["MLFLOW_S3_IGNORE_TLS"] = "true"
 
@@ -327,8 +330,8 @@ class ModelRegistryService:
                 existing_exp = temp_client.get_experiment_by_name(exp_name)
                 if existing_exp and getattr(existing_exp, "lifecycle_stage", "") == "deleted":
                     temp_client.restore_experiment(existing_exp.experiment_id)
-            except Exception:
-                pass
+            except Exception as exp_err:
+                logger.debug(f"Experiment restore check note: {exp_err}")
             mlflow.set_experiment(exp_name)
 
 
@@ -366,13 +369,14 @@ class ModelRegistryService:
                     latest_versions = client.get_latest_versions(final_model_name)
                     if latest_versions:
                         model_version = str(latest_versions[-1].version)
-            except Exception:
+            except Exception as search_ver_err:
+                logger.debug(f"Search model version note: {search_ver_err}")
                 try:
                     latest_versions = client.get_latest_versions(final_model_name)
                     if latest_versions:
                         model_version = str(latest_versions[-1].version)
-                except Exception:
-                    pass
+                except Exception as ver_err:
+                    logger.debug(f"Latest version fetch note: {ver_err}")
 
             log_audit_event(
                 "model_upload_success",

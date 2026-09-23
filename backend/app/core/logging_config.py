@@ -37,12 +37,17 @@ def log_audit_event(
     ip_address: Optional[str] = None,
     details: Optional[str] = None,
     db: Optional[Session] = None,
+    request_id: Optional[str] = None,
 ):
     """
     Logs security audit events with dual emission:
     1. Outputs structured JSON to sys.stdout and rotating log file.
     2. Persists the authoritative audit record in PostgreSQL 'audit_logs' table.
     """
+    from app.middleware.request_id import get_request_id
+
+    req_id = request_id or get_request_id()
+
     now = datetime.now(timezone.utc)
     log_entry = {
         "timestamp": now.isoformat(),
@@ -50,6 +55,7 @@ def log_audit_event(
         "username": username,
         "ip_address": ip_address,
         "details": details,
+        "request_id": req_id,
     }
     logger.info(json.dumps(log_entry))
 
@@ -59,11 +65,17 @@ def log_audit_event(
         from app.repositories.audit_log_repository import AuditLogRepository
         from app.db.session import SessionLocal
 
+        persisted_details = details
+        if req_id and details and not details.startswith("[req:"):
+            persisted_details = f"[req:{req_id}] {details}"
+        elif req_id and not details:
+            persisted_details = f"[req:{req_id}]"
+
         audit_record = AuditLog(
             action=action,
             username=username,
             ip_address=ip_address,
-            details=details,
+            details=persisted_details,
         )
 
         if db is not None:
@@ -123,13 +135,13 @@ def get_all_audit_logs(
                     if line:
                         try:
                             parsed_logs.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            pass
+                        except json.JSONDecodeError as decode_err:
+                            logger.debug(f"Skipping malformed audit log entry: {decode_err}")
             if parsed_logs:
                 reversed_logs = list(reversed(parsed_logs))
                 return reversed_logs[offset : offset + limit]
-        except Exception:
-            pass
+        except Exception as read_err:
+            logger.debug(f"Failed to read local audit log file: {read_err}")
 
     # Final fallback if file is empty or missing and db was None: SessionLocal
     try:

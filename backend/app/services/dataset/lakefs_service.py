@@ -1,8 +1,12 @@
+import logging
 import lakefs
 import lakefs_sdk
 from typing import Optional, Any, Union, BinaryIO, Iterator
 from app.core.config import settings
 from app.services.interfaces import VersionControlService
+
+logger = logging.getLogger("lakefs_service")
+
 
 class LakeFSService(VersionControlService):
     """
@@ -15,7 +19,8 @@ class LakeFSService(VersionControlService):
                 password=settings.LAKEFS_SECRET_ACCESS_KEY,
                 host=settings.LAKEFS_ENDPOINT,
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to initialize lakeFS client: {e}")
             self._client = None
 
     @property
@@ -82,8 +87,8 @@ class LakeFSService(VersionControlService):
             if hasattr(content, "seek"):
                 try:
                     content.seek(0)
-                except Exception:
-                    pass
+                except Exception as seek_err:
+                    logger.debug(f"Seek error on upload stream: {seek_err}")
             with obj.writer(mode="wb") as writer:
                 while True:
                     chunk = content.read(65536)

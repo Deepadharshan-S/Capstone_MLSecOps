@@ -126,9 +126,9 @@ class DatasetCatalogService:
                 detail=f"Database registration failed: {str(e)}",
             )
 
-    def list_datasets(self, db: Session) -> List[Dataset]:
-        """Lists all registered datasets in the database."""
-        return self._get_repo(db).list_all()
+    def list_datasets(self, db: Session, limit: int = 100, offset: int = 0) -> list[Dataset]:
+        """Lists registered datasets in the database with pagination."""
+        return self._get_repo(db).list(limit=limit, offset=offset)
 
     def get_dataset_metadata(self, db: Session, dataset_name: str) -> dict:
         """Gets dataset metadata from both Postgres and lakeFS."""

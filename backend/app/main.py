@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import get_db
 from app.api import auth, users, ml_ops
-from app.middleware import SecurityHeadersMiddleware
+from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from app.api import datasets
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dependencies import (
@@ -37,14 +37,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Register Security Headers Middleware
+# Register Security Headers and Request Correlation Middleware
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestIDMiddleware)
 
 
 @app.exception_handler(IntegrityError)

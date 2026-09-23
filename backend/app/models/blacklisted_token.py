@@ -18,4 +18,5 @@ class BlacklistedToken(BaseModel):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        index=True,
     )

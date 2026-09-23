@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime
 from typing import Optional, Any
 from app.services.ml_ops.utils import submit_rayjob_to_k8s
+
+logger = logging.getLogger("rayjob_service")
 
 
 class RayJobService:
@@ -25,14 +28,18 @@ class RayJobService:
         from app.services.ml_ops.training_service import ModelTrainingService
         try:
             return ModelTrainingService()._get_k8s_apis()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"ModelTrainingService K8s API init fallback: {e}")
 
         from kubernetes import client, config
         try:
             config.load_incluster_config()
-        except Exception:
-            config.load_kube_config()
+        except Exception as in_cluster_err:
+            logger.debug(f"Could not load in-cluster K8s config, attempting kube_config: {in_cluster_err}")
+            try:
+                config.load_kube_config()
+            except Exception as kube_cfg_err:
+                logger.warning(f"Could not load local kube config: {kube_cfg_err}")
 
         custom_api = client.CustomObjectsApi()
         core_api = client.CoreV1Api()
@@ -181,8 +188,8 @@ class RayJobService:
             core_api.delete_namespaced_config_map(
                 name=f"rayjob-code-{clean_id}", namespace=namespace
             )
-        except Exception:
-            pass
+        except Exception as cm_err:
+            logger.debug(f"ConfigMap rayjob-code-{clean_id} deletion note: {cm_err}")
 
         try:
             from kubernetes import client
@@ -190,6 +197,6 @@ class RayJobService:
             net_api.delete_namespaced_network_policy(
                 name=f"rayjob-netpol-{clean_id}", namespace=namespace
             )
-        except Exception:
-            pass
+        except Exception as np_err:
+            logger.debug(f"NetworkPolicy rayjob-netpol-{clean_id} deletion note: {np_err}")
 

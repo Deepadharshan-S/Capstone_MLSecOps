@@ -123,7 +123,14 @@ def test_real_time_prediction_dataframe_records(user_tokens, deployed_model_name
         def json(self):
             return {"predictions": [0, 1]}
 
-    monkeypatch.setattr("httpx.Client.post", lambda self, url, json=None: MockResponse())
+    import httpx
+    orig_post = httpx.Client.post
+    def mock_post(self, url, *args, **kwargs):
+        if "raysvc" in str(url) or "8000" in str(url):
+            return MockResponse()
+        return orig_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr("httpx.Client.post", mock_post)
 
     predict_payload = {
         "dataframe_records": [
@@ -150,7 +157,14 @@ def test_real_time_prediction_matrix_inputs(user_tokens, deployed_model_name, mo
         def json(self):
             return {"predictions": [0, 1]}
 
-    monkeypatch.setattr("httpx.Client.post", lambda self, url, json=None: MockResponse())
+    import httpx
+    orig_post = httpx.Client.post
+    def mock_post(self, url, *args, **kwargs):
+        if "raysvc" in str(url) or "8000" in str(url):
+            return MockResponse()
+        return orig_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr("httpx.Client.post", mock_post)
 
     matrix_payload = {
         "inputs": [

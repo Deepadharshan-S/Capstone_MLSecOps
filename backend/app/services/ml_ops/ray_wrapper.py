@@ -543,8 +543,8 @@ def main():
                                 cand_input = cand_X.iloc[:2]
                             elif hasattr(cand_X, "head"):
                                 cand_input = cand_X.head(2)
-                        except Exception:
-                            pass
+                        except Exception as sig_err:
+                            print(f"[ray_wrapper] Note: Candidate signature inference skipped: {sig_err}")
 
                     with mlflow.start_run(run_name=child_run_name, nested=True):
                         # Log candidate params
@@ -579,8 +579,8 @@ def main():
                                 t_col = args.target_column or ("label" if "label" in df_cand.columns else df_cand.columns[-1])
                                 report_dict = classification_report(df_cand[t_col], cand_y_pred, output_dict=True, zero_division=0)
                                 mlflow.log_dict(report_dict, "evaluation/classification_report.json")
-                            except Exception:
-                                pass
+                            except Exception as eval_err:
+                                print(f"[ray_wrapper] Note: Candidate classification report skipped: {eval_err}")
 
                         # Log candidate model artifact (unregistered, inside child run to avoid registry collision)
                         cand_model_kwargs = {

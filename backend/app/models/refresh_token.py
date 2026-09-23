@@ -27,6 +27,7 @@ class RefreshToken(BaseModel):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        index=True,
     )
 
     is_revoked: Mapped[bool] = mapped_column(

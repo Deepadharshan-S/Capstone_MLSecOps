@@ -1,10 +1,13 @@
 import os
 import json
+import logging
 import subprocess
 import threading
 import shutil
 from app.core.config import settings
 from app.core.logging_config import log_audit_event
+
+logger = logging.getLogger("ml_ops_utils")
 
 
 def to_k8s_endpoint(url: str) -> str:
@@ -88,8 +91,8 @@ def get_scoped_training_credentials(job_id: str) -> dict:
                 creds["aws_secret_access_key"] = sts_creds["SecretAccessKey"]
                 creds["aws_session_token"] = sts_creds.get("SessionToken", "")
                 creds["scoped_sts"] = True
-        except Exception:
-            pass
+        except Exception as sts_err:
+            logger.debug(f"MinIO STS temporary credential generation fallback for job {job_id}: {sts_err}")
 
     return creds
 
@@ -144,11 +147,11 @@ def render_rayjob_manifest(
         "{{aws_secret_access_key}}": scoped_creds["aws_secret_access_key"],
         "{{aws_session_token}}": scoped_creds["aws_session_token"],
         "{{mlflow_s3_ignore_tls}}": "true",
-        "{{lakefs_endpoint}}": to_k8s_endpoint(settings.LAKEFS_ENDPOINT),
+        "{{lakefs_endpoint}}": settings.LAKEFS_INTERNAL_ENDPOINT or to_k8s_endpoint(settings.LAKEFS_ENDPOINT),
         "{{lakefs_access_key_id}}": scoped_creds["lakefs_access_key_id"],
         "{{lakefs_secret_access_key}}": scoped_creds["lakefs_secret_access_key"],
         "{{lakefs_default_branch}}": settings.LAKEFS_DEFAULT_BRANCH,
-        "{{minio_endpoint}}": to_k8s_endpoint(settings.MINIO_ENDPOINT),
+        "{{minio_endpoint}}": settings.MINIO_INTERNAL_ENDPOINT or to_k8s_endpoint(settings.MINIO_ENDPOINT),
     }
     rendered_yaml = template_content
     for key, val in replacements.items():
@@ -160,8 +163,8 @@ def render_rayjob_manifest(
         os.makedirs(logs_dir, exist_ok=True)
         with open(os.path.join(logs_dir, "last_rendered_yaml.yaml"), "w") as f:
             f.write(rendered_yaml)
-    except Exception:
-        pass
+    except Exception as write_err:
+        logger.debug(f"Could not save debug manifest to logs: {write_err}")
 
     return rendered_yaml
 
@@ -321,8 +324,8 @@ def spawn_local_ray_subprocess(
                 from app.services.dataset.s3_storage_service import S3StorageService
                 s3_svc = S3StorageService()
                 s3_svc.put_log_content("mlflow", f"logs/{job_id}/training.log", output_log)
-            except Exception:
-                pass
+            except Exception as log_err:
+                logger.warning(f"Failed to upload local training log for {job_id}: {log_err}")
 
             try:
                 from app.db.session import SessionLocal
@@ -342,8 +345,8 @@ def spawn_local_ray_subprocess(
                         if tj.started_at:
                             tj.duration_seconds = round((now - tj.started_at).total_seconds(), 2)
                         repo.save(tj)
-            except Exception:
-                pass
+            except Exception as db_err:
+                logger.warning(f"Failed to record local training job {job_id} status in DB: {db_err}")
 
             if res.returncode == 0:
                 log_audit_event(
@@ -372,8 +375,8 @@ def spawn_local_ray_subprocess(
                         tj.completed_at = datetime.now(timezone.utc)
                         tj.error_message = str(subprocess_err)
                         repo.save(tj)
-            except Exception:
-                pass
+            except Exception as db_rec_err:
+                logger.warning(f"Failed to record subprocess error for job {job_id}: {db_rec_err}")
             log_audit_event(
                 "model_training_error",
                 username,

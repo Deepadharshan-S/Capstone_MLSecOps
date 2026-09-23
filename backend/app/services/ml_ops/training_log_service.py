@@ -1,6 +1,9 @@
+import logging
 from typing import Optional
 from app.services.interfaces import ObjectStorageService
 from app.services.ml_ops.rayjob_service import RayJobService
+
+logger = logging.getLogger("training_log_service")
 
 
 class TrainingLogService:
@@ -78,8 +81,8 @@ class TrainingLogService:
             if logs:
                 try:
                     self.storage_service.put_log_content("mlflow", log_key, logs)
-                except Exception:
-                    pass
+                except Exception as put_err:
+                    logger.debug(f"Failed to persist lingering pod logs to S3: {put_err}")
                 lines = logs.splitlines()
                 return {
                     "job_id": clean_id,

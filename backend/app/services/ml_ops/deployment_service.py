@@ -1,6 +1,7 @@
 import os
 import uuid
 import datetime
+import logging
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,8 @@ from app.core.config import settings
 from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
 from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
+
+logger = logging.getLogger("deployment_service")
 
 
 class ModelDeploymentService:
@@ -270,10 +273,8 @@ class ModelDeploymentService:
                 svc_st = item.get("status", {}).get("serviceStatus")
                 if name and svc_st:
                     k8s_status_map[name] = svc_st
-        except Exception:
-            pass
-
-        seen_ids = set()
+        except Exception as k8s_err:
+            logger.debug(f"Could not list K8s rayservices for status mapping: {k8s_err}")
 
         # 2. Query PostgreSQL DeploymentRepository (Authoritative DB)
         try:
@@ -290,7 +291,6 @@ class ModelDeploymentService:
                     db_deployments = list(repo.list(status=status, environment=environment))
 
             for dep in db_deployments:
-                seen_ids.add(dep.deployment_id)
                 k8s_status = "Unknown"
                 if dep.rayservice_name:
                     if dep.rayservice_name in k8s_status_map:
@@ -311,40 +311,7 @@ class ModelDeploymentService:
                     "k8s_status": k8s_status,
                 })
         except Exception as db_err:
-            print(f"Notice: Failed to fetch deployments from DB ({db_err}).")
-
-        # 3. Fallback scan of MLflow tags for legacy deployments
-        try:
-            all_versions = mlflow_client.search_model_versions("")
-            for mv in all_versions:
-                tags = mv.tags or {}
-                if "deployment.status" in tags:
-                    dep_id = tags.get("deployment.id", f"{mv.name}-v{mv.version}")
-                    if dep_id in seen_ids:
-                        continue
-                    seen_ids.add(dep_id)
-                    raysvc = tags.get("deployment.rayservice_name")
-                    k8s_status = "Unknown"
-                    if raysvc:
-                        if raysvc in k8s_status_map:
-                            k8s_status = k8s_status_map[raysvc]
-                        else:
-                            k8s_status = "Not Found" if tags.get("deployment.status") == "stopped" else "Initializing"
-
-                    deployments.append({
-                        "deployment_id": dep_id,
-                        "model_name": mv.name,
-                        "version": str(mv.version),
-                        "environment": tags.get("deployment.environment", "staging"),
-                        "status": tags.get("deployment.status", "unknown"),
-                        "rayservice_name": raysvc,
-                        "endpoint_url": tags.get("deployment.endpoint_url", f"/api/deployments/{dep_id}/predict"),
-                        "deployed_by": tags.get("deployment.deployed_by"),
-                        "deployed_at": tags.get("deployment.deployed_at"),
-                        "k8s_status": k8s_status,
-                    })
-        except Exception as e:
-            print(f"Notice: Error searching legacy deployments in MLflow: {e}")
+            logger.warning(f"Failed to fetch deployments from DB: {db_err}")
 
         # Apply optional filtering
         if active_only:
@@ -412,38 +379,7 @@ class ModelDeploymentService:
             deployed_by = db_dep.created_by_username
             deployed_at = db_dep.created_at.isoformat() if db_dep.created_at else None
         else:
-            from mlflow.tracking import MlflowClient
-
-            mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
-            target_item = None
-
-            try:
-                all_versions = mlflow_client.search_model_versions("")
-                for mv in all_versions:
-                    t = mv.tags or {}
-                    if (
-                        t.get("deployment.id") == deployment_id
-                        or t.get("deployment.rayservice_name") == deployment_id
-                        or deployment_id in [mv.name, f"{mv.name}-v{mv.version}"]
-                    ):
-                        target_item = (mv, t)
-                        break
-            except Exception as e:
-                print(f"Error searching deployments in MLflow: {e}")
-
-            if target_item:
-                mv, t = target_item
-                dep_id = t.get("deployment.id", deployment_id)
-                model_name = mv.name
-                version = str(mv.version)
-                environment = t.get("deployment.environment", "staging")
-                dep_status = t.get("deployment.status", "unknown")
-                raysvc = t.get("deployment.rayservice_name")
-                endpoint_url = t.get("deployment.endpoint_url", f"/api/deployments/{dep_id}/predict")
-                deployed_by = t.get("deployment.deployed_by")
-                deployed_at = t.get("deployment.deployed_at")
-                tags = dict(t)
-            elif deployment_id.startswith("raysvc-"):
+            if deployment_id.startswith("raysvc-"):
                 try:
                     custom_api, core_api = self._get_k8s_apis()
                     k8s_json = custom_api.get_namespaced_custom_object(
@@ -475,7 +411,8 @@ class ModelDeploymentService:
                         "ray_cluster_status": status_obj.get("activeClusterStatus", {}),
                         "tags": {},
                     }
-                except Exception:
+                except Exception as k8s_err:
+                    logger.debug(f"Direct K8s lookup failed for '{deployment_id}': {k8s_err}")
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"Deployment '{deployment_id}' not found.",
@@ -527,8 +464,8 @@ class ModelDeploymentService:
                     apps = serve_cfg.get("applications", [])
                     if apps and "deployments" in apps[0] and apps[0]["deployments"]:
                         desired_reps = apps[0]["deployments"][0].get("num_replicas", 1)
-                except Exception:
-                    pass
+                except Exception as spec_err:
+                    logger.debug(f"Could not parse replicas from K8s spec: {spec_err}")
 
                 total_workers = 0
                 head_status = service_status
@@ -545,8 +482,8 @@ class ModelDeploymentService:
                     )
                     if head_pod and head_pod.status:
                         head_status = head_pod.status.phase or service_status
-                except Exception:
-                    pass
+                except Exception as pod_err:
+                    logger.debug(f"Could not list K8s cluster pods for {raysvc}: {pod_err}")
 
                 replica_health["desired_replicas"] = desired_reps
                 replica_health["ready_replicas"] = num_endpoints
@@ -633,28 +570,36 @@ class ModelDeploymentService:
             if should_close:
                 db_conn.close()
         except Exception as db_err:
-            print(f"Notice: Failed to update deployment in DB ({db_err}).")
+            logger.warning(f"Failed to update deployment in DB ({db_err}).")
 
-        # 2. Update MLflow Model Version tags for backward compatibility
+        # 2. Update MLflow Model Version tags for metadata tracking
         matched_items = []
-        try:
-            all_versions = mlflow_client.search_model_versions("")
-            for mv in all_versions:
-                tags = mv.tags or {}
-                if (
-                    tags.get("deployment.id") == deployment_id
-                    or tags.get("deployment.rayservice_name") == deployment_id
-                    or mv.name == deployment_id
-                    or deployment_id in [mv.name, f"{mv.name}-v{mv.version}"]
-                ):
-                    matched_items.append((
-                        mv.name,
-                        str(mv.version),
-                        tags.get("deployment.rayservice_name"),
-                        tags.get("deployment.id", deployment_id),
-                    ))
-        except Exception as e:
-            print(f"Notice: Could not search model versions in MLflow: {e}")
+        if dep:
+            matched_items.append((
+                dep.model_name,
+                str(dep.version),
+                dep.rayservice_name,
+                dep.deployment_id,
+            ))
+        else:
+            try:
+                all_versions = mlflow_client.search_model_versions("")
+                for mv in all_versions:
+                    tags = mv.tags or {}
+                    if (
+                        tags.get("deployment.id") == deployment_id
+                        or tags.get("deployment.rayservice_name") == deployment_id
+                        or mv.name == deployment_id
+                        or deployment_id in [mv.name, f"{mv.name}-v{mv.version}"]
+                    ):
+                        matched_items.append((
+                            mv.name,
+                            str(mv.version),
+                            tags.get("deployment.rayservice_name"),
+                            tags.get("deployment.id", deployment_id),
+                        ))
+            except Exception as e:
+                logger.debug(f"Could not search model versions in MLflow: {e}")
 
         if action.lower() == "stop":
             labels_to_clean = {f"deployment_id={deployment_id}"}
@@ -669,8 +614,8 @@ class ModelDeploymentService:
                     raysvc_names_to_clean.add(r_svc)
                 try:
                     mlflow_client.set_model_version_tag(m_name, m_ver, "deployment.status", "stopped")
-                except Exception:
-                    pass
+                except Exception as tag_err:
+                    logger.debug(f"Could not update MLflow tag for {m_name}-v{m_ver}: {tag_err}")
 
             try:
                 custom_api, core_api = self._get_k8s_apis()
@@ -679,22 +624,22 @@ class ModelDeploymentService:
                         custom_api.delete_namespaced_custom_object(
                             group="ray.io", version="v1", namespace="default", plural="rayservices", name=r_svc
                         )
-                    except Exception:
-                        pass
+                    except Exception as del_svc_err:
+                        logger.debug(f"RayService {r_svc} delete note: {del_svc_err}")
                     try:
                         custom_api.delete_namespaced_custom_object(
                             group="ray.io", version="v1", namespace="default", plural="rayclusters", name=r_svc
                         )
-                    except Exception:
-                        pass
+                    except Exception as del_cls_err:
+                        logger.debug(f"RayCluster {r_svc} delete note: {del_cls_err}")
 
                 for lbl in labels_to_clean:
                     try:
                         core_api.delete_collection_namespaced_config_map(
                             namespace="default", label_selector=lbl
                         )
-                    except Exception:
-                        pass
+                    except Exception as del_cm_err:
+                        logger.debug(f"ConfigMap collection cleanup note ({lbl}): {del_cm_err}")
 
                 all_dep_ids = {deployment_id} | {item[3] for item in matched_items if item[3]}
                 for d_id in all_dep_ids:
@@ -703,10 +648,10 @@ class ModelDeploymentService:
                             core_api.delete_namespaced_config_map(
                                 name=f"rayservice-code-{d_id}", namespace="default"
                             )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as del_single_cm_err:
+                            logger.debug(f"ConfigMap rayservice-code-{d_id} cleanup note: {del_single_cm_err}")
+            except Exception as k8s_clean_err:
+                logger.warning(f"Error during K8s resource cleanup for deployment {deployment_id}: {k8s_clean_err}")
 
         elif action.lower() == "restart":
             targets = set()
@@ -725,10 +670,10 @@ class ModelDeploymentService:
                             namespace="default",
                             label_selector=f"ray.io/cluster={target},ray.io/node-type=head",
                         )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as restart_pod_err:
+                        logger.debug(f"Restart pod deletion note ({target}): {restart_pod_err}")
+            except Exception as k8s_restart_err:
+                logger.warning(f"Error during K8s pod restart for deployment {deployment_id}: {k8s_restart_err}")
 
         log_audit_event(
             "deployment_management",

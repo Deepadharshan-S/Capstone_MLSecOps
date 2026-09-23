@@ -25,16 +25,25 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
+    # CORS config
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+
     # lakeFS config
     LAKEFS_ENDPOINT: str
     LAKEFS_ACCESS_KEY_ID: str
     LAKEFS_SECRET_ACCESS_KEY: str
     LAKEFS_DEFAULT_BRANCH: str = "main"
+    LAKEFS_INTERNAL_ENDPOINT: Optional[str] = None
 
     # MinIO config
     MINIO_ENDPOINT: str = "http://localhost:9000"
     MINIO_ROOT_USER: str = "minioadmin"
     MINIO_ROOT_PASSWORD: str = "minioadmin123"
+    MINIO_ACCESS_KEY: Optional[str] = None
+    MINIO_SECRET_KEY: Optional[str] = None
     MINIO_INTERNAL_ENDPOINT: Optional[str] = None
 
     # MLflow config
@@ -52,6 +61,33 @@ class Settings(BaseSettings):
     MINIO_TRAINING_SECRET_ACCESS_KEY: Optional[str] = None
     LAKEFS_TRAINING_ACCESS_KEY_ID: Optional[str] = None
     LAKEFS_TRAINING_SECRET_ACCESS_KEY: Optional[str] = None
+
+    @property
+    def minio_app_user(self) -> str:
+        """Returns application runtime access key for MinIO / S3 operations."""
+        return self.MINIO_ACCESS_KEY or self.MINIO_ROOT_USER
+
+    @property
+    def minio_app_password(self) -> str:
+        """Returns application runtime secret key for MinIO / S3 operations."""
+        return self.MINIO_SECRET_KEY or self.MINIO_ROOT_PASSWORD
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_cors_origins(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            origins = data.get("CORS_ORIGINS")
+            if isinstance(origins, str):
+                origins_str = origins.strip()
+                if origins_str.startswith("[") and origins_str.endswith("]"):
+                    import json
+                    try:
+                        data["CORS_ORIGINS"] = json.loads(origins_str)
+                    except Exception:
+                        data["CORS_ORIGINS"] = [orig.strip() for orig in origins_str[1:-1].split(",") if orig.strip()]
+                else:
+                    data["CORS_ORIGINS"] = [orig.strip() for orig in origins_str.split(",") if orig.strip()]
+        return data
 
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":

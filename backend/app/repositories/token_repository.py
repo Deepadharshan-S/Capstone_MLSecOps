@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -30,6 +31,18 @@ class RefreshTokenRepository(BaseRepository[RefreshToken]):
         )
         self.db.commit()
 
+    def delete_expired(self, now: Optional[datetime] = None) -> int:
+        """Deletes all expired refresh tokens (safe/idempotent pruning)."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        count = (
+            self.db.query(RefreshToken)
+            .filter(RefreshToken.expires_at <= now)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return count
+
 
 class BlacklistedTokenRepository(BaseRepository[BlacklistedToken]):
     """
@@ -46,3 +59,15 @@ class BlacklistedTokenRepository(BaseRepository[BlacklistedToken]):
             .filter(BlacklistedToken.jti == jti)
             .first()
         )
+
+    def delete_expired(self, now: Optional[datetime] = None) -> int:
+        """Deletes all expired blacklisted tokens (safe/idempotent pruning)."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        count = (
+            self.db.query(BlacklistedToken)
+            .filter(BlacklistedToken.expires_at <= now)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return count

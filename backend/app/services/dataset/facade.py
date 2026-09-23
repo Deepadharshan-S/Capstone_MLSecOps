@@ -76,8 +76,10 @@ class DataService:
             username=username,
         )
 
-    def list_datasets(self, db: Session) -> list[Dataset]:
-        return self.catalog.list_datasets(db=db)
+    def list_datasets(
+        self, db: Session, limit: int = 100, offset: int = 0
+    ) -> list[Dataset]:
+        return self.catalog.list_datasets(db=db, limit=limit, offset=offset)
 
     def get_dataset_metadata(self, db: Session, dataset_name: str) -> dict:
         return self.catalog.get_dataset_metadata(db=db, dataset_name=dataset_name)

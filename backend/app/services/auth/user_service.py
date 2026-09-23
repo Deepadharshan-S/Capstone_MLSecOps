@@ -34,9 +34,9 @@ class UserService:
         """Retrieve a user by their unique UUID identifier."""
         return self._get_repo(db).get_by_id(user_id)
 
-    def get_all_users(self, db: Session) -> List[User]:
-        """Retrieve all users in the system."""
-        return self._get_repo(db).list_all()
+    def get_all_users(self, db: Session, limit: int = 100, offset: int = 0) -> List[User]:
+        """Retrieve paginated users in the system."""
+        return self._get_repo(db).list(limit=limit, offset=offset)
 
     def get_all_audit_logs(self, db: Session) -> List[dict]:
         """Retrieve all security audit logs with authoritative PostgreSQL persistence."""

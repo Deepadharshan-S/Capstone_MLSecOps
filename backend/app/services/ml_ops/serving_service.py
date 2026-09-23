@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import logging
 from typing import Optional
 
 import pandas as pd
@@ -8,6 +9,8 @@ from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
 from fastapi import HTTPException, status
+
+logger = logging.getLogger("serving_service")
 
 
 class ModelServingService:
@@ -80,8 +83,8 @@ class ModelServingService:
                         matched_raysvc = tags.get("deployment.rayservice_name")
                         resolved_version = str(mv.version)
                         internal_url_from_tags = tags.get("deployment.internal_endpoint_url")
-        except Exception:
-            pass
+        except Exception as search_err:
+            logger.debug(f"Could not search MLflow model versions for serving: {search_err}")
 
         # 3. Route inference request via HTTP to the RayService endpoint
         # Enforce strict isolation: NEVER execute model code in the FastAPI process
@@ -130,8 +133,8 @@ class ModelServingService:
                         try:
                             err_json = resp.json()
                             err_detail = err_json.get("detail", resp.text)
-                        except Exception:
-                            pass
+                        except Exception as decode_err:
+                            logger.debug(f"Could not parse inference error JSON: {decode_err}")
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"Inference error: {err_detail}",

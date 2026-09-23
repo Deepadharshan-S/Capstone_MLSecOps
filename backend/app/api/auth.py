@@ -1,11 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, Security, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.core.rate_limiter import RateLimiter
 
 from app.db.session import get_db
+from app.models.user import User
+from app.api.permissions import get_current_active_user
 from app.schemas.auth import Token, UserCreate, UserResponse, MessageResponse
 from app.services.dependencies import get_auth_service
 from app.services.auth import AuthService
@@ -152,3 +154,20 @@ def logout(
     response.delete_cookie(key="refresh_token", path="/api/auth")
 
     return result
+
+
+@router.post(
+    "/cleanup-tokens",
+    status_code=status.HTTP_200_OK,
+)
+def cleanup_tokens(
+    db: Session = Depends(get_db),
+    admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """
+    Idempotent maintenance endpoint to prune expired refresh tokens and expired blacklisted tokens.
+    Admin-only (requires 'users:manage' scope).
+    """
+    return auth_service.cleanup_expired_tokens(db=db)
+

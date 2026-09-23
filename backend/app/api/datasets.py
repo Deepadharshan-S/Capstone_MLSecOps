@@ -87,14 +87,16 @@ def register_dataset(
 
 @router.get("", response_model=list[DatasetResponse])
 def list_datasets(
+    limit: int = Query(default=100, ge=1, le=1000, description="Max number of datasets to retrieve"),
+    offset: int = Query(default=0, ge=0, description="Number of datasets to skip"),
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:view"]),
     data_service: DataService = Depends(get_data_service),
 ):
     """
-    Lists all registered datasets.
+    Lists registered datasets with database-level pagination.
     """
-    return data_service.list_datasets(db)
+    return data_service.list_datasets(db, limit=limit, offset=offset)
 
 
 @router.delete("/{dataset_name}", response_model=MessageResponse)
