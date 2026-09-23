@@ -6,7 +6,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: mlsecops-postgres
+    container_name: sentinelml-postgres
     restart: unless-stopped
 
     environment:
@@ -33,7 +33,7 @@ services:
       start_period: 10s
 
     networks:
-      - mlsecops-network
+      - sentinelml-network
 
 
   # ==========================================================
@@ -42,7 +42,7 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: mlsecops-minio
+    container_name: sentinelml-minio
     restart: unless-stopped
 
     environment:
@@ -74,7 +74,7 @@ services:
       start_period: 10s
 
     networks:
-      - mlsecops-network
+      - sentinelml-network
 
 
   # ==========================================================
@@ -83,7 +83,7 @@ services:
 
   lakefs:
     image: treeverse/lakefs:latest
-    container_name: mlsecops-lakefs
+    container_name: sentinelml-lakefs
     restart: unless-stopped
 
     depends_on:
@@ -145,7 +145,7 @@ services:
       start_period: 20s
 
     networks:
-      - mlsecops-network
+      - sentinelml-network
 
 
   # ==========================================================
@@ -157,7 +157,7 @@ services:
   #     context: .
   #     dockerfile: backend/Dockerfile
 
-  #   container_name: mlsecops-backend
+  #   container_name: sentinelml-backend
   #   restart: unless-stopped
 
   #   depends_on:
@@ -177,7 +177,7 @@ services:
   #     - .env
 
   #   networks:
-  #     - mlsecops-network
+  #     - sentinelml-network
 
   # ==========================================================
   # MLflow Tracking Server
@@ -185,7 +185,7 @@ services:
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.15.1
-    container_name: mlsecops-mlflow
+    container_name: sentinelml-mlflow
     restart: unless-stopped
     depends_on:
       postgres:
@@ -211,7 +211,7 @@ services:
       --allowed-hosts '*'
       "
     networks:
-      - mlsecops-network
+      - sentinelml-network
 
   # ==========================================================
   # MinIO Bucket Creator Helper
@@ -219,7 +219,7 @@ services:
 
   createbuckets:
     image: minio/mc:latest
-    container_name: mlsecops-minio-createbuckets
+    container_name: sentinelml-minio-createbuckets
     depends_on:
       minio:
         condition: service_healthy
@@ -231,7 +231,7 @@ services:
       exit 0;
       "
     networks:
-      - mlsecops-network
+      - sentinelml-network
 
 
 # ============================================================
@@ -239,8 +239,8 @@ services:
 # ============================================================
 
 networks:
-  mlsecops-network:
-    name: mlsecops-network
+  sentinelml-network:
+    name: sentinelml-network
     driver: bridge
 
 
@@ -254,4 +254,4 @@ volumes:
     name: postgres_data
 
   minio_data:
-    name: mlsecops_minio_data
+    name: sentinelml_minio_data

@@ -1,11 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, Security, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.core.rate_limiter import RateLimiter
 
 from app.db.session import get_db
+from app.models.user import User
+from app.api.permissions import get_current_active_user
 from app.schemas.auth import Token, UserCreate, UserResponse, MessageResponse
 from app.services.dependencies import get_auth_service
 from app.services.auth import AuthService
@@ -29,7 +31,14 @@ def register(
     Registers a new user after enforcing the password complexity policy.
     """
     ip_addr = request.client.host if request.client else None
-    return auth_service.register_user(db, user_in, ip_addr)
+    return auth_service.register_user(
+        db=db,
+        username=user_in.username,
+        email=user_in.email,
+        password=user_in.password,
+        ip_address=ip_addr,
+        user_in=user_in,
+    )
 
 
 @router.post(
@@ -46,9 +55,28 @@ def login(
 ):
     """
     Authenticates user, handles brute-force lockout, and issues access/refresh tokens.
+    HTTP cookie management is handled exclusively at the router layer.
     """
     ip_addr = request.client.host if request.client else None
-    return auth_service.authenticate_user(db, response, form_data, ip_addr)
+    token_dict = auth_service.authenticate_user(
+        db=db,
+        username=form_data.username,
+        password=form_data.password,
+        ip_address=ip_addr,
+    )
+
+    # Set secure HttpOnly cookie for the refresh token
+    response.set_cookie(
+        key="refresh_token",
+        value=token_dict["refresh_token"],
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=7 * 24 * 3600,
+        path="/api/auth",
+    )
+
+    return {"access_token": token_dict["access_token"], "token_type": token_dict["token_type"]}
 
 
 @router.post(
@@ -67,7 +95,26 @@ def refresh(
     Includes automatic reuse detection to mitigate token theft.
     """
     ip_addr = request.client.host if request.client else None
-    return auth_service.rotate_refresh_token(db, request, response, ip_addr)
+    refresh_token = request.cookies.get("refresh_token")
+
+    token_dict = auth_service.rotate_refresh_token(
+        db=db,
+        refresh_token=refresh_token,
+        ip_address=ip_addr,
+    )
+
+    # Re-issue rotated secure HttpOnly cookie
+    response.set_cookie(
+        key="refresh_token",
+        value=token_dict["refresh_token"],
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=7 * 24 * 3600,
+        path="/api/auth",
+    )
+
+    return {"access_token": token_dict["access_token"], "token_type": token_dict["token_type"]}
 
 
 @router.post(
@@ -86,4 +133,41 @@ def logout(
     Logs out the user by revoking the refresh token, blacklisting the access token, and clearing the cookie.
     """
     ip_addr = request.client.host if request.client else None
-    return auth_service.logout_user(db, request, response, ip_addr)
+
+    # Extract access token from Authorization header
+    access_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        access_token = auth_header.split(" ")[1]
+
+    # Extract refresh token from cookie
+    refresh_token = request.cookies.get("refresh_token")
+
+    result = auth_service.logout_user(
+        db=db,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        ip_address=ip_addr,
+    )
+
+    # Clear HttpOnly cookie on client
+    response.delete_cookie(key="refresh_token", path="/api/auth")
+
+    return result
+
+
+@router.post(
+    "/cleanup-tokens",
+    status_code=status.HTTP_200_OK,
+)
+def cleanup_tokens(
+    db: Session = Depends(get_db),
+    admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """
+    Idempotent maintenance endpoint to prune expired refresh tokens and expired blacklisted tokens.
+    Admin-only (requires 'users:manage' scope).
+    """
+    return auth_service.cleanup_expired_tokens(db=db)
+

@@ -1,6 +1,7 @@
 import logging
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.repositories import UserRepository
 from app.core.security import hash_password
 
 logging.basicConfig(level=logging.INFO)
@@ -10,8 +11,9 @@ logger = logging.getLogger("seed_db")
 def seed():
     db = SessionLocal()
     try:
+        user_repo = UserRepository(db)
         # Check if users already exist
-        users_count = db.query(User).count()
+        users_count = user_repo.count()
         if users_count > 0:
             logger.info("Database already seeded with users.")
             return
@@ -22,25 +24,25 @@ def seed():
         seed_data = [
             {
                 "username": "admin_user",
-                "email": "admin@mlsecops.com",
+                "email": "admin@sentinelml.com",
                 "password": "AdminPassword123!",
                 "role": "admin",
             },
             {
                 "username": "ds_user",
-                "email": "ds@mlsecops.com",
+                "email": "ds@sentinelml.com",
                 "password": "DataScientist123!",
                 "role": "data_scientist",
             },
             {
                 "username": "mle_user",
-                "email": "mle@mlsecops.com",
+                "email": "mle@sentinelml.com",
                 "password": "MLEngineerPassword123!",
                 "role": "ml_engineer",
             },
             {
                 "username": "viewer_user",
-                "email": "viewer@mlsecops.com",
+                "email": "viewer@sentinelml.com",
                 "password": "ViewerPassword123!",
                 "role": "viewer",
             },

@@ -53,25 +53,25 @@ def setup_test_database():
         seed_data = [
             {
                 "username": "admin_user",
-                "email": "admin@mlsecops.com",
+                "email": "admin@sentinelml.com",
                 "password": "AdminPassword123!",
                 "role": "admin",
             },
             {
                 "username": "ds_user",
-                "email": "ds@mlsecops.com",
+                "email": "ds@sentinelml.com",
                 "password": "DataScientist123!",
                 "role": "data_scientist",
             },
             {
                 "username": "mle_user",
-                "email": "mle@mlsecops.com",
+                "email": "mle@sentinelml.com",
                 "password": "MLEngineerPassword123!",
                 "role": "ml_engineer",
             },
             {
                 "username": "viewer_user",
-                "email": "viewer@mlsecops.com",
+                "email": "viewer@sentinelml.com",
                 "password": "ViewerPassword123!",
                 "role": "viewer",
             },
@@ -116,7 +116,7 @@ def test_public_endpoints():
     """Verify that root and health endpoints do not require authentication."""
     r_root = client.get("/")
     assert r_root.status_code == 200
-    assert r_root.json() == {"message": "Welcome to MLSecOps"}
+    assert r_root.json() == {"message": "Welcome to SentinelML"}
 
     r_health = client.get("/health")
     assert r_health.status_code == 200
@@ -124,6 +124,9 @@ def test_public_endpoints():
     assert res["status"] == "healthy"
     assert res["database"] == "connected"
     assert res["lakefs"] == "connected"
+    assert res["minio"] == "connected"
+    assert res["mlflow"] == "connected"
+
 
 
 def test_password_complexity():
@@ -131,7 +134,7 @@ def test_password_complexity():
     # Case 1: Fails Pydantic schema validation (length < 8) -> returns 422
     payload_short = {
         "username": "short_pwd_user",
-        "email": "short@mlsecops.com",
+        "email": "short@sentinelml.com",
         "password": "123",
         "role": "viewer",
     }
@@ -142,7 +145,7 @@ def test_password_complexity():
     # Case 2: Passes schema check but fails complexity rules -> returns 400
     payload_weak = {
         "username": "weak_pwd_user",
-        "email": "weak@mlsecops.com",
+        "email": "weak@sentinelml.com",
         "password": "weakpassword123",  # 15 chars, but no uppercase or special chars
         "role": "viewer",
     }
@@ -153,7 +156,7 @@ def test_password_complexity():
     # Case 3: Register with a valid complex password
     payload_ok = {
         "username": "complex_pwd_user",
-        "email": "complex@mlsecops.com",
+        "email": "complex@sentinelml.com",
         "password": "StrongPassword123!",
         "role": "viewer",
     }
@@ -224,7 +227,7 @@ def test_brute_force_lockout():
     # We will register a fresh user to test lockout without affecting standard seeds
     register_payload = {
         "username": "lockout_user",
-        "email": "lockout@mlsecops.com",
+        "email": "lockout@sentinelml.com",
         "password": "LockoutPassword123!",
         "role": "viewer",
     }
@@ -431,6 +434,15 @@ def test_audit_logging_and_retrieval():
     actions = [log["action"] for log in logs]
     assert "login_success" in actions
 
+    # 4. Verify pagination limit & offset
+    paginated_resp = client.get("/api/users/audit-logs?limit=2&offset=0", headers=admin_headers)
+    assert paginated_resp.status_code == 200
+    p_logs = paginated_resp.json()
+    assert len(p_logs) <= 2
+    if len(logs) > 2:
+        offset_resp = client.get("/api/users/audit-logs?limit=2&offset=2", headers=admin_headers)
+        assert offset_resp.status_code == 200
+
 
 def test_rate_limiting_enforcement():
     """Verify that exceeding the rate limit triggers HTTP 429 Too Many Requests."""
@@ -451,7 +463,7 @@ def test_registration_always_assigns_viewer_role():
     # Register requesting 'admin' role
     payload = {
         "username": "attacker_admin",
-        "email": "attacker@mlsecops.com",
+        "email": "attacker@sentinelml.com",
         "password": "StrongPassword123!",
         "role": "admin"
     }
@@ -476,7 +488,7 @@ def test_registration_integrity_error_handling():
     # Register first user
     payload1 = {
         "username": "duplicate_user",
-        "email": "duplicate@mlsecops.com",
+        "email": "duplicate@sentinelml.com",
         "password": "StrongPassword123!"
     }
     response1 = client.post("/api/auth/register", json=payload1)
@@ -489,9 +501,10 @@ def test_registration_integrity_error_handling():
 
 
 def test_health_endpoint_failure_modes(monkeypatch):
-    """Verify that /health returns 503 if database or lakeFS is unhealthy."""
+    """Verify that /health returns 503 if any of database, lakeFS, MinIO, or MLflow is unhealthy."""
     from unittest.mock import MagicMock
     from app.services.dataset import data_service
+    from app.services.dependencies import get_storage_service, get_ml_ops_service
 
     # Case 1: Database failure
     original_get_db = app.dependency_overrides.get(get_db)
@@ -510,6 +523,8 @@ def test_health_endpoint_failure_modes(monkeypatch):
         assert res["status"] == "unhealthy"
         assert "error: DB Connection Lost" in res["database"]
         assert res["lakefs"] == "connected"
+        assert res["minio"] == "connected"
+        assert res["mlflow"] == "connected"
     finally:
         if original_get_db:
             app.dependency_overrides[get_db] = original_get_db
@@ -533,5 +548,82 @@ def test_health_endpoint_failure_modes(monkeypatch):
         assert res["status"] == "unhealthy"
         assert res["database"] == "connected"
         assert "error: lakeFS Offline" in res["lakefs"]
+        assert res["minio"] == "connected"
+        assert res["mlflow"] == "connected"
     finally:
         data_service.client = original_client
+
+    # Case 3: MinIO S3 failure
+    original_storage = app.dependency_overrides.get(get_storage_service)
+    mock_storage = MagicMock()
+    mock_storage.check_health.return_value = (False, "error: MinIO Storage Unreachable")
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    try:
+        r_health = client.get("/health")
+        assert r_health.status_code == 503
+        res = r_health.json()
+        assert res["status"] == "unhealthy"
+        assert res["database"] == "connected"
+        assert res["lakefs"] == "connected"
+        assert "error: MinIO Storage Unreachable" in res["minio"]
+        assert res["mlflow"] == "connected"
+    finally:
+        if original_storage:
+            app.dependency_overrides[get_storage_service] = original_storage
+        else:
+            del app.dependency_overrides[get_storage_service]
+
+    # Case 4: MLflow failure
+    original_mlops = app.dependency_overrides.get(get_ml_ops_service)
+    mock_mlops = MagicMock()
+    mock_mlops.check_health.return_value = (False, "error: MLflow Tracking Server Down")
+    app.dependency_overrides[get_ml_ops_service] = lambda: mock_mlops
+    try:
+        r_health = client.get("/health")
+        assert r_health.status_code == 503
+        res = r_health.json()
+        assert res["status"] == "unhealthy"
+        assert res["database"] == "connected"
+        assert res["lakefs"] == "connected"
+        assert res["minio"] == "connected"
+        assert "error: MLflow Tracking Server Down" in res["mlflow"]
+    finally:
+        if original_mlops:
+            app.dependency_overrides[get_ml_ops_service] = original_mlops
+        else:
+            del app.dependency_overrides[get_ml_ops_service]
+
+
+def test_audit_log_repository_isolated_crud():
+    """Verifies AuditLogRepository CRUD operations in isolation against PostgreSQL."""
+    import uuid
+    from app.db.session import SessionLocal
+    from app.models.audit_log import AuditLog
+    from app.repositories.audit_log_repository import AuditLogRepository
+
+    unique_action = f"test_isolated_action_{uuid.uuid4().hex[:6]}"
+
+    with SessionLocal() as db:
+        repo = AuditLogRepository(db)
+
+        # 1. Create
+        record = AuditLog(
+            action=unique_action,
+            username="isolated_auditor",
+            ip_address="127.0.0.1",
+            details="Testing AuditLogRepository isolation",
+        )
+        saved = repo.create(record)
+        assert saved.id is not None
+        assert saved.action == unique_action
+
+        # 2. List
+        logs = repo.list(limit=10, offset=0)
+        assert len(logs) > 0
+        assert any(l.action == unique_action for l in logs)
+
+        # 3. Count
+        total_count = repo.count()
+        assert total_count > 0
+
+

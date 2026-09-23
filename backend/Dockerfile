@@ -29,5 +29,14 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
+# Create non-root user and configure permissions
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup && \
+    mkdir -p /app/logs && \
+    chown -R appuser:appgroup /app
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://localhost:8000/health || exit 1
+
 # Run migrations and start the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

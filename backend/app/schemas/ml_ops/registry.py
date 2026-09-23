@@ -27,3 +27,30 @@ class UploadModelResponse(BaseModel):
     experiment_name: str
     uploaded_by: str
     status: str
+
+
+class ModelVersionDetail(BaseModel):
+    version: str
+    current_stage: Optional[str] = "None"
+    status: Optional[str] = "READY"
+    run_id: Optional[str] = None
+    source: Optional[str] = None
+    created_at: Optional[str] = None
+    last_updated_at: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[dict[str, str]] = {}
+    aliases: Optional[list[str]] = []
+    metrics: Optional[dict[str, float]] = {}
+    parameters: Optional[dict[str, str]] = {}
+
+
+class ModelDetailResponse(BaseModel):
+    name: str
+    description: Optional[str] = None
+    created_at: Optional[str] = None
+    last_updated_at: Optional[str] = None
+    tags: Optional[dict[str, str]] = {}
+    aliases: Optional[dict[str, str]] = {}
+    production_alias: Optional[str] = None
+    versions: list[ModelVersionDetail] = []
+

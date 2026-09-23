@@ -103,11 +103,35 @@ def test_model_deploy_production_alias(user_tokens, deployed_model_name):
     assert "production" in reg_model.aliases or reg_model.latest_versions[-1].current_stage == "Production"
 
 
-def test_real_time_prediction_dataframe_records(user_tokens, deployed_model_name):
-    """Tests real-time prediction using dataframe_records format."""
+def test_real_time_prediction_offline_returns_503(user_tokens, deployed_model_name):
+    """Verifies that when RayService is offline or initializing, inference returns HTTP 503 with Retry-After header."""
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    payload = {"inputs": [[1.0, 2.0, 3.0]]}
+    resp = client.post(f"/api/models/{deployed_model_name}/predict", json=payload, headers=ds_headers)
+    assert resp.status_code == 503
+    assert "Retry-After" in resp.headers
+    assert resp.headers["Retry-After"] == "10"
+
+
+def test_real_time_prediction_dataframe_records(user_tokens, deployed_model_name, monkeypatch):
+    """Tests real-time prediction using dataframe_records format routed via HTTP to RayService."""
     viewer_headers = {"Authorization": f"Bearer {user_tokens['viewer_user']}"}
-    
-    # Try sample input
+
+    class MockResponse:
+        status_code = 200
+        text = '{"predictions": [0, 1]}'
+        def json(self):
+            return {"predictions": [0, 1]}
+
+    import httpx
+    orig_post = httpx.Client.post
+    def mock_post(self, url, *args, **kwargs):
+        if "raysvc" in str(url) or "8000" in str(url):
+            return MockResponse()
+        return orig_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr("httpx.Client.post", mock_post)
+
     predict_payload = {
         "dataframe_records": [
             {"feat1": 1.2, "feat2": 3.4, "feat3": 0.5},
@@ -115,11 +139,6 @@ def test_real_time_prediction_dataframe_records(user_tokens, deployed_model_name
         ]
     }
     resp = client.post(f"/api/models/{deployed_model_name}/predict", json=predict_payload, headers=viewer_headers)
-    if resp.status_code == 500 and "feature" in resp.text.lower():
-        # Fallback to 2-feature format if model was 2 features
-        predict_payload = {"dataframe_records": [{"feature1": 1.0, "feature2": 2.0}]}
-        resp = client.post(f"/api/models/{deployed_model_name}/predict", json=predict_payload, headers=viewer_headers)
-
     assert resp.status_code == 200
     res_data = resp.json()
     assert "predictions" in res_data
@@ -128,9 +147,24 @@ def test_real_time_prediction_dataframe_records(user_tokens, deployed_model_name
     assert res_data["latency_ms"] >= 0.0
 
 
-def test_real_time_prediction_matrix_inputs(user_tokens, deployed_model_name):
-    """Tests real-time prediction using inputs (matrix) format."""
+def test_real_time_prediction_matrix_inputs(user_tokens, deployed_model_name, monkeypatch):
+    """Tests real-time prediction using inputs (matrix) format routed via HTTP to RayService."""
     ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+
+    class MockResponse:
+        status_code = 200
+        text = '{"predictions": [0, 1]}'
+        def json(self):
+            return {"predictions": [0, 1]}
+
+    import httpx
+    orig_post = httpx.Client.post
+    def mock_post(self, url, *args, **kwargs):
+        if "raysvc" in str(url) or "8000" in str(url):
+            return MockResponse()
+        return orig_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr("httpx.Client.post", mock_post)
 
     matrix_payload = {
         "inputs": [
@@ -139,10 +173,6 @@ def test_real_time_prediction_matrix_inputs(user_tokens, deployed_model_name):
         ]
     }
     resp = client.post(f"/api/models/{deployed_model_name}/predict", json=matrix_payload, headers=ds_headers)
-    if resp.status_code == 500 and "feature" in resp.text.lower():
-        matrix_payload = {"inputs": [[1.0, 2.0], [3.0, 4.0]]}
-        resp = client.post(f"/api/models/{deployed_model_name}/predict", json=matrix_payload, headers=ds_headers)
-
     assert resp.status_code == 200
     res_data = resp.json()
     assert "predictions" in res_data
@@ -240,3 +270,124 @@ def test_deployment_and_prediction_audit_logging(user_tokens):
 
     assert "model_deploy" in actions
     assert "model_prediction" in actions
+
+
+def test_get_model_detail(user_tokens, deployed_model_name):
+    """Verifies retrieving detailed model metadata, version history, tags, metrics, and production alias."""
+    viewer_headers = {"Authorization": f"Bearer {user_tokens['viewer_user']}"}
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+
+    # 1. Successful model detail retrieval
+    resp = client.get(f"/api/models/{deployed_model_name}", headers=viewer_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == deployed_model_name
+    assert "versions" in data
+    assert len(data["versions"]) >= 1
+
+    v1 = data["versions"][0]
+    assert v1["version"] == "1"
+    assert v1["status"] == "READY"
+    assert "tags" in v1
+    assert "metrics" in v1
+    assert "parameters" in v1
+
+    # 2. Verify 404 for non-existent model
+    resp_404 = client.get("/api/models/non-existent-model-xyz", headers=ds_headers)
+    assert resp_404.status_code == 404
+    assert "not found" in resp_404.json()["detail"].lower()
+
+
+def test_get_deployment_detail(user_tokens, deployed_model_name):
+    """Verifies retrieving detailed RayService status, replica health, and internal endpoints for a deployment."""
+    viewer_headers = {"Authorization": f"Bearer {user_tokens['viewer_user']}"}
+    mle_headers = {"Authorization": f"Bearer {user_tokens['mle_user']}"}
+
+    # 1. Fetch available deployments
+    dep_list_resp = client.get("/api/deployments", headers=viewer_headers)
+    assert dep_list_resp.status_code == 200
+    deployments = dep_list_resp.json()["deployments"]
+    assert len(deployments) >= 1
+    target_dep = deployments[0]
+    dep_id = target_dep["deployment_id"]
+
+    # 2. Retrieve detailed deployment info
+    resp = client.get(f"/api/deployments/{dep_id}", headers=viewer_headers)
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["deployment_id"] == dep_id
+    assert detail["model_name"] == target_dep["model_name"]
+    assert "internal_endpoints" in detail
+    assert "replica_health" in detail
+    assert "service_status" in detail
+    assert "k8s_status" in detail
+    assert isinstance(detail["replica_health"]["desired_replicas"], int)
+    assert isinstance(detail["replica_health"]["ready_replicas"], int)
+
+    # 3. Verify 404 for non-existent deployment
+    resp_404 = client.get("/api/deployments/non-existent-dep-xyz", headers=mle_headers)
+    assert resp_404.status_code == 404
+    assert "not found" in resp_404.json()["detail"].lower()
+
+
+def test_deployment_repository_isolated_crud():
+    """Verifies DeploymentRepository CRUD operations in isolation against PostgreSQL."""
+    import uuid
+    from app.db.session import SessionLocal
+    from app.models.user import User
+    from app.models.deployment import Deployment
+    from app.repositories.deployment_repository import DeploymentRepository
+
+    dep_id = f"test-repodep-{uuid.uuid4().hex[:8]}"
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.username == "mle_user").first()
+        user_id = user.id if user else uuid.uuid4()
+        username = user.username if user else "mle_user"
+
+        repo = DeploymentRepository(db)
+
+        # 1. Create
+        dep = Deployment(
+            deployment_id=dep_id,
+            model_name="isolated-test-model",
+            version="1",
+            environment="staging",
+            rayservice_name=f"raysvc-{dep_id}",
+            endpoint_url=f"/api/deployments/{dep_id}/predict",
+            status="deployed",
+            created_by_id=user_id,
+            created_by_username=username,
+        )
+        saved = repo.create(dep)
+        assert saved.id is not None
+        assert saved.deployment_id == dep_id
+
+        # 2. Get by deployment_id
+        found = repo.get_by_deployment_id(dep_id)
+        assert found is not None
+        assert found.model_name == "isolated-test-model"
+
+        # 3. Get by rayservice_name
+        found_svc = repo.get_by_rayservice_name(f"raysvc-{dep_id}")
+        assert found_svc is not None
+        assert found_svc.deployment_id == dep_id
+
+        # 4. List by model_name
+        by_model = repo.get_by_model_name("isolated-test-model")
+        assert any(d.deployment_id == dep_id for d in by_model)
+
+        # 5. List with filters
+        filtered = repo.list(status="deployed", environment="staging")
+        assert any(d.deployment_id == dep_id for d in filtered)
+
+        # 6. Update
+        found.status = "stopped"
+        updated = repo.save(found)
+        assert updated.status == "stopped"
+
+        # 7. Delete
+        assert repo.delete_by_deployment_id(dep_id) is True
+        assert repo.get_by_deployment_id(dep_id) is None
+
+

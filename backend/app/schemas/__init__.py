@@ -26,9 +26,12 @@ from app.schemas.dataset import (
 from app.schemas.ml_ops import (
     TrainModelSchema,
     TrainPipelineSchema,
-    DeployModelSchema,
-    ManageDeploymentSchema,
     TrainModelResponse,
+    RayJobSummary,
+    RayJobListResponse,
+    RayJobDetailResponse,
+    RayJobLogsResponse,
+    DeployModelSchema,
     ModelItem,
     ModelListResponse,
     DeployModelResponse,
@@ -38,6 +41,10 @@ from app.schemas.ml_ops import (
     PredictionResponseSchema,
     DeploymentItem,
     DeploymentListResponse,
+    ReplicaHealth,
+    DeploymentDetailResponse,
+    ModelVersionDetail,
+    ModelDetailResponse,
 )
 
 __all__ = [
@@ -67,9 +74,12 @@ __all__ = [
     # MLOps
     "TrainModelSchema",
     "TrainPipelineSchema",
-    "DeployModelSchema",
-    "ManageDeploymentSchema",
     "TrainModelResponse",
+    "RayJobSummary",
+    "RayJobListResponse",
+    "RayJobDetailResponse",
+    "RayJobLogsResponse",
+    "DeployModelSchema",
     "ModelItem",
     "ModelListResponse",
     "DeployModelResponse",
@@ -79,4 +89,9 @@ __all__ = [
     "PredictionResponseSchema",
     "DeploymentItem",
     "DeploymentListResponse",
+    "ReplicaHealth",
+    "DeploymentDetailResponse",
+    "ModelVersionDetail",
+    "ModelDetailResponse",
 ]
+

@@ -493,14 +493,14 @@ def main():
                     "lakefs_repo": str(repo_name),
                     "lakefs_ref": str(args.ref),
                     "pipeline_mode": str(args.pipeline_mode),
-                    "mlsecops.framework": "ray-kubernetes",
+                    "sentinelml.framework": "ray-kubernetes",
                     "is_multi_model": "true",
                     "candidate_count": str(len(models_dict)),
                 })
                 if getattr(args, "user", None):
-                    mlflow.set_tag("mlsecops.user", str(args.user))
+                    mlflow.set_tag("sentinelml.user", str(args.user))
                 if getattr(args, "job_id", None):
-                    mlflow.set_tag("mlsecops.job_id", str(args.job_id))
+                    mlflow.set_tag("sentinelml.job_id", str(args.job_id))
 
                 parent_params = {
                     "candidates": ",".join(list(models_dict.keys())),
@@ -543,8 +543,8 @@ def main():
                                 cand_input = cand_X.iloc[:2]
                             elif hasattr(cand_X, "head"):
                                 cand_input = cand_X.head(2)
-                        except Exception:
-                            pass
+                        except Exception as sig_err:
+                            print(f"[ray_wrapper] Note: Candidate signature inference skipped: {sig_err}")
 
                     with mlflow.start_run(run_name=child_run_name, nested=True):
                         # Log candidate params
@@ -563,7 +563,7 @@ def main():
                             "candidate_name": str(cand_key),
                             "dataset_id": str(args.dataset_id),
                             "lakefs_ref": str(args.ref),
-                            "mlsecops.framework": "ray-kubernetes",
+                            "sentinelml.framework": "ray-kubernetes",
                         })
 
                         # Log candidate metrics
@@ -579,8 +579,8 @@ def main():
                                 t_col = args.target_column or ("label" if "label" in df_cand.columns else df_cand.columns[-1])
                                 report_dict = classification_report(df_cand[t_col], cand_y_pred, output_dict=True, zero_division=0)
                                 mlflow.log_dict(report_dict, "evaluation/classification_report.json")
-                            except Exception:
-                                pass
+                            except Exception as eval_err:
+                                print(f"[ray_wrapper] Note: Candidate classification report skipped: {eval_err}")
 
                         # Log candidate model artifact (unregistered, inside child run to avoid registry collision)
                         cand_model_kwargs = {
@@ -696,12 +696,12 @@ def main():
                     "lakefs_repo": str(repo_name),
                     "lakefs_ref": str(args.ref),
                     "pipeline_mode": str(args.pipeline_mode),
-                    "mlsecops.framework": "ray-kubernetes",
+                    "sentinelml.framework": "ray-kubernetes",
                 }
                 if getattr(args, "user", None):
-                    tags_to_log["mlsecops.user"] = str(args.user)
+                    tags_to_log["sentinelml.user"] = str(args.user)
                 if getattr(args, "job_id", None):
-                    tags_to_log["mlsecops.job_id"] = str(args.job_id)
+                    tags_to_log["sentinelml.job_id"] = str(args.job_id)
                 if getattr(args, "code_file", None) and not args.pipeline_mode:
                     tags_to_log["code_file"] = os.path.basename(args.code_file)
 

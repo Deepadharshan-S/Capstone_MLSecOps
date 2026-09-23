@@ -1,11 +1,27 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Any
+from typing import Optional, Any, Union, BinaryIO, Iterator
 
 class ObjectStorageService(ABC):
     @abstractmethod
     def delete_objects_with_prefix(self, bucket_name: str, prefix: str) -> None:
         """Deletes all objects in a bucket under the given prefix."""
         pass
+
+    @abstractmethod
+    def check_health(self) -> tuple[bool, str]:
+        """Checks connection/health of the object storage backend. Returns (is_healthy, status_message)."""
+        pass
+
+    @abstractmethod
+    def put_log_content(self, bucket_name: str, key: str, content: str) -> None:
+        """Uploads log text content to object storage."""
+        pass
+
+    @abstractmethod
+    def get_log_content(self, bucket_name: str, key: str) -> Optional[str]:
+        """Retrieves log text content from object storage if exists."""
+        pass
+
 
 
 class VersionControlService(ABC):
@@ -42,13 +58,18 @@ class VersionControlService(ABC):
         pass
 
     @abstractmethod
-    def upload_file(self, repo_name: str, branch_name: str, file_path: str, content: bytes) -> None:
-        """Uploads a file to a branch."""
+    def upload_file(self, repo_name: str, branch_name: str, file_path: str, content: Union[bytes, BinaryIO]) -> None:
+        """Uploads a file to a branch from bytes or a file-like stream."""
         pass
 
     @abstractmethod
     def download_file(self, repo_name: str, ref_id: str, file_path: str) -> bytes:
         """Downloads a file at a specific ref."""
+        pass
+
+    @abstractmethod
+    def stream_file(self, repo_name: str, ref_id: str, file_path: str, chunk_size: int = 65536) -> Iterator[bytes]:
+        """Streams a file in chunks at a specific ref."""
         pass
 
     @abstractmethod

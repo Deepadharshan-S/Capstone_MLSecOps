@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Security
+from fastapi import APIRouter, Depends, Request, Security, Query
 from sqlalchemy.orm import Session
 from app.core.rate_limiter import RateLimiter
 
@@ -25,26 +25,30 @@ def read_user_me(current_user: Annotated[User, Depends(get_current_active_user)]
 
 @router.get("/", response_model=list[UserResponse])
 def list_users(
+    limit: int = Query(default=100, ge=1, le=1000, description="Max number of users to retrieve"),
+    offset: int = Query(default=0, ge=0, description="Number of users to skip"),
     db: Session = Depends(get_db),
     admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
     user_service: UserService = Depends(get_user_service),
 ):
     """
-    Lists all registered users in the system. Admin-only.
+    Lists registered users with database-level pagination. Admin-only.
     """
-    return user_service.get_all_users(db)
+    return user_service.get_all_users(db, limit=limit, offset=offset)
 
 
 @router.get("/audit-logs", response_model=list[AuditLogResponse])
 def list_audit_logs(
+    limit: int = Query(default=100, ge=1, le=1000, description="Max number of audit logs to retrieve"),
+    offset: int = Query(default=0, ge=0, description="Number of audit logs to skip"),
     db: Session = Depends(get_db),
     admin_user: User = Security(get_current_active_user, scopes=["users:manage"]),
     user_service: UserService = Depends(get_user_service),
 ):
     """
-    Lists all security audit logs. Admin-only.
+    Lists security audit logs with pagination support. Admin-only.
     """
-    return user_service.get_all_audit_logs(db)
+    return user_service.get_audit_logs(db, limit=limit, offset=offset)
 
 
 @router.put(

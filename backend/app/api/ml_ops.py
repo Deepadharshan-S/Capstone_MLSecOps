@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Security, status, Depends, File, UploadFile, Form, HTTPException, Query
 from typing import Optional
+from sqlalchemy.orm import Session
 from app.core.rate_limiter import RateLimiter
+from app.db.session import get_db
 
 from app.api.permissions import get_current_active_user
 from app.models.user import User
@@ -10,6 +12,9 @@ from app.schemas.ml_ops import (
     DeployModelSchema,
     ManageDeploymentSchema,
     TrainModelResponse,
+    RayJobListResponse,
+    RayJobDetailResponse,
+    RayJobLogsResponse,
     ModelListResponse,
     DeployModelResponse,
     ManageDeploymentResponse,
@@ -17,18 +22,25 @@ from app.schemas.ml_ops import (
     PredictionRequestSchema,
     PredictionResponseSchema,
     DeploymentListResponse,
+    ModelDetailResponse,
+    DeploymentDetailResponse,
 )
+
 from app.services.dependencies import (
     get_model_training_service,
     get_model_deployment_service,
     get_model_serving_service,
     get_model_registry_service,
+    get_training_job_service,
 )
 from app.services.ml_ops import (
     ModelTrainingService,
     ModelDeploymentService,
     ModelServingService,
     ModelRegistryService,
+    TrainingJobService,
+    JobNotFoundError,
+    JobAccessDeniedError,
 )
 
 router = APIRouter(prefix="", tags=["mlops"])
@@ -42,6 +54,7 @@ router = APIRouter(prefix="", tags=["mlops"])
 )
 def train_model(
     train_info: TrainModelSchema,
+    db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["models:train"]),
     training_service: ModelTrainingService = Depends(get_model_training_service),
 ):
@@ -57,6 +70,7 @@ def train_model(
         user=user,
         experiment_name=train_info.experiment_name,
         model_name=train_info.model_name,
+        db=db,
     )
 
 
@@ -68,6 +82,7 @@ def train_model(
 )
 def train_pipeline(
     train_info: TrainPipelineSchema,
+    db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["models:train"]),
     training_service: ModelTrainingService = Depends(get_model_training_service),
 ):
@@ -83,6 +98,7 @@ def train_pipeline(
         user=user,
         experiment_name=train_info.experiment_name,
         model_name=train_info.model_name,
+        db=db,
     )
 
 
@@ -140,6 +156,7 @@ def upload_model(
 )
 def deploy_model(
     deploy_info: DeployModelSchema,
+    db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["models:deploy"]),
     deployment_service: ModelDeploymentService = Depends(get_model_deployment_service),
 ):
@@ -153,6 +170,7 @@ def deploy_model(
         user=user,
         version=deploy_info.version,
         replicas=deploy_info.replicas,
+        db=db,
     )
 
 
@@ -165,6 +183,7 @@ def list_deployments(
     status: Optional[str] = Query(None, description="Filter by deployment status (e.g. 'active', 'stopped')"),
     environment: Optional[str] = Query(None, description="Filter by environment (e.g. 'staging', 'production')"),
     active_only: bool = Query(False, description="When true, returns only active/running deployments"),
+    db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["models:view"]),
     deployment_service: ModelDeploymentService = Depends(get_model_deployment_service),
 ):
@@ -178,11 +197,123 @@ def list_deployments(
         status=status,
         environment=environment,
         active_only=active_only,
+        db=db,
     )
+
+
+@router.get(
+    "/deployments/{deployment_id}",
+    response_model=DeploymentDetailResponse,
+    dependencies=[Depends(RateLimiter(times=30, seconds=60))],
+)
+def get_deployment_detail(
+    deployment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    deployment_service: ModelDeploymentService = Depends(get_model_deployment_service),
+):
+    """
+    Retrieve detailed RayService status, replica health, and internal endpoints for one deployment.
+    Accessible to all authenticated roles.
+    """
+    return deployment_service.retrieve_deployment_detail(
+        deployment_id=deployment_id, user=user, db=db
+    )
+
+
+@router.get(
+    "/models/jobs",
+    response_model=RayJobListResponse,
+    dependencies=[Depends(RateLimiter(times=60, seconds=60))],
+)
+def list_training_jobs(
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    job_service: TrainingJobService = Depends(get_training_job_service),
+):
+    """
+    List all training jobs (both currently running and historical).
+    Accessible to all authenticated roles with models:view.
+    """
+    return job_service.list_jobs(user=user)
+
+
+@router.get(
+    "/models/jobs/{job_id}",
+    response_model=RayJobDetailResponse,
+    dependencies=[Depends(RateLimiter(times=60, seconds=60))],
+)
+def get_training_job_detail(
+    job_id: str,
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    job_service: TrainingJobService = Depends(get_training_job_service),
+):
+    """
+    Retrieve details for a specific training job.
+    Works for both live active jobs and historical jobs whose RayJob has been cleaned up.
+    """
+    try:
+        return job_service.get_job(job_id=job_id, user=user)
+    except JobNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except JobAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+
+@router.get(
+    "/models/jobs/{job_id}/logs",
+    response_model=RayJobLogsResponse,
+    dependencies=[Depends(RateLimiter(times=60, seconds=60))],
+)
+def get_training_job_logs(
+    job_id: str,
+    tail_lines: Optional[int] = Query(default=1000, ge=1, le=5000),
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    job_service: TrainingJobService = Depends(get_training_job_service),
+):
+    """
+    Retrieve logs for a specific training job.
+    Streams live logs from head pod for active jobs, and retrieves from MinIO for completed jobs.
+    """
+    try:
+        return job_service.get_job_logs(job_id=job_id, user=user, tail_lines=tail_lines)
+    except JobNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except JobAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+
+@router.get(
+    "/models/{model_name}",
+    response_model=ModelDetailResponse,
+    dependencies=[Depends(RateLimiter(times=30, seconds=60))],
+)
+def get_model_detail(
+    model_name: str,
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    registry_service: ModelRegistryService = Depends(get_model_registry_service),
+):
+    """
+    Retrieve detailed version history, tags, metrics, and production alias for one specific model.
+    Accessible to all authenticated roles.
+    """
+    return registry_service.retrieve_model_detail(model_name=model_name, user=user)
 
 
 @router.post(
     "/models/{model_name}/predict",
+
     response_model=PredictionResponseSchema,
     dependencies=[Depends(RateLimiter(times=60, seconds=60))],
 )
@@ -237,6 +368,7 @@ def predict_deployment(
 )
 def manage_deployment(
     manage_info: ManageDeploymentSchema,
+    db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["deployments:manage"]),
     deployment_service: ModelDeploymentService = Depends(get_model_deployment_service),
 ):
@@ -245,5 +377,5 @@ def manage_deployment(
     Accessible to ML Engineers and Admins.
     """
     return deployment_service.perform_deployment_management(
-        manage_info.deployment_id, manage_info.action, user
+        manage_info.deployment_id, manage_info.action, user, db=db
     )

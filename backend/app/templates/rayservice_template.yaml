@@ -4,7 +4,7 @@ metadata:
   name: rayservice-code-{{deployment_id}}
   namespace: default
   labels:
-    app.kubernetes.io/name: mlsecops-rayservice
+    app.kubernetes.io/name: sentinelml-rayservice
     deployment_id: "{{deployment_id}}"
 data:
   serve_wrapper.py: |
@@ -16,7 +16,7 @@ metadata:
   name: {{rayservice_name}}
   namespace: default
   labels:
-    app.kubernetes.io/name: mlsecops-rayservice
+    app.kubernetes.io/name: sentinelml-rayservice
     deployment_id: "{{deployment_id}}"
     model_name: "{{model_name_label}}"
     environment: "{{environment}}"
@@ -51,7 +51,7 @@ spec:
               emptyDir: {}
           containers:
             - name: ray-head
-              image: mlsecops-ray:latest
+              image: sentinelml-ray:latest
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -72,9 +72,9 @@ spec:
                   memory: "768Mi"
               env:
                 - name: MLFLOW_TRACKING_URI
-                  value: "http://host.docker.internal:5000"
+                  value: "{{mlflow_tracking_uri}}"
                 - name: MLFLOW_S3_ENDPOINT_URL
-                  value: "http://host.docker.internal:9000"
+                  value: "{{mlflow_s3_endpoint_url}}"
                 - name: AWS_ACCESS_KEY_ID
                   value: "{{aws_access_key_id}}"
                 - name: AWS_SECRET_ACCESS_KEY
@@ -89,14 +89,14 @@ spec:
                   value: "/app/user_code"
   serveConfigV2: |
     applications:
-      - name: mlsecops_serve_app
+      - name: sentinelml_serve_app
         route_prefix: /
         import_path: serve_wrapper:entrypoint
         runtime_env:
           env_vars:
             PYTHONPATH: "/app/user_code"
-            MLFLOW_TRACKING_URI: "http://host.docker.internal:5000"
-            MLFLOW_S3_ENDPOINT_URL: "http://host.docker.internal:9000"
+            MLFLOW_TRACKING_URI: "{{mlflow_tracking_uri}}"
+            MLFLOW_S3_ENDPOINT_URL: "{{mlflow_s3_endpoint_url}}"
             AWS_ACCESS_KEY_ID: "{{aws_access_key_id}}"
             AWS_SECRET_ACCESS_KEY: "{{aws_secret_access_key}}"
             AWS_SESSION_TOKEN: "{{aws_session_token}}"

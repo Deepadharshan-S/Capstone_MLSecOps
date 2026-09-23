@@ -1,10 +1,11 @@
-from typing import Optional
+from typing import Optional, Union, BinaryIO, Iterator
 from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.dataset import Dataset
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dataset.utils import get_repo_name
+from app.repositories.dataset_repository import DatasetRepository
 from app.services.dataset.catalog_service import DatasetCatalogService
 from app.services.dataset.versioning_service import DatasetVersioningService
 from app.services.dataset.storage_service import DatasetStorageService
@@ -22,6 +23,7 @@ class DataService:
         self,
         version_control_service: Optional[VersionControlService] = None,
         storage_service: Optional[ObjectStorageService] = None,
+        dataset_repository: Optional[DatasetRepository] = None,
     ):
         if version_control_service is None:
             from app.services.dataset.lakefs_service import lakefs_service
@@ -35,7 +37,11 @@ class DataService:
         else:
             self.storage_service = storage_service
 
-        self.catalog = DatasetCatalogService(self.version_control_service, self.storage_service)
+        self.catalog = DatasetCatalogService(
+            self.version_control_service,
+            self.storage_service,
+            repository=dataset_repository,
+        )
         self.versioning = DatasetVersioningService(self.version_control_service)
         self.storage = DatasetStorageService(self.version_control_service)
         self.diff = DatasetDiffService(self.version_control_service)
@@ -70,8 +76,10 @@ class DataService:
             username=username,
         )
 
-    def list_datasets(self, db: Session) -> list[Dataset]:
-        return self.catalog.list_datasets(db=db)
+    def list_datasets(
+        self, db: Session, limit: int = 100, offset: int = 0
+    ) -> list[Dataset]:
+        return self.catalog.list_datasets(db=db, limit=limit, offset=offset)
 
     def get_dataset_metadata(self, db: Session, dataset_name: str) -> dict:
         return self.catalog.get_dataset_metadata(db=db, dataset_name=dataset_name)
@@ -99,7 +107,7 @@ class DataService:
         db: Session,
         dataset_name: str,
         file_path: str,
-        content: bytes,
+        content: Union[bytes, BinaryIO],
         branch_name: str,
         username: str,
     ) -> dict:
@@ -120,6 +128,17 @@ class DataService:
             dataset_name=dataset_name,
             file_path=file_path,
             ref_id=ref_id,
+        )
+
+    def stream_file(
+        self, db: Session, dataset_name: str, file_path: str, ref_id: str, chunk_size: int = 65536
+    ) -> Iterator[bytes]:
+        return self.storage.stream_file(
+            db=db,
+            dataset_name=dataset_name,
+            file_path=file_path,
+            ref_id=ref_id,
+            chunk_size=chunk_size,
         )
 
     # 3. Dataset Versioning Operations

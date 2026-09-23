@@ -41,6 +41,7 @@ class Dataset(BaseModel):
     created_by_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     created_by = relationship("User", backref="datasets")

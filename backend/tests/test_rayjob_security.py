@@ -14,9 +14,11 @@ def cleanup_after_tests():
     yield
 
 
+import uuid
+
 @pytest.fixture
 def mock_user():
-    return User(username="security_tester", role="admin")
+    return User(id=uuid.uuid4(), username="security_tester", role="admin")
 
 
 def test_local_fallback_disabled_raises_http_503(mock_user, monkeypatch):
@@ -25,9 +27,7 @@ def test_local_fallback_disabled_raises_http_503(mock_user, monkeypatch):
     perform_model_training immediately raises HTTP 503 instead of running locally.
     """
     monkeypatch.setattr(settings, "ALLOW_LOCAL_RAY_FALLBACK", False)
-
-    import subprocess
-    monkeypatch.setattr("subprocess.run", MagicMock(side_effect=subprocess.CalledProcessError(1, ["kubectl"])))
+    monkeypatch.setattr("app.services.ml_ops.training_service.submit_rayjob_to_k8s", lambda *args, **kwargs: False)
 
     sample_code = "class Trainer:\n    def train(self, *args, **kwargs):\n        pass"
 
@@ -50,9 +50,7 @@ def test_pipeline_training_local_fallback_disabled_raises_http_503(mock_user, mo
     Verify that perform_pipeline_training also enforces ALLOW_LOCAL_RAY_FALLBACK.
     """
     monkeypatch.setattr(settings, "ALLOW_LOCAL_RAY_FALLBACK", False)
-
-    import subprocess
-    monkeypatch.setattr("subprocess.run", MagicMock(side_effect=subprocess.CalledProcessError(1, ["kubectl"])))
+    monkeypatch.setattr("app.services.ml_ops.training_service.submit_rayjob_to_k8s", lambda *args, **kwargs: False)
 
     with pytest.raises(HTTPException) as exc_info:
         ml_ops_service.perform_pipeline_training(
@@ -73,9 +71,8 @@ def test_local_fallback_enabled_permits_execution(mock_user, monkeypatch):
     Verify that when ALLOW_LOCAL_RAY_FALLBACK is True, execution proceeds.
     """
     monkeypatch.setattr(settings, "ALLOW_LOCAL_RAY_FALLBACK", True)
-
-    # Mock subprocess.run inside run_training_subprocess to avoid running actual heavy jobs
-    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MagicMock(returncode=0))
+    monkeypatch.setattr("app.services.ml_ops.training_service.submit_rayjob_to_k8s", lambda *args, **kwargs: False)
+    monkeypatch.setattr("app.services.ml_ops.training_service.spawn_local_ray_subprocess", MagicMock())
 
     sample_code = "class Trainer:\n    def train(self, *args, **kwargs):\n        pass"
 

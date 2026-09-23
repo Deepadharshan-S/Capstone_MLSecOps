@@ -1,7 +1,11 @@
+from __future__ import annotations
 import re
+from typing import Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+
 from app.models.dataset import Dataset
+from app.repositories.dataset_repository import DatasetRepository
 
 
 def get_repo_name(name: str) -> str:
@@ -20,12 +24,17 @@ def get_repo_name(name: str) -> str:
     return sanitized
 
 
-def get_dataset_or_404(db: Session, dataset_name: str) -> tuple[Dataset, str]:
+def get_dataset_or_404(
+    db: Session,
+    dataset_name: str,
+    repository: Optional[DatasetRepository] = None,
+) -> Tuple[Dataset, str]:
     """
-    Retrieves a Dataset from the database or raises an HTTP 404 error.
+    Retrieves a Dataset from the database using DatasetRepository or raises an HTTP 404 error.
     Returns a tuple of (db_dataset, sanitized_repo_name).
     """
-    dataset = db.query(Dataset).filter(Dataset.name == dataset_name).first()
+    repo = repository or DatasetRepository(db)
+    dataset = repo.get_by_name(dataset_name)
     if not dataset:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -6,7 +6,7 @@ import pandas as pd
 from fastapi import FastAPI, Request, HTTPException
 from ray import serve
 
-app = FastAPI(title="MLSecOps Model Serving")
+app = FastAPI(title="SentinelML Model Serving")
 
 
 @serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 0.5})

@@ -76,6 +76,8 @@ def cleanup_after_tests():
             db_url = settings.DATABASE_URL
             if db_url.endswith("/mlsecops"):
                 mlflow_db_url = db_url[:-9] + "/mlflow"
+            elif db_url.endswith("/sentinelml"):
+                mlflow_db_url = db_url[:-11] + "/mlflow"
             else:
                 from urllib.parse import urlparse
                 parsed = urlparse(db_url)
@@ -142,5 +144,89 @@ def cleanup_after_tests():
 
     except Exception as e:
         print(f"\n[Pytest Teardown] Error during MLflow test data cleanup: {e}")
+
+    # Clean up test-specific Kubernetes Ray resources
+    try:
+        from kubernetes import client, config
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+
+        custom_api = client.CustomObjectsApi()
+        core_api = client.CoreV1Api()
+        net_api = client.NetworkingV1Api()
+
+        # Delete test RayServices
+        try:
+            svcs = custom_api.list_namespaced_custom_object(
+                group="ray.io", version="v1", namespace="default", plural="rayservices"
+            )
+            for item in svcs.get("items", []):
+                name = item.get("metadata", {}).get("name", "")
+                if name.startswith("raysvc-"):
+                    custom_api.delete_namespaced_custom_object(
+                        group="ray.io", version="v1", namespace="default", plural="rayservices", name=name
+                    )
+        except Exception:
+            pass
+
+        # Delete test RayJobs
+        try:
+            jobs = custom_api.list_namespaced_custom_object(
+                group="ray.io", version="v1", namespace="default", plural="rayjobs"
+            )
+            for item in jobs.get("items", []):
+                name = item.get("metadata", {}).get("name", "")
+                if name.startswith("rayjob-"):
+                    custom_api.delete_namespaced_custom_object(
+                        group="ray.io", version="v1", namespace="default", plural="rayjobs", name=name
+                    )
+        except Exception:
+            pass
+
+        # Delete test ConfigMaps
+        try:
+            cms = core_api.list_namespaced_config_map(namespace="default")
+            for cm in cms.items:
+                name = cm.metadata.name
+                if name.startswith("rayjob-code-") or name.startswith("rayservice-code-"):
+                    core_api.delete_namespaced_config_map(name=name, namespace="default")
+        except Exception:
+            pass
+
+        # Delete test NetworkPolicies
+        try:
+            nps = net_api.list_namespaced_network_policy(namespace="default")
+            for np in nps.items:
+                name = np.metadata.name
+                if name.startswith("rayjob-netpol-"):
+                    net_api.delete_namespaced_network_policy(name=name, namespace="default")
+        except Exception:
+            pass
+
+    except Exception as e:
+        print(f"\n[Pytest Teardown] Error during Kubernetes Ray resource cleanup: {e}")
+
+
+@pytest.fixture(scope="session")
+def user_tokens():
+    """Retrieves OAuth2 access tokens for all test users across test suites."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    test_client = TestClient(app)
+
+    tokens = {}
+    for username, password in [
+        ("admin_user", "AdminPassword123!"),
+        ("mle_user", "MLEngineerPassword123!"),
+        ("ds_user", "DataScientist123!"),
+        ("viewer_user", "ViewerPassword123!"),
+    ]:
+        resp = test_client.post("/api/auth/login", data={"username": username, "password": password})
+        assert resp.status_code == 200
+        tokens[username] = resp.json()["access_token"]
+    return tokens
+
 
 

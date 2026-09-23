@@ -1,8 +1,12 @@
+import logging
 import lakefs
 import lakefs_sdk
-from typing import Optional, Any
+from typing import Optional, Any, Union, BinaryIO, Iterator
 from app.core.config import settings
 from app.services.interfaces import VersionControlService
+
+logger = logging.getLogger("lakefs_service")
+
 
 class LakeFSService(VersionControlService):
     """
@@ -15,7 +19,8 @@ class LakeFSService(VersionControlService):
                 password=settings.LAKEFS_SECRET_ACCESS_KEY,
                 host=settings.LAKEFS_ENDPOINT,
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to initialize lakeFS client: {e}")
             self._client = None
 
     @property
@@ -72,13 +77,28 @@ class LakeFSService(VersionControlService):
         except Exception:
             return {}
 
-    def upload_file(self, repo_name: str, branch_name: str, file_path: str, content: bytes) -> None:
+    def upload_file(self, repo_name: str, branch_name: str, file_path: str, content: Union[bytes, BinaryIO]) -> None:
         if not self.client:
             raise RuntimeError("lakeFS client is not initialized.")
         repo = lakefs.Repository(repo_name, client=self.client)
         branch = repo.branch(branch_name)
         obj = branch.object(file_path)
-        obj.upload(content, mode="wb")
+        if hasattr(content, "read"):
+            if hasattr(content, "seek"):
+                try:
+                    content.seek(0)
+                except Exception as seek_err:
+                    logger.debug(f"Seek error on upload stream: {seek_err}")
+            with obj.writer(mode="wb") as writer:
+                while True:
+                    chunk = content.read(65536)
+                    if not chunk:
+                        break
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode("utf-8")
+                    writer.write(chunk)
+        else:
+            obj.upload(content, mode="wb")
 
     def download_file(self, repo_name: str, ref_id: str, file_path: str) -> bytes:
         if not self.client:
@@ -88,6 +108,19 @@ class LakeFSService(VersionControlService):
         obj = ref.object(file_path)
         with obj.reader(mode="rb") as reader:
             return reader.read()
+
+    def stream_file(self, repo_name: str, ref_id: str, file_path: str, chunk_size: int = 65536) -> Iterator[bytes]:
+        if not self.client:
+            raise RuntimeError("lakeFS client is not initialized.")
+        repo = lakefs.Repository(repo_name, client=self.client)
+        ref = repo.ref(ref_id)
+        obj = ref.object(file_path)
+        with obj.reader(mode="rb") as reader:
+            while True:
+                chunk = reader.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
 
     def commit(self, repo_name: str, branch_name: str, message: str, metadata: Optional[dict[str, str]]) -> dict:
         if not self.client:
