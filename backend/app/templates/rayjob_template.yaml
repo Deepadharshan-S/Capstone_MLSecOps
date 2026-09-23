@@ -11,10 +11,45 @@ data:
 {{user_code_content_indented}}
   ray_wrapper.py: |
 {{ray_wrapper_content_indented}}
+  archive_logs.py: |
+    import os
+    import sys
+    import boto3
+    from botocore.client import Config
+
+    def archive():
+        job_id = "{{job_id}}"
+        log_path = f"/tmp/training_{job_id}.log"
+        if not os.path.exists(log_path):
+            return
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=os.getenv("MINIO_ENDPOINT", "http://mlsecops-minio:9000"),
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
+                config=Config(signature_version="s3v4")
+            )
+            with open(log_path, "rb") as f:
+                s3.put_object(Bucket="mlflow", Key=f"logs/{job_id}/training.log", Body=f.read())
+            print(f"Successfully archived training logs to s3://mlflow/logs/{job_id}/training.log")
+        except Exception as e:
+            print(f"Notice: Could not archive training logs to MinIO: {e}", file=sys.stderr)
+
+    if __name__ == "__main__":
+        archive()
   entrypoint.sh: |
     #!/bin/bash
-    set -e
-    {{entrypoint_cmd}}
+    LOG_FILE="/tmp/training_{{job_id}}.log"
+    cleanup_and_upload_logs() {
+      EXIT_CODE=$?
+      echo "Archiving training execution logs to MinIO (Exit code: $EXIT_CODE)..."
+      python3 /app/user_code/archive_logs.py || true
+      exit $EXIT_CODE
+    }
+    trap cleanup_and_upload_logs EXIT
+    {{entrypoint_cmd}} 2>&1 | tee "$LOG_FILE"
 ---
 apiVersion: ray.io/v1
 kind: RayJob

@@ -173,39 +173,113 @@ def submit_rayjob_to_k8s(
     mode_description: str = "",
 ) -> bool:
     """
-    Submits a RayJob CRD manifest directly to the Kubernetes cluster using kubectl apply.
+    Submits a RayJob CRD manifest directly to the Kubernetes cluster using the official Kubernetes SDK.
+    Attaches ownerReferences so ConfigMap and NetworkPolicy are automatically garbage-collected
+    when the RayJob is deleted.
     Returns True if submission succeeded, False if cluster is unreachable.
     """
     try:
-        kubeconfig_path = os.path.expanduser("~/.kube/config")
-        env = os.environ.copy()
-        env["KUBECONFIG"] = kubeconfig_path
+        import yaml
+        from kubernetes import client, config
 
-        subprocess.run(
-            ["kubectl", "apply", "-f", "-"],
-            input=rendered_yaml,
-            capture_output=True,
-            text=True,
-            check=True,
-            env=env,
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+
+        custom_api = client.CustomObjectsApi()
+        core_api = client.CoreV1Api()
+        net_api = client.NetworkingV1Api()
+
+        docs = list(yaml.safe_load_all(rendered_yaml))
+        configmap_doc = None
+        rayjob_doc = None
+        netpol_doc = None
+
+        for doc in docs:
+            if not doc:
+                continue
+            kind = doc.get("kind")
+            if kind == "ConfigMap":
+                configmap_doc = doc
+            elif kind == "RayJob":
+                rayjob_doc = doc
+            elif kind == "NetworkPolicy":
+                netpol_doc = doc
+
+        if not rayjob_doc:
+            raise ValueError("No RayJob manifest found in rendered YAML.")
+
+        # 1. Submit RayJob CRD
+        rayjob_name = rayjob_doc.get("metadata", {}).get("name", f"rayjob-{job_id}")
+        namespace = rayjob_doc.get("metadata", {}).get("namespace", "default")
+
+        rayjob_res = custom_api.create_namespaced_custom_object(
+            group="ray.io",
+            version="v1",
+            namespace=namespace,
+            plural="rayjobs",
+            body=rayjob_doc,
         )
+        rayjob_uid = rayjob_res.get("metadata", {}).get("uid")
+
+        # 2. Attach ownerReferences for automatic cascading cleanup
+        owner_refs = []
+        if rayjob_uid:
+            owner_refs = [
+                {
+                    "apiVersion": "ray.io/v1",
+                    "kind": "RayJob",
+                    "name": rayjob_name,
+                    "uid": rayjob_uid,
+                    "blockOwnerDeletion": False,
+                }
+            ]
+
+        # 3. Submit ConfigMap
+        if configmap_doc:
+            if owner_refs:
+                if "metadata" not in configmap_doc:
+                    configmap_doc["metadata"] = {}
+                configmap_doc["metadata"]["ownerReferences"] = owner_refs
+            cm_name = configmap_doc.get("metadata", {}).get("name")
+            try:
+                core_api.create_namespaced_config_map(namespace=namespace, body=configmap_doc)
+            except client.exceptions.ApiException as api_err:
+                if api_err.status == 409 and cm_name:
+                    core_api.replace_namespaced_config_map(name=cm_name, namespace=namespace, body=configmap_doc)
+                else:
+                    raise
+
+        # 4. Submit NetworkPolicy
+        if netpol_doc:
+            if owner_refs:
+                if "metadata" not in netpol_doc:
+                    netpol_doc["metadata"] = {}
+                netpol_doc["metadata"]["ownerReferences"] = owner_refs
+            np_name = netpol_doc.get("metadata", {}).get("name")
+            try:
+                net_api.create_namespaced_network_policy(namespace=namespace, body=netpol_doc)
+            except client.exceptions.ApiException as api_err:
+                if api_err.status == 409 and np_name:
+                    net_api.replace_namespaced_network_policy(name=np_name, namespace=namespace, body=netpol_doc)
+                else:
+                    raise
+
         desc = f" for {mode_description}" if mode_description else ""
         log_audit_event(
             "model_training_k8s_submit",
             username,
             None,
-            f"Submitted RayJob CRD to Kubernetes cluster{desc}: rayjob-{job_id}",
+            f"Submitted RayJob CRD to Kubernetes cluster{desc}: {rayjob_name}",
         )
         return True
     except Exception as e:
-        stderr_msg = ""
-        if isinstance(e, subprocess.CalledProcessError):
-            stderr_msg = f" | stderr: {e.stderr} | stdout: {e.stdout}"
         log_audit_event(
             "model_training_submit_warning",
             username,
             None,
-            f"Kubernetes cluster offline. Using local Ray fallback: {str(e)}{stderr_msg}",
+            f"Kubernetes cluster offline. Using local Ray fallback: {str(e)}",
         )
         return False
 
@@ -240,14 +314,65 @@ def spawn_local_ray_subprocess(
             env["LAKEFS_ENDPOINT"] = settings.LAKEFS_ENDPOINT
             env["LAKEFS_ACCESS_KEY_ID"] = scoped_creds["lakefs_access_key_id"]
             env["LAKEFS_SECRET_ACCESS_KEY"] = scoped_creds["lakefs_secret_access_key"]
-            subprocess.run(cmd, check=True, env=env)
-            log_audit_event(
-                "model_training_completed",
-                username,
-                None,
-                success_description,
-            )
+            res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            output_log = f"{res.stdout}\n{res.stderr}".strip()
+            try:
+                from app.services.dataset.s3_storage_service import S3StorageService
+                s3_svc = S3StorageService()
+                s3_svc.put_log_content("mlflow", f"logs/{job_id}/training.log", output_log)
+            except Exception:
+                pass
+
+            try:
+                from app.db.session import SessionLocal
+                from app.repositories import TrainingJobRepository
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                with SessionLocal() as db_session:
+                    repo = TrainingJobRepository(db_session)
+                    tj = repo.get_by_job_id(job_id)
+                    if tj:
+                        if res.returncode == 0:
+                            tj.status = "SUCCEEDED"
+                        else:
+                            tj.status = "FAILED"
+                            tj.error_message = res.stderr[:500] if res.stderr else "Local training subprocess failed"
+                        tj.completed_at = now
+                        if tj.started_at:
+                            tj.duration_seconds = round((now - tj.started_at).total_seconds(), 2)
+                        repo.save(tj)
+            except Exception:
+                pass
+
+            if res.returncode == 0:
+                log_audit_event(
+                    "model_training_completed",
+                    username,
+                    None,
+                    success_description,
+                )
+            else:
+                log_audit_event(
+                    "model_training_error",
+                    username,
+                    None,
+                    f"{error_description}: return code {res.returncode}",
+                )
         except Exception as subprocess_err:
+            try:
+                from app.db.session import SessionLocal
+                from app.repositories import TrainingJobRepository
+                from datetime import datetime, timezone
+                with SessionLocal() as db_session:
+                    repo = TrainingJobRepository(db_session)
+                    tj = repo.get_by_job_id(job_id)
+                    if tj:
+                        tj.status = "FAILED"
+                        tj.completed_at = datetime.now(timezone.utc)
+                        tj.error_message = str(subprocess_err)
+                        repo.save(tj)
+            except Exception:
+                pass
             log_audit_event(
                 "model_training_error",
                 username,
