@@ -232,7 +232,8 @@ def submit_rayjob_to_k8s(
                     "kind": "RayJob",
                     "name": rayjob_name,
                     "uid": rayjob_uid,
-                    "blockOwnerDeletion": False,
+                    "blockOwnerDeletion": True,
+                    "controller": True,
                 }
             ]
 

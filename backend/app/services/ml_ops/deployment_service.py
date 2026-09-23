@@ -695,6 +695,16 @@ class ModelDeploymentService:
                         )
                     except Exception:
                         pass
+
+                all_dep_ids = {deployment_id} | {item[3] for item in matched_items if item[3]}
+                for d_id in all_dep_ids:
+                    if d_id:
+                        try:
+                            core_api.delete_namespaced_config_map(
+                                name=f"rayservice-code-{d_id}", namespace="default"
+                            )
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
