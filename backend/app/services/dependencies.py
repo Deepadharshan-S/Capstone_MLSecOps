@@ -2,6 +2,11 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.repositories import (
+    BaseRepository,
+    UserRepository,
+    DatasetRepository,
+    RefreshTokenRepository,
+    BlacklistedTokenRepository,
     TrainingJobRepository,
     DeploymentRepository,
     AuditLogRepository,
@@ -50,14 +55,50 @@ def get_version_control_service() -> VersionControlService:
     return _version_control_service
 
 
-def get_data_service() -> DataService:
-    """Returns the singleton DataService facade instance."""
-    return _data_service
+def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
+    """Returns a UserRepository bound to the current DB session."""
+    return UserRepository(db)
 
 
-def get_dataset_catalog_service() -> DatasetCatalogService:
-    """Returns the singleton DatasetCatalogService instance."""
-    return _data_service.catalog
+def get_dataset_repository(db: Session = Depends(get_db)) -> DatasetRepository:
+    """Returns a DatasetRepository bound to the current DB session."""
+    return DatasetRepository(db)
+
+
+def get_refresh_token_repository(db: Session = Depends(get_db)) -> RefreshTokenRepository:
+    """Returns a RefreshTokenRepository bound to the current DB session."""
+    return RefreshTokenRepository(db)
+
+
+def get_blacklisted_token_repository(db: Session = Depends(get_db)) -> BlacklistedTokenRepository:
+    """Returns a BlacklistedTokenRepository bound to the current DB session."""
+    return BlacklistedTokenRepository(db)
+
+
+def get_data_service(
+    version_control_service: VersionControlService = Depends(get_version_control_service),
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+    dataset_repo: DatasetRepository = Depends(get_dataset_repository),
+) -> DataService:
+    """Returns a DataService facade instance configured with repositories and storage drivers."""
+    return DataService(
+        version_control_service=version_control_service,
+        storage_service=storage_service,
+        dataset_repository=dataset_repo,
+    )
+
+
+def get_dataset_catalog_service(
+    version_control_service: VersionControlService = Depends(get_version_control_service),
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+    dataset_repo: DatasetRepository = Depends(get_dataset_repository),
+) -> DatasetCatalogService:
+    """Returns a DatasetCatalogService instance configured with DatasetRepository."""
+    return DatasetCatalogService(
+        version_control_service=version_control_service,
+        storage_service=storage_service,
+        repository=dataset_repo,
+    )
 
 
 def get_dataset_versioning_service() -> DatasetVersioningService:
@@ -75,14 +116,22 @@ def get_dataset_diff_service() -> DatasetDiffService:
     return _data_service.diff
 
 
-def get_auth_service() -> AuthService:
-    """Returns the singleton AuthService instance."""
-    return _auth_service
+def get_auth_service(
+    user_repo: UserRepository = Depends(get_user_repository),
+    refresh_token_repo: RefreshTokenRepository = Depends(get_refresh_token_repository),
+    blacklisted_token_repo: BlacklistedTokenRepository = Depends(get_blacklisted_token_repository),
+) -> AuthService:
+    """Returns an AuthService instance injected with dedicated repositories."""
+    return AuthService(
+        user_repo=user_repo,
+        refresh_token_repo=refresh_token_repo,
+        blacklisted_token_repo=blacklisted_token_repo,
+    )
 
 
-def get_user_service() -> UserService:
-    """Returns the singleton UserService instance."""
-    return _user_service
+def get_user_service(user_repo: UserRepository = Depends(get_user_repository)) -> UserService:
+    """Returns a UserService instance injected with UserRepository."""
+    return UserService(repository=user_repo)
 
 
 def get_ml_ops_service() -> MLOpsService:
@@ -149,5 +198,3 @@ def get_deployment_repository(db: Session = Depends(get_db)) -> DeploymentReposi
 def get_audit_log_repository(db: Session = Depends(get_db)) -> AuditLogRepository:
     """Returns an AuditLogRepository bound to the current DB session."""
     return AuditLogRepository(db)
-
-

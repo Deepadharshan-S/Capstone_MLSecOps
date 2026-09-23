@@ -18,6 +18,18 @@ from app.services.dependencies import (
 )
 from app.services.ml_ops import MLOpsService
 
+from app.services.auth.exceptions import (
+    AuthDomainError,
+    WeakPasswordError,
+    UserAlreadyExistsError,
+    InvalidCredentialsError,
+    AccountLockedError,
+    InvalidTokenError,
+    TokenReuseError,
+    UserNotFoundError,
+    SelfRoleModificationError,
+)
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -43,6 +55,53 @@ def integrity_error_handler(request: Request, exc: IntegrityError):
             "detail": "Database integrity constraint violation. Unique or foreign key constraint failed."
         },
     )
+
+
+@app.exception_handler(WeakPasswordError)
+def weak_password_handler(request: Request, exc: WeakPasswordError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(UserAlreadyExistsError)
+def user_already_exists_handler(request: Request, exc: UserAlreadyExistsError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(InvalidCredentialsError)
+def invalid_credentials_handler(request: Request, exc: InvalidCredentialsError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(AccountLockedError)
+def account_locked_handler(request: Request, exc: AccountLockedError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(InvalidTokenError)
+def invalid_token_handler(request: Request, exc: InvalidTokenError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(TokenReuseError)
+def token_reuse_handler(request: Request, exc: TokenReuseError):
+    resp = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    resp.delete_cookie(key="refresh_token", path="/api/auth")
+    return resp
+
+
+@app.exception_handler(UserNotFoundError)
+def user_not_found_handler(request: Request, exc: UserNotFoundError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(SelfRoleModificationError)
+def self_role_modification_handler(request: Request, exc: SelfRoleModificationError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(AuthDomainError)
+def auth_domain_error_handler(request: Request, exc: AuthDomainError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 # Include Routers
