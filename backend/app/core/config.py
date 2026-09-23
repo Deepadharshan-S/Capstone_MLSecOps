@@ -35,9 +35,11 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str = "http://localhost:9000"
     MINIO_ROOT_USER: str = "minioadmin"
     MINIO_ROOT_PASSWORD: str = "minioadmin123"
+    MINIO_INTERNAL_ENDPOINT: Optional[str] = None
 
     # MLflow config
     MLFLOW_TRACKING_URI: str = "http://localhost:5000"
+    MLFLOW_INTERNAL_ENDPOINT: Optional[str] = None
 
     # Upload limits
     MAX_MODEL_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024  # 100MB default limit

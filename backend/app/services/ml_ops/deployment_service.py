@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
-from app.services.ml_ops.utils import get_scoped_training_credentials
+from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
 from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
 
@@ -140,6 +140,10 @@ class ModelDeploymentService:
                     "{{aws_secret_access_key}}": scoped_creds["aws_secret_access_key"],
                     "{{aws_session_token}}": scoped_creds["aws_session_token"],
                     "{{model_uri}}": model_uri,
+                    "{{mlflow_tracking_uri}}": settings.MLFLOW_INTERNAL_ENDPOINT
+                    or to_k8s_endpoint(settings.MLFLOW_TRACKING_URI),
+                    "{{mlflow_s3_endpoint_url}}": settings.MINIO_INTERNAL_ENDPOINT
+                    or to_k8s_endpoint(settings.MINIO_ENDPOINT),
                 }
                 rendered_yaml = template_content
                 for placeholder, val in replacements.items():
