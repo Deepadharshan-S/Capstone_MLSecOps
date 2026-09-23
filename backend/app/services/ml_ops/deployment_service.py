@@ -581,25 +581,6 @@ class ModelDeploymentService:
                 dep.rayservice_name,
                 dep.deployment_id,
             ))
-        else:
-            try:
-                all_versions = mlflow_client.search_model_versions("")
-                for mv in all_versions:
-                    tags = mv.tags or {}
-                    if (
-                        tags.get("deployment.id") == deployment_id
-                        or tags.get("deployment.rayservice_name") == deployment_id
-                        or mv.name == deployment_id
-                        or deployment_id in [mv.name, f"{mv.name}-v{mv.version}"]
-                    ):
-                        matched_items.append((
-                            mv.name,
-                            str(mv.version),
-                            tags.get("deployment.rayservice_name"),
-                            tags.get("deployment.id", deployment_id),
-                        ))
-            except Exception as e:
-                logger.debug(f"Could not search model versions in MLflow: {e}")
 
         if action.lower() == "stop":
             labels_to_clean = {f"deployment_id={deployment_id}"}

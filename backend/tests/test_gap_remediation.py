@@ -221,17 +221,44 @@ def test_s3_storage_service_dependency_injection():
 
 
 def test_minio_app_credentials_configuration():
-    """Verifies settings properties for MinIO runtime application credentials."""
-    s = Settings(
+    """Verifies settings properties for MinIO runtime application credentials and fallback protection."""
+    # 1. Explicit app credentials provided
+    s_custom = Settings(
         SECRET_KEY="test-secret-key-123",
         LAKEFS_ENDPOINT="http://localhost:8000",
         LAKEFS_ACCESS_KEY_ID="lakefs_key",
         LAKEFS_SECRET_ACCESS_KEY="lakefs_secret",
         MINIO_ACCESS_KEY="custom_app_key",
         MINIO_SECRET_KEY="custom_app_secret",
+        ENVIRONMENT="production",
     )
-    assert s.minio_app_user == "custom_app_key"
-    assert s.minio_app_password == "custom_app_secret"
+    assert s_custom.minio_app_user == "custom_app_key"
+    assert s_custom.minio_app_password == "custom_app_secret"
+
+    # 2. Development fallback to root credentials
+    s_dev = Settings(
+        SECRET_KEY="test-secret-key-123",
+        LAKEFS_ENDPOINT="http://localhost:8000",
+        LAKEFS_ACCESS_KEY_ID="lakefs_key",
+        LAKEFS_SECRET_ACCESS_KEY="lakefs_secret",
+        ENVIRONMENT="development",
+    )
+    assert s_dev.minio_app_user == s_dev.MINIO_ROOT_USER
+    assert s_dev.minio_app_password == s_dev.MINIO_ROOT_PASSWORD
+
+    # 3. Production forbids silent fallback to root credentials
+    s_prod = Settings(
+        SECRET_KEY="test-secret-key-123",
+        LAKEFS_ENDPOINT="http://localhost:8000",
+        LAKEFS_ACCESS_KEY_ID="lakefs_key",
+        LAKEFS_SECRET_ACCESS_KEY="lakefs_secret",
+        ENVIRONMENT="production",
+    )
+    with pytest.raises(ValueError, match="Production environment requires MINIO_ACCESS_KEY"):
+        _ = s_prod.minio_app_user
+
+    with pytest.raises(ValueError, match="Production environment requires MINIO_SECRET_KEY"):
+        _ = s_prod.minio_app_password
 
 
 # ---------------------------------------------------------------------------

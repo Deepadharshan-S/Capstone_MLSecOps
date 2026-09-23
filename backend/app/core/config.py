@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     APP_NAME: str = "MLSecOps"
     APP_VERSION: str = "0.1.0"
+    ENVIRONMENT: str = "development"
     DEBUG: bool = False
     HOST: str = "127.0.0.1"
     PORT: int = 8000
@@ -65,12 +66,24 @@ class Settings(BaseSettings):
     @property
     def minio_app_user(self) -> str:
         """Returns application runtime access key for MinIO / S3 operations."""
-        return self.MINIO_ACCESS_KEY or self.MINIO_ROOT_USER
+        if self.MINIO_ACCESS_KEY:
+            return self.MINIO_ACCESS_KEY
+        if self.ENVIRONMENT.lower() in ("production", "prod"):
+            raise ValueError(
+                "Production environment requires MINIO_ACCESS_KEY; fallback to MINIO_ROOT_USER is forbidden."
+            )
+        return self.MINIO_ROOT_USER
 
     @property
     def minio_app_password(self) -> str:
         """Returns application runtime secret key for MinIO / S3 operations."""
-        return self.MINIO_SECRET_KEY or self.MINIO_ROOT_PASSWORD
+        if self.MINIO_SECRET_KEY:
+            return self.MINIO_SECRET_KEY
+        if self.ENVIRONMENT.lower() in ("production", "prod"):
+            raise ValueError(
+                "Production environment requires MINIO_SECRET_KEY; fallback to MINIO_ROOT_PASSWORD is forbidden."
+            )
+        return self.MINIO_ROOT_PASSWORD
 
     @model_validator(mode="before")
     @classmethod
