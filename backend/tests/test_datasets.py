@@ -361,6 +361,7 @@ def test_dataset_lifecycle(user_tokens):
     actions = [log["action"] for log in audit_logs]
     
     assert "dataset_registration" in actions
+    assert "dataset_file_download" in actions
     assert "dataset_file_upload" in actions
     assert "dataset_commit" in actions
     assert "dataset_branch_create" in actions
@@ -545,7 +546,7 @@ def test_dataset_branching_and_tagging_lifecycle(user_tokens):
     assert "feature-exp" in branch_names
 
     # 6. Upload and commit file on 'feature-exp'
-    feature_file = ("feature.csv", b"feat_a,feat_b\n1,2\n3,4")
+    feature_file = ("feature.csv", b"col1,col2\n1,2\n3,4")
     resp = client.post(
         f"/api/datasets/{dataset_name}/upload?branch=feature-exp",
         files={"file": feature_file},
@@ -603,4 +604,60 @@ def test_dataset_branching_and_tagging_lifecycle(user_tokens):
     # 12. Clean up dataset
     resp = client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)
     assert resp.status_code == 200
+
+
+def test_dataset_upload_security_validation(user_tokens):
+    """
+    Tests the security rules (max size and schema validation) on dataset file uploads.
+    """
+    dataset_name = f"sec-test-{uuid.uuid4().hex[:8]}"
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    admin_headers = {"Authorization": f"Bearer {user_tokens['admin_user']}"}
+
+    # 1. Register a fresh dataset
+    resp = client.post(
+        "/api/datasets",
+        data={"name": dataset_name, "description": "Security test dataset"},
+        files={"file": ("init.csv", b"col1\n1")},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 201
+
+    # 2. Update metadata with strict security rules
+    metadata_rules = {
+        "allowed_columns": ["id", "name", "value"],
+        "max_size_bytes": 100
+    }
+    resp = client.put(
+        f"/api/datasets/{dataset_name}",
+        json={"metadata": metadata_rules},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 200
+
+    # 3. Test Schema Violation (Missing 'id' and 'value')
+    bad_schema_file = ("bad_schema.csv", b"name,wrong_col\ntest,123")
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/upload",
+        files={"file": bad_schema_file},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("quarantined") is True
+    assert "Upload quarantined" in resp.json()["message"]
+
+    # 4. Test Size Violation (>100 bytes)
+    large_content = b"id,name,value\n" + (b"1,test,100\n" * 20)
+    large_file = ("large.csv", large_content)
+    
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/upload",
+        files={"file": large_file},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 400
+    assert "File size exceeds the maximum allowed limit" in resp.json()["detail"]
+
+    # Clean up dataset
+    client.delete(f"/api/datasets/{dataset_name}", headers=admin_headers)
 

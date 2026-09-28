@@ -121,17 +121,18 @@ class DataService:
         )
 
     def download_file(
-        self, db: Session, dataset_name: str, file_path: str, ref_id: str
+        self, db: Session, dataset_name: str, file_path: str, ref_id: str, username: str = None
     ) -> bytes:
         return self.storage.download_file(
             db=db,
             dataset_name=dataset_name,
             file_path=file_path,
             ref_id=ref_id,
+            username=username,
         )
 
     def stream_file(
-        self, db: Session, dataset_name: str, file_path: str, ref_id: str, chunk_size: int = 65536
+        self, db: Session, dataset_name: str, file_path: str, ref_id: str, chunk_size: int = 65536, username: str = None
     ) -> Iterator[bytes]:
         return self.storage.stream_file(
             db=db,
@@ -139,6 +140,7 @@ class DataService:
             file_path=file_path,
             ref_id=ref_id,
             chunk_size=chunk_size,
+            username=username,
         )
 
     # 3. Dataset Versioning Operations

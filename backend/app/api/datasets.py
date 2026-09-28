@@ -144,6 +144,78 @@ def upload_file(
     )
 
 
+@router.post(
+    "/{dataset_name}/quarantine/{branch_name}/approve",
+    response_model=MessageResponse,
+)
+def approve_quarantine(
+    dataset_name: str,
+    branch_name: str,
+    file_path: str = Query(..., description="The path of the file that was quarantined"),
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["admin:write"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Admin-only: Approves a quarantined file. Extracts the new schema from the file,
+    updates the dataset metadata, moves the file to the main branch, and deletes the quarantine branch.
+    """
+    # 1. Download the file from the quarantine branch
+    content = data_service.download_file(
+        db=db, dataset_name=dataset_name, file_path=file_path, ref_id=branch_name, username=user.username
+    )
+    
+    # 2. Extract schema if CSV
+    if file_path.lower().endswith(".csv"):
+        import csv, io
+        try:
+            first_line = content.split(b"\n", 1)[0].decode("utf-8")
+            reader = csv.reader(io.StringIO(first_line))
+            headers = next(reader)
+            
+            # Update schema in metadata
+            metadata_dict = data_service.get_dataset_metadata(db, dataset_name)
+            metadata = metadata_dict.get("metadata_info") or {}
+            metadata["allowed_columns"] = headers
+            data_service.update_dataset_metadata(db, dataset_name, metadata, user.username)
+        except Exception:
+            pass
+
+    # 3. Upload to main branch
+    data_service.upload_file(
+        db=db,
+        dataset_name=dataset_name,
+        file_path=file_path,
+        content=content,
+        branch_name="main",
+        username=user.username,
+    )
+    
+    # 4. Delete quarantine branch
+    data_service.delete_branch(db, dataset_name, branch_name, user.username)
+    
+    return {"message": f"Quarantine approved. File '{file_path}' moved to main and schema updated."}
+
+
+@router.post(
+    "/{dataset_name}/quarantine/{branch_name}/reject",
+    response_model=MessageResponse,
+)
+def reject_quarantine(
+    dataset_name: str,
+    branch_name: str,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["admin:write"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Admin-only: Rejects a quarantined file by deleting its branch.
+    """
+    data_service.delete_branch(db, dataset_name, branch_name, user.username)
+    return {"message": f"Quarantine rejected. Branch '{branch_name}' deleted."}
+
+
+
 @router.get("/{dataset_name}/download")
 def download_file(
     dataset_name: str,
@@ -156,8 +228,9 @@ def download_file(
     """
     Downloads/retrieves a chunked file stream from a reference (branch/commit/tag).
     """
+
     filename = path.split("/")[-1]
-    chunk_stream = data_service.stream_file(db, dataset_name, file_path=path, ref_id=ref)
+    chunk_stream = data_service.stream_file(db, dataset_name, file_path=path, ref_id=ref, username=user.username)
     return StreamingResponse(
         chunk_stream,
         media_type="application/octet-stream",

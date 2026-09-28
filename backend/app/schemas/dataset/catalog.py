@@ -19,7 +19,7 @@ class DatasetResponse(BaseModel):
 
 
 class MetadataUpdateRequest(BaseModel):
-    metadata: dict[str, str]
+    metadata: dict[str, Any]
 
 
 class DatasetMetadataResponse(BaseModel):

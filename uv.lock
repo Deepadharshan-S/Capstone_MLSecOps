@@ -1089,6 +1089,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fickling"
+version = "0.1.12"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/20/d3c2bdb9235b777763a4afc7cc3673afcd162a707ec0988ae7141a540802/fickling-0.1.12.tar.gz", hash = "sha256:83f6ccc948e21edb9ebd92795069536b47f481ce6add62598eac608b31576821", size = 357026, upload-time = "2026-06-26T23:55:57.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/c0/c65003b71abc4ffddbae99ae86952a21ff859d81b0f1331f79239fe5a58e/fickling-0.1.12-py3-none-any.whl", hash = "sha256:6232b72857e6ee9d729922811b681132d49dc39abc896581390dad1c0eada814", size = 58960, upload-time = "2026-06-26T23:55:56.401Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.32.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3674,6 +3683,7 @@ dependencies = [
     { name = "boto3" },
     { name = "email-validator" },
     { name = "fastapi", extra = ["standard"] },
+    { name = "fickling" },
     { name = "kubernetes" },
     { name = "lakefs" },
     { name = "lakefs-sdk" },
@@ -3702,6 +3712,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.43.67" },
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.139.2" },
+    { name = "fickling", specifier = ">=0.1.12" },
     { name = "kubernetes", specifier = ">=32.0.0" },
     { name = "lakefs", specifier = ">=0.16.0" },
     { name = "lakefs-sdk", specifier = ">=1.86.0" },

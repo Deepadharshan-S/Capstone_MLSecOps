@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Optional, List
 from uuid import UUID
+import json
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -90,7 +91,7 @@ class DatasetCatalogService:
                 storage_namespace=storage_ns,
                 default_branch=settings.LAKEFS_DEFAULT_BRANCH,
                 created_by_id=user_id,
-                metadata_info={},
+                metadata_info={"author": username},
             )
             db_dataset = repo.create(db_dataset)
 
@@ -155,7 +156,8 @@ class DatasetCatalogService:
             repo.save(dataset)
 
             # Synchronize metadata update to lakeFS repository KV store
-            self.version_control_service.set_repository_metadata(sanitized_repo_name, metadata)
+            lakefs_meta = {k: json.dumps(v) if not isinstance(v, str) else v for k, v in metadata.items()}
+            self.version_control_service.set_repository_metadata(sanitized_repo_name, lakefs_meta)
 
             log_audit_event(
                 "dataset_metadata_update",

@@ -6,3 +6,4 @@ class FileUploadResponse(BaseModel):
     path: str
     branch: str
     dataset: str
+    quarantined: bool = False

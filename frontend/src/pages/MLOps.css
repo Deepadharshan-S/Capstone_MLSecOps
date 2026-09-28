@@ -1,0 +1,21 @@
+.mlops-layout {
+  min-height: calc(100vh - 64px); /* subtract nav height */
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  position: sticky;
+  top: 64px; /* below nav */
+  z-index: 50;
+}
+
+/* Rest inherits from Dashboard.css / index.css utility classes */
