@@ -7,6 +7,11 @@ from app.services.ml_ops.rayjob_service import RayJobService
 from app.services.ml_ops.training_log_service import TrainingLogService
 from app.services.ml_ops.exceptions import JobNotFoundError, JobAccessDeniedError
 from app.core.logging_config import log_audit_event
+from app.core.telemetry import (
+    trace_ml_operation,
+    record_training_job_completed,
+    record_training_duration,
+)
 
 
 class TrainingJobService:
@@ -75,74 +80,81 @@ class TrainingJobService:
         For active jobs, blends PostgreSQL metadata with live Kubernetes execution state.
         For completed jobs, retrieves the permanent record from PostgreSQL.
         """
-        clean_id = job_id.removeprefix("rayjob-")
-        job = self.repository.get_by_job_id(clean_id)
-        if not job:
-            raise JobNotFoundError(job_id)
+        with trace_ml_operation("training.status") as span:
+            clean_id = job_id.removeprefix("rayjob-")
+            job = self.repository.get_by_job_id(clean_id)
+            if not job:
+                raise JobNotFoundError(job_id)
 
-        if job.created_by_id != user.id and user.role not in ("admin", "ml_engineer", "viewer"):
-            raise JobAccessDeniedError()
+            if job.created_by_id != user.id and user.role not in ("admin", "ml_engineer", "viewer"):
+                raise JobAccessDeniedError()
 
-        head_pod_name = None
-        head_pod_status = None
-        k8s_status = None
+            head_pod_name = None
+            head_pod_status = None
+            k8s_status = None
 
-        if job.status in ("PENDING", "RUNNING"):
-            k8s_job = self.rayjob_service.get_rayjob(job.rayjob_name)
-            if k8s_job:
-                st = k8s_job.get("status", {})
-                norm = self.rayjob_service.normalize_status(
-                    st.get("jobStatus"), st.get("jobDeploymentStatus")
-                )
-                k8s_status = norm
+            if job.status in ("PENDING", "RUNNING"):
+                k8s_job = self.rayjob_service.get_rayjob(job.rayjob_name)
+                if k8s_job:
+                    st = k8s_job.get("status", {})
+                    norm = self.rayjob_service.normalize_status(
+                        st.get("jobStatus"), st.get("jobDeploymentStatus")
+                    )
+                    k8s_status = norm
 
-                if norm != job.status:
-                    job.status = norm
-                    if norm in ("SUCCEEDED", "FAILED"):
-                        job.completed_at = self.rayjob_service.parse_k8s_time(
-                            st.get("endTime")
-                        ) or datetime.now(timezone.utc)
-                        if job.started_at and job.completed_at:
-                            job.duration_seconds = round(
-                                (job.completed_at - job.started_at).total_seconds(), 2
-                            )
-                        job.error_message = st.get("message") or st.get("reason")
-                        self.log_service.archive_pod_logs(job.job_id)
-                    self.repository.save(job)
+                    if norm != job.status:
+                        job.status = norm
+                        if norm in ("SUCCEEDED", "FAILED"):
+                            job.completed_at = self.rayjob_service.parse_k8s_time(
+                                st.get("endTime")
+                            ) or datetime.now(timezone.utc)
+                            if job.started_at and job.completed_at:
+                                job.duration_seconds = round(
+                                    (job.completed_at - job.started_at).total_seconds(), 2
+                                )
+                            job.error_message = st.get("message") or st.get("reason")
+                            self.log_service.archive_pod_logs(job.job_id)
+                            record_training_job_completed(status=norm)
+                            if job.duration_seconds is not None:
+                                record_training_duration(job.duration_seconds)
+                        self.repository.save(job)
 
-            head_pod = self.rayjob_service.get_head_pod(job.job_id)
-            if head_pod:
-                head_pod_name, head_pod_status = head_pod
+                head_pod = self.rayjob_service.get_head_pod(job.job_id)
+                if head_pod:
+                    head_pod_name, head_pod_status = head_pod
 
-        log_audit_event(
-            "training_job_detail_view",
-            user.username,
-            None,
-            f"Viewed details for training job {job.job_id}.",
-        )
+            if span.is_recording():
+                span.set_attribute("training.status", job.status)
 
-        return {
-            "job_id": job.job_id,
-            "rayjob_name": job.rayjob_name,
-            "status": job.status,
-            "dataset_id": job.dataset_id,
-            "ref": job.ref,
-            "model_name": job.model_name,
-            "experiment_name": job.experiment_name,
-            "epochs": job.epochs,
-            "hyperparameters": job.hyperparameters or {},
-            "entrypoint": job.entrypoint,
-            "started_by": job.created_by_username,
-            "created_at": job.created_at.isoformat() if job.created_at else "",
-            "started_at": job.started_at.isoformat() if job.started_at else None,
-            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-            "duration_seconds": job.duration_seconds,
-            "error_message": job.error_message,
-            "log_path": job.log_path,
-            "head_pod_name": head_pod_name,
-            "head_pod_status": head_pod_status,
-            "k8s_status": k8s_status or job.status,
-        }
+            log_audit_event(
+                "training_job_detail_view",
+                user.username,
+                None,
+                f"Viewed details for training job {job.job_id}.",
+            )
+
+            return {
+                "job_id": job.job_id,
+                "rayjob_name": job.rayjob_name,
+                "status": job.status,
+                "dataset_id": job.dataset_id,
+                "ref": job.ref,
+                "model_name": job.model_name,
+                "experiment_name": job.experiment_name,
+                "epochs": job.epochs,
+                "hyperparameters": job.hyperparameters or {},
+                "entrypoint": job.entrypoint,
+                "started_by": job.created_by_username,
+                "created_at": job.created_at.isoformat() if job.created_at else "",
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                "duration_seconds": job.duration_seconds,
+                "error_message": job.error_message,
+                "log_path": job.log_path,
+                "head_pod_name": head_pod_name,
+                "head_pod_status": head_pod_status,
+                "k8s_status": k8s_status or job.status,
+            }
 
     def get_job_logs(
         self,
@@ -214,6 +226,9 @@ class TrainingJobService:
                     job.error_message = status_obj.get("message") or status_obj.get("reason")
                     self.log_service.archive_pod_logs(job.job_id)
                     self.rayjob_service.cleanup_job_resources(job.job_id)
+                    record_training_job_completed(status=norm_status)
+                    if job.duration_seconds is not None:
+                        record_training_duration(job.duration_seconds)
             else:
                 # The RayJob is no longer in Kubernetes (cleaned up by TTL or deleted)
                 created_at_val = job.created_at
@@ -242,6 +257,9 @@ class TrainingJobService:
                     job.duration_seconds = round(
                         (job.completed_at - job.started_at).total_seconds(), 2
                     )
+                record_training_job_completed(status=job.status)
+                if job.duration_seconds is not None:
+                    record_training_duration(job.duration_seconds)
                 self.rayjob_service.cleanup_job_resources(job.job_id)
 
         self.repository.save_all(active_jobs)

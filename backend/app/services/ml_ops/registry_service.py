@@ -11,6 +11,7 @@ from typing import Optional
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
+from app.core.telemetry import trace_ml_operation
 from fastapi import HTTPException, status
 
 logger = logging.getLogger("registry_service")
@@ -215,6 +216,25 @@ class ModelRegistryService:
         metrics: Optional[str] = None,
     ) -> dict:
         """Uploads and registers a .pkl model to MLflow, optionally with metadata and metrics."""
+        with trace_ml_operation("model.register", attributes={"registration.type": "upload"}):
+            return self._execute_model_upload(
+                file=file,
+                user=user,
+                model_name=model_name,
+                experiment_name=experiment_name,
+                metadata=metadata,
+                metrics=metrics,
+            )
+
+    def _execute_model_upload(
+        self,
+        file,
+        user: User,
+        model_name: Optional[str] = None,
+        experiment_name: Optional[str] = None,
+        metadata: Optional[str] = None,
+        metrics: Optional[str] = None,
+    ) -> dict:
         import cloudpickle
         import pickle
         import mlflow

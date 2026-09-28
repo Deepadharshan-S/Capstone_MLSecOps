@@ -12,6 +12,10 @@ from app.models.user import User
 from app.models.training_job import TrainingJob
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
+from app.core.telemetry import (
+    trace_ml_operation,
+    record_training_job_submitted,
+)
 from app.services.ml_ops.utils import (
     get_scoped_training_credentials,
     render_rayjob_manifest,
@@ -119,6 +123,37 @@ class ModelTrainingService:
         and running a local Ray runner background process fallback.
         Persists the initial PENDING job record in PostgreSQL.
         """
+        with trace_ml_operation("training.submit", attributes={"training.framework": "custom"}):
+            try:
+                res = self._execute_model_training(
+                    dataset_id=dataset_id,
+                    ref=ref,
+                    epochs=epochs,
+                    hyperparameters=hyperparameters,
+                    code=code,
+                    user=user,
+                    experiment_name=experiment_name,
+                    model_name=model_name,
+                    db=db,
+                )
+                record_training_job_submitted(framework="custom", result="success")
+                return res
+            except Exception:
+                record_training_job_submitted(framework="custom", result="error")
+                raise
+
+    def _execute_model_training(
+        self,
+        dataset_id: str,
+        ref: str,
+        epochs: int,
+        hyperparameters: dict,
+        code: str,
+        user: User,
+        experiment_name: Optional[str] = None,
+        model_name: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> dict:
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
@@ -277,6 +312,37 @@ class ModelTrainingService:
         or local fallback process.
         Persists the initial PENDING job record in PostgreSQL.
         """
+        with trace_ml_operation("training.submit", attributes={"training.framework": "pipeline"}):
+            try:
+                res = self._execute_pipeline_training(
+                    dataset_id=dataset_id,
+                    ref=ref,
+                    target_column=target_column,
+                    model_type=model_type,
+                    hyperparameters=hyperparameters,
+                    user=user,
+                    experiment_name=experiment_name,
+                    model_name=model_name,
+                    db=db,
+                )
+                record_training_job_submitted(framework="pipeline", result="success")
+                return res
+            except Exception:
+                record_training_job_submitted(framework="pipeline", result="error")
+                raise
+
+    def _execute_pipeline_training(
+        self,
+        dataset_id: str,
+        ref: str,
+        target_column: str,
+        model_type: str,
+        hyperparameters: dict,
+        user: User,
+        experiment_name: Optional[str] = None,
+        model_name: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> dict:
         if user.role == "viewer":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

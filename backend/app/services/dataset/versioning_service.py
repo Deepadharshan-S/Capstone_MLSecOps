@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.logging_config import log_audit_event
 from app.services.interfaces import VersionControlService
 from app.services.dataset.utils import get_dataset_or_404
+from app.core.telemetry import trace_ml_operation
 
 
 class DatasetVersioningService:
@@ -30,6 +31,25 @@ class DatasetVersioningService:
         username: str,
     ) -> dict:
         """Commits uncommitted changes on a specific branch in the dataset repository."""
+        with trace_ml_operation("dataset.commit"):
+            return self._execute_commit_changes(
+                db=db,
+                dataset_name=dataset_name,
+                branch_name=branch_name,
+                message=message,
+                metadata=metadata,
+                username=username,
+            )
+
+    def _execute_commit_changes(
+        self,
+        db: Session,
+        dataset_name: str,
+        branch_name: str,
+        message: str,
+        metadata: Optional[dict[str, str]],
+        username: str,
+    ) -> dict:
         dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
         try:
             res = self.version_control_service.commit(sanitized_repo_name, branch_name, message, metadata)

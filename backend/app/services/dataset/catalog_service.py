@@ -10,6 +10,7 @@ from app.repositories.dataset_repository import DatasetRepository
 from app.core.logging_config import log_audit_event
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dataset.utils import get_repo_name, get_dataset_or_404
+from app.core.telemetry import trace_ml_operation
 
 
 class DatasetCatalogService:
@@ -55,6 +56,23 @@ class DatasetCatalogService:
         """
         Registers a new dataset in the DB and creates a corresponding lakeFS repository.
         """
+        with trace_ml_operation("dataset.register"):
+            return self._execute_register_dataset(
+                db=db,
+                dataset_name=dataset_name,
+                description=description,
+                user_id=user_id,
+                username=username,
+            )
+
+    def _execute_register_dataset(
+        self,
+        db: Session,
+        dataset_name: str,
+        description: Optional[str],
+        user_id: UUID,
+        username: str,
+    ) -> Dataset:
         repo = self._get_repo(db)
         existing = repo.get_by_name(dataset_name)
         if existing:

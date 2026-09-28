@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
+from app.core.telemetry import (
+    trace_ml_operation,
+    record_deployment_operation,
+)
 from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
 from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
@@ -45,6 +49,31 @@ class ModelDeploymentService:
         Deploys a registered MLflow model to a live Kubernetes RayService CRD using the Kubernetes SDK.
         Updates model version stages, aliases, and deployment metadata tags directly in MLflow.
         """
+        with trace_ml_operation("deployment.create", attributes={"deployment.environment": environment.lower()}):
+            try:
+                res = self._execute_model_deploy(
+                    model_id=model_id,
+                    environment=environment,
+                    user=user,
+                    version=version,
+                    replicas=replicas,
+                    db=db,
+                )
+                record_deployment_operation(operation="create", result="success")
+                return res
+            except Exception:
+                record_deployment_operation(operation="create", result="error")
+                raise
+
+    def _execute_model_deploy(
+        self,
+        model_id: str,
+        environment: str,
+        user: User,
+        version: Optional[str] = "latest",
+        replicas: Optional[int] = 1,
+        db: Optional[Session] = None,
+    ) -> dict:
         from mlflow.tracking import MlflowClient
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
@@ -147,6 +176,11 @@ class ModelDeploymentService:
                     or to_k8s_endpoint(settings.MLFLOW_TRACKING_URI),
                     "{{mlflow_s3_endpoint_url}}": settings.MINIO_INTERNAL_ENDPOINT
                     or to_k8s_endpoint(settings.MINIO_ENDPOINT),
+                    "{{otel_enabled}}": "true" if getattr(settings, "OTEL_ENABLED", False) else "false",
+                    "{{otel_service_name}}": "sentinelml-rayservice",
+                    "{{otel_exporter_otlp_endpoint}}": getattr(settings, "OTEL_INTERNAL_ENDPOINT", None)
+                    or to_k8s_endpoint(getattr(settings, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")),
+                    "{{otel_traces_sampler}}": getattr(settings, "OTEL_TRACES_SAMPLER", "always_on"),
                 }
                 rendered_yaml = template_content
                 for placeholder, val in replacements.items():
@@ -528,6 +562,28 @@ class ModelDeploymentService:
         Executes lifecycle actions (restart, stop, rollback) on a model deployment.
         Updates PostgreSQL deployment status, MLflow tags, and deletes/restarts Kubernetes RayService resources using native SDK.
         """
+        span_name = "deployment.delete" if action.lower() == "stop" else "deployment.update"
+        with trace_ml_operation(span_name, attributes={"deployment.action": action.lower()}):
+            try:
+                res = self._execute_deployment_management(
+                    deployment_id=deployment_id,
+                    action=action,
+                    user=user,
+                    db=db,
+                )
+                record_deployment_operation(operation=action.lower(), result="success")
+                return res
+            except Exception:
+                record_deployment_operation(operation=action.lower(), result="error")
+                raise
+
+    def _execute_deployment_management(
+        self,
+        deployment_id: str,
+        action: str,
+        user: User,
+        db: Optional[Session] = None,
+    ) -> dict:
         from mlflow.tracking import MlflowClient
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)

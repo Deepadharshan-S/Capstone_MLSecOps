@@ -8,6 +8,11 @@ import pandas as pd
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
+from app.core.telemetry import (
+    trace_ml_operation,
+    record_inference_request,
+    record_inference_duration,
+)
 from fastapi import HTTPException, status
 
 logger = logging.getLogger("serving_service")
@@ -33,6 +38,40 @@ class ModelServingService:
         Routes request directly to the active live Kubernetes RayService endpoint.
         Returns 503 with Retry-After header if the RayService is initializing or offline.
         """
+        batch_size = 1
+        if isinstance(data, dict):
+            if "dataframe_records" in data and data["dataframe_records"] is not None:
+                batch_size = len(data["dataframe_records"])
+            elif "inputs" in data and data["inputs"] is not None:
+                batch_size = len(data["inputs"])
+        elif isinstance(data, list):
+            batch_size = len(data)
+
+        span_attrs = {
+            "ml.operation": "model.inference",
+            "ml.serving.target": "rayservice",
+            "ml.model.name": str(model_name_or_id),
+            "ml.inference.batch_size": batch_size,
+        }
+        with trace_ml_operation("model.inference", attributes=span_attrs):
+            try:
+                return self._execute_model_prediction(
+                    model_name_or_id=model_name_or_id,
+                    data=data,
+                    user=user,
+                    version=version,
+                )
+            except Exception:
+                record_inference_request(result="error")
+                raise
+
+    def _execute_model_prediction(
+        self,
+        model_name_or_id: str,
+        data: dict,
+        user: User,
+        version: Optional[str] = None,
+    ) -> dict:
         from mlflow.tracking import MlflowClient
 
         start_time = time.time()
@@ -156,7 +195,10 @@ class ModelServingService:
                 headers={"Retry-After": "10"},
             )
 
-        latency_ms = round((time.time() - start_time) * 1000, 2)
+        latency_s = time.time() - start_time
+        latency_ms = round(latency_s * 1000, 2)
+        record_inference_request(result="success")
+        record_inference_duration(latency_s)
 
         # 4. Security Audit Log
         log_audit_event(
