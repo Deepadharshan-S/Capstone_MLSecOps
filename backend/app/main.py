@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import get_db, engine
 from app.api import auth, users, ml_ops
 from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from app.api import datasets
@@ -33,12 +33,26 @@ from app.services.auth.exceptions import (
     SelfRoleModificationError,
 )
 from app.services.auth.token_cleanup import token_cleanup_loop
+from app.core.telemetry import (
+    initialize_telemetry,
+    shutdown_telemetry,
+    instrument_fastapi_app,
+    instrument_sqlalchemy_engine,
+    instrument_httpx,
+)
 
 logger = logging.getLogger("main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. Initialize OpenTelemetry foundation and ensure app instrumentation (safe no-op when disabled)
+    initialize_telemetry()
+    instrument_fastapi_app(app)
+    instrument_sqlalchemy_engine(engine)
+    instrument_httpx()
+
+    # 2. Start automated token cleanup background task if enabled
     cleanup_task = None
     if settings.TOKEN_CLEANUP_ENABLED:
         cleanup_task = asyncio.create_task(
@@ -49,6 +63,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # 3. Stop background tasks
         if cleanup_task is not None:
             logger.info("Stopping automated token cleanup background task...")
             cleanup_task.cancel()
@@ -59,6 +74,9 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Error while stopping token cleanup task: {e}")
             logger.info("Automated token cleanup background task stopped.")
+
+        # 4. Gracefully shutdown OpenTelemetry (flush pending spans and metrics)
+        shutdown_telemetry()
 
 
 app = FastAPI(
@@ -78,6 +96,11 @@ app.add_middleware(
 # Register Security Headers and Request Correlation Middleware
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
+
+# Instrument FastAPI application, SQLAlchemy engine, and HTTPX with OpenTelemetry (safe no-ops when disabled)
+instrument_fastapi_app(app)
+instrument_sqlalchemy_engine(engine)
+instrument_httpx()
 
 
 @app.exception_handler(IntegrityError)

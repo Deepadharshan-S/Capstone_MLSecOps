@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     TOKEN_CLEANUP_INTERVAL_SECONDS: int = 3600
     TOKEN_CLEANUP_ENABLED: bool = True
 
+    # OpenTelemetry Observability Configuration
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "sentinelml-backend"
+    OTEL_SERVICE_VERSION: Optional[str] = None
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4318"
+    OTEL_INTERNAL_ENDPOINT: Optional[str] = None
+    OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS: int = 5
+    OTEL_TRACES_SAMPLER: str = "always_on"
+    OTEL_TRACES_SAMPLER_ARG: float = 1.0
+    OTEL_METRICS_EXPORT_INTERVAL_MS: int = 15000
+    OTEL_EXCLUDED_URLS: str = "health"
+
     # CORS config
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",

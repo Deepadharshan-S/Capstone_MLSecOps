@@ -209,7 +209,7 @@ def cleanup_after_tests():
         print(f"\n[Pytest Teardown] Error during Kubernetes Ray resource cleanup: {e}")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def user_tokens():
     """Retrieves OAuth2 access tokens for all test users across test suites."""
     from fastapi.testclient import TestClient
