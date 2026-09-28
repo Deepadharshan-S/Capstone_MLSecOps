@@ -87,6 +87,14 @@ spec:
                   value: "{{model_uri}}"
                 - name: PYTHONPATH
                   value: "/app/user_code"
+                - name: OTEL_ENABLED
+                  value: "{{otel_enabled}}"
+                - name: OTEL_SERVICE_NAME
+                  value: "{{otel_service_name}}"
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: "{{otel_exporter_otlp_endpoint}}"
+                - name: OTEL_TRACES_SAMPLER
+                  value: "{{otel_traces_sampler}}"
   serveConfigV2: |
     applications:
       - name: sentinelml_serve_app
@@ -102,3 +110,8 @@ spec:
             AWS_SESSION_TOKEN: "{{aws_session_token}}"
             MLFLOW_S3_IGNORE_TLS: "true"
             MODEL_URI: "{{model_uri}}"
+            OTEL_ENABLED: "{{otel_enabled}}"
+            OTEL_SERVICE_NAME: "{{otel_service_name}}"
+            OTEL_EXPORTER_OTLP_ENDPOINT: "{{otel_exporter_otlp_endpoint}}"
+            OTEL_TRACES_SAMPLER: "{{otel_traces_sampler}}"
+
