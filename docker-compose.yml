@@ -63,10 +63,11 @@ services:
       - ":9001"
 
     healthcheck:
+      # The minio image ships `mc` but no curl/wget, so probe through mc.
       test:
         [
           "CMD-SHELL",
-          "curl -f http://localhost:9000/minio/health/live || exit 1"
+          "mc alias set -q local http://127.0.0.1:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD && mc ready local",
         ]
       interval: 5s
       timeout: 5s

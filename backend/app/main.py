@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.mlflow_loader import warm_mlflow
 from app.db.session import get_db, engine
 from app.api import auth, users, ml_ops
 from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
@@ -46,6 +47,12 @@ logger = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Pre-warm MLflow single-threaded
+    try:
+        warm_mlflow()
+    except Exception as e:
+        logger.warning(f"Could not warm MLflow: {e}")
+
     # 1. Initialize OpenTelemetry foundation and ensure app instrumentation (safe no-op when disabled)
     initialize_telemetry()
     instrument_fastapi_app(app)
@@ -87,7 +94,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=[
+        origin.strip()
+        for origin in settings.ALLOWED_ORIGINS.split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

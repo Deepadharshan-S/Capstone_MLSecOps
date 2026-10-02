@@ -12,6 +12,7 @@ from app.services.ml_ops.registry_service import ModelRegistryService
 from app.services.ml_ops.rayjob_service import RayJobService
 from app.services.ml_ops.training_log_service import TrainingLogService
 from app.services.ml_ops.training_job_service import TrainingJobService
+from app.services.ml_ops.job_service import JobService, job_service
 from app.services.ml_ops.exceptions import (
     JobNotFoundError,
     JobAccessDeniedError,
@@ -33,6 +34,8 @@ __all__ = [
     "RayJobService",
     "TrainingLogService",
     "TrainingJobService",
+    "JobService",
+    "job_service",
     "JobNotFoundError",
     "JobAccessDeniedError",
     "JobLogsNotFoundError",

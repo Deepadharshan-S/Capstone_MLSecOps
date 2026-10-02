@@ -58,13 +58,6 @@ def register_dataset(
     """
     Registers a new dataset (creates database record and lakeFS repository) and uploads the dataset file via streaming.
     """
-    db_dataset = data_service.register_dataset(
-        db=db,
-        dataset_name=name,
-        description=description,
-        user_id=user.id,
-        username=user.username,
-    )
 
     file_path = file.filename
     if not file_path:
@@ -72,15 +65,55 @@ def register_dataset(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file must have a valid filename.",
         )
+    # The training pipeline (ray_wrapper) only reads CSV via pd.read_csv.
+    if not file_path.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Only .csv files are supported for training. Got '{file_path}'.",
+        )
 
-    data_service.upload_file(
-        db=db,
-        dataset_name=name,
-        file_path=file_path,
-        content=file.file,
-        branch_name=db_dataset.default_branch,
-        username=user.username,
-    )
+    try:
+        db_dataset = data_service.register_dataset(
+            db=db,
+            dataset_name=name,
+            description=description,
+            user_id=user.id,
+            username=user.username,
+        )
+    except HTTPException as e:
+        if e.status_code == 500 and "lakeFS" in str(e.detail):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"{e.detail} Is the lakeFS container running (docker compose up lakefs), "
+                    "and are LAKEFS_ENDPOINT / LAKEFS_ACCESS_KEY_ID / LAKEFS_SECRET_ACCESS_KEY set?"
+                ),
+            )
+        raise
+
+    try:
+        data_service.upload_file(
+            db=db,
+            dataset_name=name,
+            file_path=file_path,
+            content=file.file,
+            branch_name=db_dataset.default_branch,
+            username=user.username,
+        )
+        data_service.commit_changes(
+            db=db,
+            dataset_name=name,
+            branch_name=db_dataset.default_branch,
+            message=f"Upload {file_path}",
+            metadata=None,
+            username=user.username,
+        )
+    except HTTPException as e:
+        try:
+            data_service.delete_dataset(db, name, username=user.username)
+        except Exception:
+            pass
+        raise
 
     return db_dataset
 

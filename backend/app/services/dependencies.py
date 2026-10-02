@@ -33,6 +33,8 @@ from app.services.ml_ops import (
     RayJobService,
     TrainingLogService,
     TrainingJobService,
+    JobService,
+    job_service,
 )
 
 # Shared Singletons
@@ -198,3 +200,9 @@ def get_deployment_repository(db: Session = Depends(get_db)) -> DeploymentReposi
 def get_audit_log_repository(db: Session = Depends(get_db)) -> AuditLogRepository:
     """Returns an AuditLogRepository bound to the current DB session."""
     return AuditLogRepository(db)
+
+
+def get_job_service() -> JobService:
+    """Returns the singleton JobService instance."""
+    return job_service
+

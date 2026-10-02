@@ -42,10 +42,20 @@ class Settings(BaseSettings):
     OTEL_METRICS_EXPORT_INTERVAL_MS: int = 15000
     OTEL_EXCLUDED_URLS: str = "health"
 
-    # CORS config
+    COOKIE_SECURE: bool = False
+
+    ALLOWED_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174,"
+        "http://localhost:5175,http://127.0.0.1:5175"
+    )
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
     ]
 
     # lakeFS config

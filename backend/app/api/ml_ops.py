@@ -15,6 +15,7 @@ from app.schemas.ml_ops import (
     RayJobListResponse,
     RayJobDetailResponse,
     RayJobLogsResponse,
+    JobStatusResponse,
     ModelListResponse,
     DeployModelResponse,
     ManageDeploymentResponse,
@@ -32,6 +33,7 @@ from app.services.dependencies import (
     get_model_serving_service,
     get_model_registry_service,
     get_training_job_service,
+    get_job_service,
 )
 from app.services.ml_ops import (
     ModelTrainingService,
@@ -41,6 +43,7 @@ from app.services.ml_ops import (
     TrainingJobService,
     JobNotFoundError,
     JobAccessDeniedError,
+    JobService,
 )
 
 router = APIRouter(prefix="", tags=["mlops"])
@@ -85,6 +88,7 @@ def train_pipeline(
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["models:train"]),
     training_service: ModelTrainingService = Depends(get_model_training_service),
+    job_svc: JobService = Depends(get_job_service),
 ):
     """
     Start automated pipeline training. Accessible to Data Scientists and Admins.
@@ -99,7 +103,34 @@ def train_pipeline(
         experiment_name=train_info.experiment_name,
         model_name=train_info.model_name,
         db=db,
+        job_svc=job_svc,
     )
+
+
+@router.get("/models/supported")
+def supported_models(
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+):
+    """
+    Canonical model types accepted by POST /models/train-pipeline.
+    The frontend model picker is built from this — no hardcoded drift.
+    """
+    from app.services.ml_ops.supported_models import (
+        CANONICAL_MODEL_TYPES,
+        MODEL_ALIASES,
+        OPTIONAL_MODEL_TYPES,
+    )
+
+    return {
+        "models": [
+            {
+                "name": name,
+                "aliases": MODEL_ALIASES.get(name, [name]),
+                "optional_dependency": name in OPTIONAL_MODEL_TYPES,
+            }
+            for name in CANONICAL_MODEL_TYPES
+        ]
+    }
 
 
 @router.get("/models", response_model=ModelListResponse)
@@ -111,6 +142,42 @@ def view_models(
     View models. Accessible to all roles (Viewer, ML Engineer, Data Scientist, Admin).
     """
     return registry_service.retrieve_models(user)
+
+
+@router.get("/models/{model_name}/versions")
+def model_versions(
+    model_name: str,
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    registry_service: ModelRegistryService = Depends(get_model_registry_service),
+):
+    """
+    List all versions of a registered model with stages, aliases and metrics.
+    """
+    return registry_service.retrieve_model_versions(model_name)
+
+
+@router.get("/experiments")
+def list_experiments(
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    registry_service: ModelRegistryService = Depends(get_model_registry_service),
+):
+    """
+    List MLflow experiments for the native Experiments page.
+    """
+    return registry_service.retrieve_experiments()
+
+
+@router.get("/experiments/{experiment_id}/runs")
+def experiment_runs(
+    experiment_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    registry_service: ModelRegistryService = Depends(get_model_registry_service),
+):
+    """
+    List runs of an MLflow experiment, newest first.
+    """
+    return registry_service.retrieve_experiment_runs(experiment_id, limit)
 
 
 @router.post(
@@ -379,3 +446,72 @@ def manage_deployment(
     return deployment_service.perform_deployment_management(
         manage_info.deployment_id, manage_info.action, user, db=db
     )
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def get_job_status(
+    job_id: str,
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    job_svc: JobService = Depends(get_job_service),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the status and results of a training job.
+    """
+    job = job_svc.get_job(db, job_id)
+    return JobStatusResponse(
+        job_id=job.job_id,
+        status=job.status,
+        progress=job.progress,
+        model_name=job.model_name,
+        model_type=job.model_type,
+        dataset_id=job.dataset_id,
+        accuracy=job.accuracy,
+        precision_score=job.precision_score,
+        recall_score=job.recall_score,
+        f1_score=job.f1_score,
+        training_duration=job.training_duration,
+        confusion_matrix=job.confusion_matrix,
+        feature_importance=job.feature_importance,
+        roc_curve=job.roc_curve,
+        history=job.history,
+        error_message=job.error_message,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+    )
+
+
+@router.get("/jobs", response_model=list[JobStatusResponse])
+def list_user_jobs(
+    limit: int = Query(20, ge=1, le=100),
+    user: User = Security(get_current_active_user, scopes=["models:view"]),
+    job_svc: JobService = Depends(get_job_service),
+    db: Session = Depends(get_db),
+):
+    """
+    List recent training jobs for the current user.
+    """
+    jobs = job_svc.get_user_jobs(db, user.id, limit=limit)
+    return [
+        JobStatusResponse(
+            job_id=j.job_id,
+            status=j.status,
+            progress=j.progress,
+            model_name=j.model_name,
+            model_type=j.model_type,
+            dataset_id=j.dataset_id,
+            accuracy=j.accuracy,
+            precision_score=j.precision_score,
+            recall_score=j.recall_score,
+            f1_score=j.f1_score,
+            training_duration=j.training_duration,
+            confusion_matrix=j.confusion_matrix,
+            feature_importance=j.feature_importance,
+            roc_curve=j.roc_curve,
+            history=j.history,
+            error_message=j.error_message,
+            started_at=j.started_at,
+            completed_at=j.completed_at,
+        )
+        for j in jobs
+    ]

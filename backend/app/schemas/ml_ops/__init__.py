@@ -6,6 +6,7 @@ from app.schemas.ml_ops.training import (
     RayJobListResponse,
     RayJobDetailResponse,
     RayJobLogsResponse,
+    JobStatusResponse,
 )
 from app.schemas.ml_ops.deployment import (
     DeployModelSchema,
@@ -37,6 +38,7 @@ __all__ = [
     "RayJobListResponse",
     "RayJobDetailResponse",
     "RayJobLogsResponse",
+    "JobStatusResponse",
     "DeployModelSchema",
     "ManageDeploymentSchema",
     "DeployModelResponse",

@@ -20,6 +20,7 @@ from app.models.blacklisted_token import BlacklistedToken
 from app.schemas.auth import UserCreate
 from app.repositories.user_repository import UserRepository
 from app.repositories.token_repository import RefreshTokenRepository, BlacklistedTokenRepository
+from app.core.config import settings
 from app.core.logging_config import log_audit_event
 from app.services.auth.exceptions import (
     WeakPasswordError,

@@ -12,6 +12,7 @@ from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
 from app.core.telemetry import trace_ml_operation
+from app.core.mlflow_loader import load_mlflow
 from fastapi import HTTPException, status
 
 logger = logging.getLogger("registry_service")
@@ -30,8 +31,7 @@ class ModelRegistryService:
             None,
             "Viewed models list.",
         )
-        import mlflow
-        from mlflow.tracking import MlflowClient
+        mlflow, MlflowClient = load_mlflow()
 
         mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
         client = MlflowClient()
@@ -39,6 +39,15 @@ class ModelRegistryService:
         models_list = []
         try:
             registered_models = client.search_registered_models()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "MLflow tracking server is unreachable. "
+                    "Check MLFLOW_TRACKING_URI and that the mlflow container is running."
+                ),
+            ) from e
+        try:
             for rm in registered_models:
                 created_at_str = "unknown"
                 run_id = "unknown"
@@ -205,6 +214,116 @@ class ModelRegistryService:
             "versions": version_details,
         }
 
+    def retrieve_model_versions(self, model_name: str) -> dict:
+        """Returns every version of a registered model with stages, aliases and run metrics."""
+        mlflow, MlflowClient = load_mlflow()
+
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        client = MlflowClient()
+
+        try:
+            registered = client.get_registered_model(model_name)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model '{model_name}' not found in MLflow registry.",
+            ) from e
+
+        aliases = dict(registered.aliases or {})
+        alias_by_version = {}
+        for alias, ver in aliases.items():
+            alias_by_version.setdefault(str(ver), []).append(alias)
+
+        try:
+            versions = client.search_model_versions(f"name = '{model_name}'")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="MLflow tracking server is unreachable.",
+            ) from e
+
+        items = []
+        for mv in sorted(versions, key=lambda v: int(v.version), reverse=True):
+            metrics = {}
+            try:
+                run = client.get_run(mv.run_id)
+                for k in ("accuracy", "precision", "recall", "f1_score"):
+                    if k in (run.data.metrics or {}):
+                        metrics[k] = run.data.metrics[k]
+            except Exception:
+                pass
+            items.append(
+                {
+                    "version": str(mv.version),
+                    "stage": mv.current_stage or "None",
+                    "aliases": alias_by_version.get(str(mv.version), []),
+                    "run_id": mv.run_id,
+                    "status": mv.status,
+                    "creation_timestamp": mv.creation_timestamp,
+                    "tags": dict(mv.tags or {}),
+                    "metrics": metrics,
+                }
+            )
+        return {"model_name": model_name, "aliases": aliases, "versions": items}
+
+    def retrieve_experiments(self) -> dict:
+        """Lists MLflow experiments for the native Experiments page."""
+        mlflow, MlflowClient = load_mlflow()
+
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        client = MlflowClient()
+        try:
+            experiments = client.search_experiments()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "MLflow tracking server is unreachable. "
+                    "Check MLFLOW_TRACKING_URI and that the mlflow container is running."
+                ),
+            ) from e
+        return {
+            "experiments": [
+                {
+                    "experiment_id": e.experiment_id,
+                    "name": e.name,
+                    "lifecycle_stage": e.lifecycle_stage,
+                }
+                for e in experiments
+            ]
+        }
+
+    def retrieve_experiment_runs(self, experiment_id: str, limit: int = 50) -> dict:
+        """Lists runs of an experiment, newest first, with params/metrics/tags."""
+        mlflow, MlflowClient = load_mlflow()
+
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        client = MlflowClient()
+        try:
+            runs = client.search_runs(
+                experiment_ids=[experiment_id],
+                order_by=["attributes.start_time DESC"],
+                max_results=max(1, min(limit, 200)),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="MLflow tracking server is unreachable.",
+            ) from e
+        items = []
+        for r in runs:
+            items.append(
+                {
+                    "run_id": r.info.run_id,
+                    "run_name": (r.data.tags or {}).get("mlflow.runName"),
+                    "status": r.info.status,
+                    "start_time": r.info.start_time,
+                    "params": dict(r.data.params or {}),
+                    "metrics": {k: float(v) for k, v in (r.data.metrics or {}).items()},
+                    "tags": dict(r.data.tags or {}),
+                }
+            )
+        return {"experiment_id": experiment_id, "runs": items}
 
     def perform_model_upload(
         self,
@@ -237,8 +356,8 @@ class ModelRegistryService:
     ) -> dict:
         import cloudpickle
         import pickle
-        import mlflow
-        from mlflow.tracking import MlflowClient
+
+        mlflow, MlflowClient = load_mlflow()
         from app.services.ml_ops.ray_wrapper import ModelWrapper
 
         log_audit_event(

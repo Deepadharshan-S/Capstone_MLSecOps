@@ -13,6 +13,7 @@ from app.core.telemetry import (
     record_inference_request,
     record_inference_duration,
 )
+from app.core.mlflow_loader import load_mlflow
 from fastapi import HTTPException, status
 
 logger = logging.getLogger("serving_service")
@@ -72,7 +73,7 @@ class ModelServingService:
         user: User,
         version: Optional[str] = None,
     ) -> dict:
-        from mlflow.tracking import MlflowClient
+        mlflow, MlflowClient = load_mlflow()
 
         start_time = time.time()
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)

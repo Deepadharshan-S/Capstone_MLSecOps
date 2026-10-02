@@ -234,7 +234,12 @@ class ModelTrainingService:
                 )
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Training cluster is unavailable and local fallback execution is disabled for security.",
+                    detail=(
+                        "Training cluster is unavailable and local fallback execution is disabled. "
+                        "Check: kubectl config current-context points at your cluster, "
+                        "KubeRay operator is installed (kubectl get crd rayjobs.ray.io), "
+                        "and image mlsecops-ray:latest is built/loaded."
+                    ),
                 )
 
             temp_job_dir = tempfile.mkdtemp(prefix=f"rayjob-{job_id}-")
@@ -306,6 +311,7 @@ class ModelTrainingService:
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
         db: Optional[Session] = None,
+        job_svc=None,
     ) -> dict:
         """
         Submits an automated pipeline training job either via Kubernetes RayJob CRD
@@ -349,9 +355,30 @@ class ModelTrainingService:
                 detail="Role 'viewer' is not authorized to train models.",
             )
 
+        # Fail fast with 404 instead of creating an orphan "training" job
+        # that can never complete when the dataset was never uploaded
+        # (e.g. POST /datasets returned 500 because lakeFS is down).
+        if db is not None:
+            from app.services.dataset.utils import get_dataset_or_404
+
+            get_dataset_or_404(db, dataset_id)
+
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
+
+        if db and job_svc:
+            job_svc.create_job(
+                db=db,
+                job_id=job_id,
+                user_id=user.id,
+                dataset_id=dataset_id,
+                model_type=model_type,
+                target_column=target_column,
+                model_name=output_model_name,
+                experiment_name=experiment_name,
+            )
+
         log_audit_event(
             "model_training_initiated",
             user.username,
@@ -422,9 +449,27 @@ class ModelTrainingService:
                     None,
                     f"Kubernetes cluster offline and local fallback execution is disabled for security (Job: {job_id}).",
                 )
+                # Don't leave an orphan "training" row behind — polling
+                # GET /jobs/{id} would otherwise hang on it forever.
+                if db is not None and job_svc is not None:
+                    try:
+                        job_svc.fail_job(
+                            db,
+                            job_id,
+                            "Kubernetes cluster unreachable and local fallback is disabled. "
+                            "Check: kubectl config current-context, KubeRay operator "
+                            "(kubectl get crd rayjobs.ray.io), and image mlsecops-ray:latest.",
+                        )
+                    except Exception:
+                        pass
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Training cluster is unavailable and local fallback execution is disabled for security.",
+                    detail=(
+                        "Training cluster is unavailable and local fallback execution is disabled. "
+                        "Check: kubectl config current-context points at your cluster, "
+                        "KubeRay operator is installed (kubectl get crd rayjobs.ray.io), "
+                        "and image mlsecops-ray:latest is built/loaded."
+                    ),
                 )
 
             temp_job_dir = tempfile.mkdtemp(prefix=f"rayjob-{job_id}-")

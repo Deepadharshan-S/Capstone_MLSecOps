@@ -4,6 +4,7 @@ import logging
 import subprocess
 import threading
 import shutil
+import tempfile
 from app.core.config import settings
 from app.core.logging_config import log_audit_event
 
@@ -288,6 +289,9 @@ def submit_rayjob_to_k8s(
         return False
 
 
+RESULTS_DIR = os.path.join(tempfile.gettempdir(), "mlsecops-training-results")
+
+
 def spawn_local_ray_subprocess(
     cmd: list[str],
     temp_job_dir: str,
@@ -300,8 +304,10 @@ def spawn_local_ray_subprocess(
     """
     Spawns an asynchronous background thread executing Ray training locally as a fallback.
     Ensures environment variable propagation and temporary directory cleanup.
+    Writes results to a persistent location for job status polling.
     """
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
     def run_training_subprocess():
         try:
@@ -326,6 +332,18 @@ def spawn_local_ray_subprocess(
                 s3_svc.put_log_content("mlflow", f"logs/{job_id}/training.log", output_log)
             except Exception as log_err:
                 logger.warning(f"Failed to upload local training log for {job_id}: {log_err}")
+
+            # Copy results from job_dir to persistent location if available
+            try:
+                src_results = os.path.join(temp_job_dir, "results.json")
+                RESULTS_DIR = os.path.join(tempfile.gettempdir(), "sentinelml_results")
+                os.makedirs(RESULTS_DIR, exist_ok=True)
+                dst_results = os.path.join(RESULTS_DIR, f"{job_id}.json")
+                if os.path.exists(src_results):
+                    import shutil
+                    shutil.copy2(src_results, dst_results)
+            except Exception as res_err:
+                logger.debug(f"Could not persist local results json: {res_err}")
 
             try:
                 from app.db.session import SessionLocal
@@ -386,5 +404,5 @@ def spawn_local_ray_subprocess(
         finally:
             shutil.rmtree(temp_job_dir, ignore_errors=True)
 
-    thread = threading.Thread(target=run_training_subprocess)
+    thread = threading.Thread(target=run_training_subprocess, daemon=True)
     thread.start()

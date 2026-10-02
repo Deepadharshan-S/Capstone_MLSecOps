@@ -12,6 +12,7 @@ from app.core.telemetry import (
     trace_ml_operation,
     record_deployment_operation,
 )
+from app.core.mlflow_loader import load_mlflow
 from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
 from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
@@ -74,7 +75,7 @@ class ModelDeploymentService:
         replicas: Optional[int] = 1,
         db: Optional[Session] = None,
     ) -> dict:
-        from mlflow.tracking import MlflowClient
+        _, MlflowClient = load_mlflow()
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         deployment_id = uuid.uuid4().hex[:12]
@@ -290,7 +291,7 @@ class ModelDeploymentService:
         reconciling them with live Kubernetes RayService status using a single batch query.
         Also scans legacy MLflow model version tags for backwards compatibility.
         """
-        from mlflow.tracking import MlflowClient
+        _, MlflowClient = load_mlflow()
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         deployments = []
@@ -584,7 +585,7 @@ class ModelDeploymentService:
         user: User,
         db: Optional[Session] = None,
     ) -> dict:
-        from mlflow.tracking import MlflowClient
+        _, MlflowClient = load_mlflow()
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         rayservice_name = None
@@ -711,6 +712,47 @@ class ModelDeploymentService:
                         logger.debug(f"Restart pod deletion note ({target}): {restart_pod_err}")
             except Exception as k8s_restart_err:
                 logger.warning(f"Error during K8s pod restart for deployment {deployment_id}: {k8s_restart_err}")
+
+        elif action.lower() == "rollback":
+            # Re-point the environment alias to the previous model version
+            # and mark the rolled-back version stopped.
+            if not matched_items:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Deployment '{deployment_id}' not found in MLflow registry.",
+                )
+            m_name, m_ver, _, _ = matched_items[0]
+            try:
+                all_versions = mlflow_client.search_model_versions(
+                    f"name = '{m_name}'", order_by=["version_number DESC"]
+                )
+                nums = sorted({int(v.version) for v in all_versions})
+                prev = str([n for n in nums if n < int(m_ver)][-1])
+            except (IndexError, ValueError) as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No previous version to roll back to for model '{m_name}'.",
+                ) from e
+            try:
+                env = None
+                try:
+                    cur = mlflow_client.get_model_version(m_name, str(m_ver))
+                    env = (cur.tags or {}).get("deployment.environment", "staging")
+                except Exception:
+                    env = "staging"
+                alias = "production" if (env or "staging").lower() == "production" else "staging"
+                mlflow_client.set_registered_model_alias(name=m_name, alias=alias, version=prev)
+                mlflow_client.set_model_version_tag(m_name, str(m_ver), "deployment.status", "stopped")
+                mlflow_client.set_model_version_tag(
+                    m_name, prev, "deployment.status", "running"
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Rollback failed: {str(e)}",
+                ) from e
 
         log_audit_event(
             "deployment_management",

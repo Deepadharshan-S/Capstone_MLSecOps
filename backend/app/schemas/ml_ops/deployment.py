@@ -1,12 +1,12 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal, Optional
+from pydantic import BaseModel, Field
 
 
 class DeployModelSchema(BaseModel):
     model_id: str
-    environment: str = "staging"
+    environment: Literal["staging", "production"] = "staging"
     version: Optional[str] = "latest"
-    replicas: Optional[int] = 1
+    replicas: Optional[int] = Field(default=1, ge=1, le=32)
 
 
 class ManageDeploymentSchema(BaseModel):
