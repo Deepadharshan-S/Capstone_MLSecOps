@@ -1,0 +1,43 @@
+// Central icon registry. Pages import from here rather than from
+// 'lucide-react' directly so icon choices stay consistent app-wide.
+import {
+  Activity, AlertCircle, AlertTriangle, Archive, ArrowLeft, ArrowRight,
+  ArrowUp, ArrowDown, BarChart3, Bell, Box, Boxes, Braces, BrainCircuit,
+  Briefcase, Building2, Check, CheckCircle2, ChevronDown, ChevronLeft,
+  ChevronRight, ChevronsUpDown, Circle, CircleSlash, ClipboardList, Clock,
+  Cloud, Code2, Coins, Columns3, Command, Copy, Database, DatabaseZap,
+  Download, ExternalLink, Eye, FileBarChart, FileJson, FileSpreadsheet,
+  FileText, Filter, FlaskConical, FolderTree, Gauge, GitBranch,
+  GitCompareArrows, GitCommitHorizontal, Globe, Grid2X2, HardDrive, Hash,
+  History, Home, Info, KeyRound, Layers, LayoutDashboard, LayoutGrid,
+  LifeBuoy, Link2, ListChecks, ListTree, Loader2, Lock, LogOut, Mail, Menu,
+  MessageSquare, Minus, Monitor, Moon, MoreHorizontal, MoveRight, Network,
+  Package, Paintbrush, PanelLeftClose, PanelLeftOpen, Pause, Pencil, Play,
+  Plug, Plus, RefreshCw, Rocket, RotateCcw, Route, Save, Scale, Search, Send,
+  Server, Settings, Shield, ShieldCheck, Shuffle, SlidersHorizontal, Sparkles,
+  Square, SquareStack, Star, Store, Sun, Table2, Tag, Target, Terminal,
+  Trash2, TrendingDown, TrendingUp, Undo2, Upload, User, UserCheck, UserPlus,
+  Users, Variable, Wifi, X, XCircle, Zap, EyeOff, Inbox, ChevronsLeft,
+  ChevronsRight, PieChart, LineChart, Radar, Percent, Calendar, CalendarDays,
+} from 'lucide-react'
+
+export {
+  Activity, AlertCircle, AlertTriangle, Archive, ArrowLeft, ArrowRight,
+  ArrowUp, ArrowDown, BarChart3, Bell, Box, Boxes, Braces, BrainCircuit,
+  Briefcase, Building2, Check, CheckCircle2, ChevronDown, ChevronLeft,
+  ChevronRight, ChevronsUpDown, Circle, CircleSlash, ClipboardList, Clock,
+  Cloud, Code2, Coins, Columns3, Command, Copy, Database, DatabaseZap,
+  Download, ExternalLink, Eye, FileBarChart, FileJson, FileSpreadsheet,
+  FileText, Filter, FlaskConical, FolderTree, Gauge, GitBranch,
+  GitCompareArrows, GitCommitHorizontal, Globe, Grid2X2, HardDrive, Hash,
+  History, Home, Info, KeyRound, Layers, LayoutDashboard, LayoutGrid,
+  LifeBuoy, Link2, ListChecks, ListTree, Loader2, Lock, LogOut, Mail, Menu,
+  MessageSquare, Minus, Monitor, Moon, MoreHorizontal, MoveRight, Network,
+  Package, Paintbrush, PanelLeftClose, PanelLeftOpen, Pause, Pencil, Play,
+  Plug, Plus, RefreshCw, Rocket, RotateCcw, Route, Save, Scale, Search, Send,
+  Server, Settings, Shield, ShieldCheck, Shuffle, SlidersHorizontal, Sparkles,
+  Square, SquareStack, Star, Store, Sun, Table2, Tag, Target, Terminal,
+  Trash2, TrendingDown, TrendingUp, Undo2, Upload, User, UserCheck, UserPlus,
+  Users, Variable, Wifi, X, XCircle, Zap, EyeOff, Inbox, ChevronsLeft,
+  ChevronsRight, PieChart, LineChart, Radar, Percent, Calendar, CalendarDays,
+}

@@ -1,0 +1,134 @@
+/* ============================================================
+   MLSecOps Design Tokens — refined light enterprise
+   Single source of truth for color, type, space, radius, motion.
+   ============================================================ */
+
+:root {
+  /* ── Surfaces ─────────────────────────────────────────── */
+  --bg-canvas:   #f6f7f9;
+  --bg-surface:  #ffffff;
+  --bg-subtle:   #f1f3f7;
+  --bg-muted:    #e8ebf1;
+  --bg-hover:    #f4f6fa;
+  --bg-active:   #eaeef6;
+  --bg-inverse:  #0b1220;
+  --bg-overlay:  rgba(11, 18, 32, 0.42);
+
+  /* ── Text ─────────────────────────────────────────────── */
+  --text-primary:   #0b1220;
+  --text-secondary: #475569;
+  /* #7b8798 measured 3.64:1 on white — below WCAG AA (4.5) for the label /
+     caption sizes it is used at. #64707f keeps the three-step text hierarchy
+     while clearing 4.5:1 on both --surface and --surface-muted. */
+  --text-tertiary:  #64707f;
+  --text-disabled:  #a9b2c0;
+  --text-inverse:   #ffffff;
+
+  /* ── Borders ──────────────────────────────────────────── */
+  --border:        #e4e8ef;
+  --border-strong: #d2d8e3;
+  --border-focus:  #a5b4fc;
+
+  /* ── Accent (indigo) ──────────────────────────────────── */
+  --accent:        #4f46e5;
+  --accent-hover:  #4338ca;
+  --accent-active: #3730a3;
+  --accent-soft:   #eef2ff;
+  --accent-softer: #f7f8ff;
+  --accent-border: #c7d2fe;
+  --accent-text:   #4338ca;
+
+  /* ── Semantic ─────────────────────────────────────────── */
+  --success:       #0e9f6e;
+  --success-soft:  #e8f7f1;
+  --success-border:#b5e3d1;
+  --success-text:  #047857;
+
+  --warning:       #d97706;
+  --warning-soft:  #fdf4e7;
+  --warning-border:#f5d9ae;
+  --warning-text:  #b45309;
+
+  --danger:        #dc2626;
+  --danger-soft:   #fdecec;
+  --danger-border: #f6c9c9;
+  --danger-text:   #b91c1c;
+
+  --info:          #0284c7;
+  --info-soft:     #e7f4fc;
+  --info-border:   #bae0f5;
+  --info-text:     #0369a1;
+
+  --purple:        #7c3aed;
+  --purple-soft:   #f3ecfe;
+
+  /* ── Type ─────────────────────────────────────────────── */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --fs-2xs: 10px;
+  --fs-xs:  11px;
+  --fs-sm:  12px;
+  --fs-md:  13px;
+  --fs-lg:  14px;
+  --fs-xl:  16px;
+  --fs-2xl: 20px;
+  --fs-3xl: 26px;
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semibold:600;
+  --fw-bold:    700;
+
+  --lh-tight: 1.25;
+  --lh-normal:1.55;
+
+  /* ── Space (8px grid) ─────────────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+  --sp-9: 56px;
+
+  /* ── Radius ───────────────────────────────────────────── */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-2xl:20px;
+  --r-full:999px;
+
+  /* ── Shadows ──────────────────────────────────────────── */
+  --sh-xs: 0 1px 2px rgba(11, 18, 32, .05);
+  --sh-sm: 0 1px 2px rgba(11, 18, 32, .06), 0 1px 3px rgba(11, 18, 32, .04);
+  --sh-md: 0 2px 4px rgba(11, 18, 32, .05), 0 6px 16px rgba(11, 18, 32, .06);
+  --sh-lg: 0 8px 24px rgba(11, 18, 32, .10), 0 2px 6px rgba(11, 18, 32, .05);
+  --sh-focus: 0 0 0 3px rgba(79, 70, 229, .16);
+
+  /* ── Layout ───────────────────────────────────────────── */
+  --sidebar-w: 248px;
+  --sidebar-collapsed-w: 68px;
+  --topbar-h:  60px;
+  --content-max: 1440px;
+
+  /* ── Motion ───────────────────────────────────────────── */
+  --t-fast: 120ms;
+  --t-base: 160ms;
+  --t-slow: 220ms;
+  --ease:    cubic-bezier(.4, 0, .2, 1);
+  --ease-out:cubic-bezier(0, 0, .2, 1);
+
+  /* ── Chart series ─────────────────────────────────────── */
+  --c-1: #4f46e5;
+  --c-2: #0284c7;
+  --c-3: #0e9f6e;
+  --c-4: #d97706;
+  --c-5: #7c3aed;
+  --c-6: #dc2626;
+  --grid-line: rgba(11, 18, 32, .07);
+}

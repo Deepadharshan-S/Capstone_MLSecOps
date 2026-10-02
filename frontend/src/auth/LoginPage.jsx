@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import { useAuth } from './AuthContext'
 import { ApiError } from '../api/client'
-import './LoginPage.css'
+import {
+  ShieldCheck, Database, Rocket, FlaskConical, Eye, EyeOff, Check, X,
+  ArrowRight, Boxes, Users,
+} from '../components/icons.jsx'
+import '../styles/auth.css'
 
 // Mirrors backend/app/core/security.py validate_password_strength().
-// Checking client-side just gives faster feedback — the backend is the
+// Client-side checking just gives faster feedback — the backend is the
 // real gatekeeper and re-validates on every /auth/register call.
 function checkPasswordStrength(password) {
   const issues = []
@@ -17,141 +21,266 @@ function checkPasswordStrength(password) {
   return issues
 }
 
-export default function LoginPage() {
+const RULES = [
+  { label: '8+ characters', test: (p) => p.length >= 8 },
+  { label: 'Uppercase', test: (p) => /[A-Z]/.test(p) },
+  { label: 'Lowercase', test: (p) => /[a-z]/.test(p) },
+  { label: 'Digit', test: (p) => /\d/.test(p) },
+  { label: 'Special char', test: (p) => /[!@#$%^&*(),.?":{}|<>]/.test(p) },
+  { label: 'Max 64 chars', test: (p) => p.length > 0 && p.length <= 64 },
+]
+
+// Seeded in app/db/seed_db.py — each role gets its own password, so the
+// fill buttons must carry the matching one (they used to all send Admin's).
+const DEMO_ACCOUNTS = [
+  { username: 'admin_user', password: 'AdminPassword123!', role: 'Admin', icon: ShieldCheck },
+  { username: 'ds_user', password: 'DataScientist123!', role: 'Data Sci', icon: Database },
+  { username: 'mle_user', password: 'MLEngineerPassword123!', role: 'ML Eng', icon: Rocket },
+  { username: 'viewer_user', password: 'ViewerPassword123!', role: 'Viewer', icon: Eye },
+]
+
+export default function LoginPage({ initialNotice = null }) {
   const { login, register } = useAuth()
   const [mode, setMode] = useState('login') // 'login' | 'register'
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState(null)
+  const [confirm, setConfirm] = useState('')
+  const [showPw, setShowPw] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(initialNotice)
   const [notice, setNotice] = useState(null)
 
-  const passwordIssues = mode === 'register' && password ? checkPasswordStrength(password) : []
+  const rules = checkPasswordStrength(password)
+  const pwOk = rules.length === 0
 
-  async function handleSubmit(e) {
+  async function submit(e) {
     e.preventDefault()
     setError(null)
     setNotice(null)
 
-    if (mode === 'register' && passwordIssues.length > 0) {
-      setError(`Password needs ${passwordIssues.join(', ')}.`)
-      return
+    if (mode === 'register') {
+      if (!pwOk) { setError('Password does not meet all requirements yet.'); return }
+      if (password !== confirm) { setError('Passwords do not match.'); return }
     }
+    if (!username.trim() || !password) { setError('Username and password are required.'); return }
 
-    setSubmitting(true)
+    setBusy(true)
     try {
       if (mode === 'login') {
-        await login(username, password)
+        await login(username.trim(), password)
       } else {
-        await register(username, email, password)
-        setNotice('Account created. You can log in now.')
-        setMode('login')
-        setPassword('')
+        await register(username.trim(), email.trim() || `${username.trim()}@example.com`, password)
+        // Auto sign-in after successful registration.
+        await login(username.trim(), password)
       }
     } catch (err) {
-      setError(describeError(err))
+      setError(err instanceof ApiError ? err.message : 'Unexpected error. Please try again.')
     } finally {
-      setSubmitting(false)
+      setBusy(false)
     }
   }
 
-  function describeError(err) {
-    if (!(err instanceof ApiError)) return 'Network error. Please try again.'
-    if (err.status === 429) return 'Too many attempts. Please wait a minute and try again.'
-    if (err.status === 403) return err.message // account-locked message from backend
-    if (err.status === 400) return err.message // generic bad credentials / weak password / collision
-    return err.message || 'Something went wrong.'
+  function switchMode(next) {
+    setMode(next)
+    setError(null)
+    setNotice(null)
+    setPassword('')
+    setConfirm('')
+  }
+
+  function fillDemo(d) {
+    setMode('login')
+    setError(null)
+    setNotice(null)
+    setUsername(d.username)
+    setPassword(d.password)
+    setNotice(`Credentials filled for ${d.username} — press Sign in.`)
   }
 
   return (
     <div className="auth-page">
-      <div className="auth-card">
-        <div className="auth-brand">
-          <div className="auth-logo">M</div>
-          <span>ML<b>SecOps</b></span>
+      {/* ── Brand panel ─────────────────────────────── */}
+      <aside className="auth-brand-panel">
+        <div className="auth-brand-top">
+          <div className="auth-brand-mark"><Boxes size={19} /></div>
+          <div className="auth-brand-name">MLSecOps <span>Platform</span></div>
         </div>
 
-        <h1 className="auth-title">{mode === 'login' ? 'Sign in' : 'Create an account'}</h1>
-        <p className="auth-subtitle">
-          {mode === 'login'
-            ? 'Access the MLSecOps pipeline console.'
-            : 'New accounts start with viewer access.'}
-        </p>
+        <div className="auth-brand-center">
+          <h1 className="auth-brand-title">
+            Governed ML pipelines,<br />from dataset to deployment.
+          </h1>
+          <p className="auth-brand-lede">
+            A single workspace for training, versioning, and shipping models — with
+            lakeFS-backed dataset lineage, MLflow experiment tracking, and RBAC
+            enforced at every step.
+          </p>
 
-        {error && <div className="auth-alert auth-alert-error">{error}</div>}
-        {notice && <div className="auth-alert auth-alert-ok">{notice}</div>}
+          <div className="auth-feature-list">
+            <div className="auth-feature">
+              <span className="auth-feature-icon"><Database size={14} /></span>
+              Version-controlled datasets with branches, tags &amp; rollback
+            </div>
+            <div className="auth-feature">
+              <span className="auth-feature-icon"><FlaskConical size={14} /></span>
+              Automated &amp; custom training runs with live metric streams
+            </div>
+            <div className="auth-feature">
+              <span className="auth-feature-icon"><Rocket size={14} /></span>
+              One-click deployment with drift monitoring and instant rollback
+            </div>
+            <div className="auth-feature">
+              <span className="auth-feature-icon"><Users size={14} /></span>
+              Role-based access: admin, data scientist, ML engineer, viewer
+            </div>
+          </div>
+        </div>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <label className="auth-field">
-            <span>Username or email</span>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              required
-              minLength={mode === 'register' ? 3 : undefined}
-              maxLength={mode === 'register' ? 50 : undefined}
-            />
-          </label>
+        <div className="auth-brand-foot">
+          Capstone Project · MLSecOps Platform v1.0
+        </div>
+      </aside>
 
-          {mode === 'register' && (
-            <label className="auth-field">
-              <span>Email</span>
+      {/* ── Form panel ──────────────────────────────── */}
+      <main className="auth-form-panel">
+        <div className="auth-card">
+          <div className="auth-mobile-brand">
+            <div className="auth-mobile-mark">M</div>
+            <div className="auth-mobile-name">ML<span>SecOps</span></div>
+          </div>
+
+          <h2 className="auth-title">{mode === 'login' ? 'Welcome back' : 'Create account'}</h2>
+          <p className="auth-subtitle">
+            {mode === 'login'
+              ? 'Sign in to your workspace to continue.'
+              : 'Register a new account. An admin assigns your role.'}
+          </p>
+
+          {error && (
+            <div className="alert alert-error mb-4" role="alert">
+              <X size={15} />
+              <div className="alert-body">{error}</div>
+            </div>
+          )}
+          {notice && (
+            <div className="alert alert-info mb-4" role="status">
+              <Check size={15} />
+              <div className="alert-body">{notice}</div>
+            </div>
+          )}
+
+          <form className="auth-form" onSubmit={submit} noValidate>
+            <div className="input-group">
+              <label className="input-label" htmlFor="login-username">Username <span className="req">*</span></label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
+                id="login-username"
+                className="input-field"
+                autoComplete="username"
+                placeholder="e.g. admin_user"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 required
               />
-            </label>
-          )}
+            </div>
 
-          <label className="auth-field">
-            <span>Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              required
-              minLength={8}
-              maxLength={64}
-            />
-          </label>
+            {mode === 'register' && (
+              <div className="input-group">
+                <label className="input-label" htmlFor="login-email">Email</label>
+                <input
+                  id="login-email"
+                  className="input-field"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            )}
 
-          {mode === 'register' && password && (
-            <ul className="auth-password-hints">
-              {['at least 8 characters', 'no more than 64 characters', 'an uppercase letter',
-                'a lowercase letter', 'a digit', 'a special character'].map((rule) => (
-                <li key={rule} className={passwordIssues.includes(rule) ? 'unmet' : 'met'}>
-                  {passwordIssues.includes(rule) ? '○' : '✓'} {rule}
-                </li>
-              ))}
-            </ul>
-          )}
+            <div className="input-group">
+              <label className="input-label" htmlFor="login-password">Password <span className="req">*</span></label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  id="login-password"
+                  className="input-field"
+                  type={showPw ? 'text' : 'password'}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ paddingRight: 40 }}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw((s) => !s)}
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                    color: 'var(--text-tertiary)', display: 'grid', placeItems: 'center',
+                  }}
+                >
+                  {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </div>
 
-          <button type="submit" className="auth-submit" disabled={submitting}>
-            {submitting
-              ? (mode === 'login' ? 'Signing in…' : 'Creating account…')
-              : (mode === 'login' ? 'Sign in' : 'Create account')}
+            {mode === 'register' && (
+              <>
+                <div className="input-group">
+                  <label className="input-label" htmlFor="login-confirm">Confirm password <span className="req">*</span></label>
+                  <input
+                    id="login-confirm"
+                    className="input-field"
+                    type={showPw ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    placeholder="••••••••"
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                  />
+                </div>
+
+                <div className="auth-rules">
+                  {RULES.map((r) => {
+                    const met = r.test(password)
+                    return (
+                      <span key={r.label} className={`auth-rule ${met ? 'is-met' : ''}`}>
+                        <span className="auth-rule-dot">{met ? <Check size={9} /> : ''}</span>
+                        {r.label}
+                      </span>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
+            <button type="submit" className="auth-submit" disabled={busy}>
+              {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+              {!busy && <ArrowRight size={15} style={{ display: 'inline', verticalAlign: '-2px', marginLeft: 6 }} />}
+            </button>
+          </form>
+
+          <button type="button" className="auth-switch" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+            {mode === 'login'
+              ? "Don't have an account? Register"
+              : 'Already registered? Sign in'}
           </button>
-        </form>
 
-        <button
-          type="button"
-          className="auth-switch"
-          onClick={() => {
-            setMode(mode === 'login' ? 'register' : 'login')
-            setError(null)
-            setNotice(null)
-          }}
-        >
-          {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
-        </button>
-      </div>
+          <div className="auth-demo">
+            <div className="auth-demo-label">Seeded demo accounts</div>
+            <div className="auth-demo-grid">
+              {DEMO_ACCOUNTS.map((d) => (
+                <button key={d.username} type="button" className="auth-demo-btn" onClick={() => fillDemo(d)}>
+                  <span className="demo-icon"><d.icon size={13} /></span>
+                  <span className="demo-role">{d.role}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   )
 }

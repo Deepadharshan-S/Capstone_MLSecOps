@@ -28,9 +28,28 @@ export class ApiError extends Error {
   }
 }
 
+// Fail fast instead of hanging forever (e.g. backend down, DB hang,
+// wrong port). Without this, AppShell stays on "Loading…" indefinitely.
+const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS) || 8000
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new ApiError('Backend unreachable. Please start the API server and try again.', 0)
+    }
+    throw new ApiError('Network error. Please check the API server is running.', 0)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function refreshAccessToken() {
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
+    refreshPromise = fetchWithTimeout(`${API_BASE}/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
     })
@@ -51,7 +70,7 @@ async function request(path, { method = 'GET', body, skipAuth = false, _retried 
   const headers = { 'Content-Type': 'application/json' }
   if (!skipAuth && accessToken) headers.Authorization = `Bearer ${accessToken}`
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     method,
     headers,
     credentials: 'include',
@@ -82,10 +101,71 @@ async function request(path, { method = 'GET', body, skipAuth = false, _retried 
   return data
 }
 
+async function uploadRequest(path, formData, _retried = false) {
+  const headers = {}
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: formData,
+  }, 30000)
+
+  if (res.status === 401 && !_retried) {
+    try {
+      await refreshAccessToken()
+      return uploadRequest(path, formData, true)
+    } catch {
+      setAccessToken(null)
+      throw new ApiError('Session expired. Please log in again.', 401)
+    }
+  }
+
+  let data = null
+  try {
+    data = await res.json()
+  } catch { /* empty body */ }
+
+  if (!res.ok) {
+    throw new ApiError(data?.detail || 'Upload failed.', res.status)
+  }
+  return data
+}
+
 export const api = {
-  get: (path) => request(path),
+  get: (path, opts = {}) => request(path, opts),
   post: (path, body, opts = {}) => request(path, { method: 'POST', body, ...opts }),
-  put: (path, body) => request(path, { method: 'PUT', body }),
+  put: (path, body, opts = {}) => request(path, { method: 'PUT', body, ...opts }),
+  del: (path, opts = {}) => request(path, { method: 'DELETE', ...opts }),
+  upload: (path, formData) => uploadRequest(path, formData),
+  // Authenticated binary download (file exports) — returns a Blob so the
+  // caller can decide how to hand it to the browser.
+  download: async (path, _retried = false) => {
+    const headers = {}
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+    const res = await fetchWithTimeout(`${API_BASE}${path}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    }, 60000)
+
+    if (res.status === 401 && !_retried) {
+      try {
+        await refreshAccessToken()
+        return api.download(path, true)
+      } catch {
+        setAccessToken(null)
+        throw new ApiError('Session expired. Please log in again.', 401)
+      }
+    }
+    if (!res.ok) {
+      let data = null
+      try { data = await res.json() } catch { /* empty body */ }
+      throw new ApiError(data?.detail || 'Download failed.', res.status)
+    }
+    return res.blob()
+  },
 }
 
 export { API_BASE }

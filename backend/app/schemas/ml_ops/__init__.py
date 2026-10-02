@@ -2,10 +2,14 @@ from app.schemas.ml_ops.training import (
     TrainModelSchema,
     TrainPipelineSchema,
     TrainModelResponse,
+<<<<<<< Updated upstream
     RayJobSummary,
     RayJobListResponse,
     RayJobDetailResponse,
     RayJobLogsResponse,
+=======
+    JobStatusResponse,
+>>>>>>> Stashed changes
 )
 from app.schemas.ml_ops.deployment import (
     DeployModelSchema,
@@ -33,10 +37,14 @@ __all__ = [
     "TrainModelSchema",
     "TrainPipelineSchema",
     "TrainModelResponse",
+<<<<<<< Updated upstream
     "RayJobSummary",
     "RayJobListResponse",
     "RayJobDetailResponse",
     "RayJobLogsResponse",
+=======
+    "JobStatusResponse",
+>>>>>>> Stashed changes
     "DeployModelSchema",
     "ManageDeploymentSchema",
     "DeployModelResponse",

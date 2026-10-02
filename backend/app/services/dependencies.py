@@ -30,9 +30,14 @@ from app.services.ml_ops import (
     ModelDeploymentService,
     ModelServingService,
     ModelRegistryService,
+<<<<<<< Updated upstream
     RayJobService,
     TrainingLogService,
     TrainingJobService,
+=======
+    JobService,
+    job_service,
+>>>>>>> Stashed changes
 )
 
 # Shared Singletons
@@ -159,6 +164,7 @@ def get_model_registry_service() -> ModelRegistryService:
     return _ml_ops_service.registry
 
 
+<<<<<<< Updated upstream
 def get_training_job_repository(db: Session = Depends(get_db)) -> TrainingJobRepository:
     """Returns a TrainingJobRepository bound to the current DB session."""
     return TrainingJobRepository(db)
@@ -198,3 +204,9 @@ def get_deployment_repository(db: Session = Depends(get_db)) -> DeploymentReposi
 def get_audit_log_repository(db: Session = Depends(get_db)) -> AuditLogRepository:
     """Returns an AuditLogRepository bound to the current DB session."""
     return AuditLogRepository(db)
+=======
+def get_job_service() -> JobService:
+    """Returns the singleton JobService instance."""
+    return job_service
+
+>>>>>>> Stashed changes

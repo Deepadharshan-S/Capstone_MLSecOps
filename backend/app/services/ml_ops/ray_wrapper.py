@@ -119,7 +119,74 @@ def calculate_metrics(model, data_path, target_col=None) -> tuple:
         metrics["f1_score"] = float(f1_score(y, y_pred, average="weighted", zero_division=0))
         metrics["dataset_samples"] = float(len(df))
         metrics["dataset_features"] = float(X.shape[1])
-        
+
+        # Confusion matrix
+        try:
+            from sklearn.metrics import confusion_matrix
+            import numpy as np
+            cm = confusion_matrix(y, y_pred)
+            if cm.shape == (2, 2):
+                metrics["confusion_matrix"] = {
+                    "tn": int(cm[0][0]),
+                    "fp": int(cm[0][1]),
+                    "fn": int(cm[1][0]),
+                    "tp": int(cm[1][1]),
+                }
+            else:
+                metrics["confusion_matrix"] = {"matrix": cm.tolist()}
+        except Exception as cm_err:
+            print(f"Notice: Could not compute confusion matrix: {cm_err}")
+
+        # Feature importance
+        try:
+            import numpy as np
+            feature_names = list(X.columns) if hasattr(X, "columns") else [f"feature_{i}" for i in range(X.shape[1])]
+            importances = None
+            # Tree-based models
+            if hasattr(model, "feature_importances_"):
+                importances = model.feature_importances_
+            # Pipeline with tree-based final estimator
+            elif hasattr(model, "steps") and isinstance(model.steps, list):
+                final_est = model.steps[-1][1]
+                if hasattr(final_est, "feature_importances_"):
+                    importances = final_est.feature_importances_
+                elif hasattr(final_est, "coef_"):
+                    importances = np.abs(final_est.coef_).flatten()
+            # Linear models
+            elif hasattr(model, "coef_"):
+                importances = np.abs(model.coef_).flatten()
+
+            if importances is not None and len(importances) == len(feature_names):
+                # Normalize and sort
+                total = float(np.sum(importances)) if np.sum(importances) > 0 else 1.0
+                normed = (importances / total).tolist()
+                pairs = sorted(zip(feature_names, normed), key=lambda x: x[1], reverse=True)
+                metrics["feature_importance"] = [
+                    {"name": name, "value": round(val, 4)}
+                    for name, val in pairs[:15]
+                ]
+        except Exception as fi_err:
+            print(f"Notice: Could not compute feature importance: {fi_err}")
+
+        # ROC curve (binary classification only)
+        try:
+            from sklearn.metrics import roc_curve
+            import numpy as np
+            unique_classes = np.unique(y)
+            if len(unique_classes) == 2 and hasattr(model, "predict_proba"):
+                proba = model.predict_proba(X)[:, 1]
+                fpr, tpr, _ = roc_curve(y, proba)
+                # Subsample to ~20 points for clean chart
+                step = max(1, len(fpr) // 20)
+                metrics["roc_curve"] = [
+                    {"fpr": round(float(fpr[i]), 4), "tpr": round(float(tpr[i]), 4)}
+                    for i in range(0, len(fpr), step)
+                ]
+                if metrics["roc_curve"][-1]["fpr"] < 1.0:
+                    metrics["roc_curve"].append({"fpr": 1.0, "tpr": 1.0})
+        except Exception as roc_err:
+            print(f"Notice: Could not compute ROC curve: {roc_err}")
+
         print(f"Calculated metrics: {metrics}")
     except Exception as e:
         print(f"Error calculating metrics on the Ray side: {str(e)}")
@@ -750,6 +817,26 @@ def main():
                 mlflow.pyfunc.log_model(**log_model_kwargs)
 
             print(f"Model successfully registered under name '{args.output_model_name}' in MLflow.")
+
+        # Write results to JSON file for job status polling
+        try:
+            results_path = os.path.join(args.job_dir, "results.json")
+            results_data = {
+                "status": "completed",
+                "job_id": args.job_id,
+                "model_name": args.output_model_name,
+            }
+            # Merge in computed metrics if available
+            if 'metrics' in dir() and isinstance(metrics, dict):
+                results_data.update(metrics)
+            elif 'champion_metrics' in dir() and isinstance(champion_metrics, dict):
+                results_data.update(champion_metrics)
+            with open(results_path, "w") as f:
+                json.dump(results_data, f, indent=2, default=str)
+            print(f"Results written to: {results_path}")
+        except Exception as write_err:
+            print(f"Notice: Could not write results file: {write_err}")
+
     except Exception as e:
         print(f"Error registering model in MLflow: {str(e)}")
         sys.exit(1)

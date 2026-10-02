@@ -1,6 +1,11 @@
+<<<<<<< Updated upstream
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+=======
+from contextlib import asynccontextmanager
+
+>>>>>>> Stashed changes
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.mlflow_loader import warm_mlflow
 from app.db.session import get_db
 from app.api import auth, users, ml_ops
 from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
@@ -61,6 +67,17 @@ async def lifespan(app: FastAPI):
             logger.info("Automated token cleanup background task stopped.")
 
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Import mlflow once, single-threaded, before uvicorn accepts any request.
+    # Its first import is not thread-safe: a cold dashboard load otherwise races
+    # it from three handlers at once and leaves a half-initialized mlflow.tracking
+    # in sys.modules that only a restart can clear.
+    warm_mlflow()
+    yield
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -69,7 +86,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
+<<<<<<< Updated upstream
     allow_origins=settings.CORS_ORIGINS,
+=======
+    allow_origins=[
+        origin.strip()
+        for origin in settings.ALLOWED_ORIGINS.split(",")
+        if origin.strip()
+    ],
+>>>>>>> Stashed changes
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

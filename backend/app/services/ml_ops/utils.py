@@ -4,6 +4,7 @@ import logging
 import subprocess
 import threading
 import shutil
+import tempfile
 from app.core.config import settings
 from app.core.logging_config import log_audit_event
 
@@ -288,6 +289,9 @@ def submit_rayjob_to_k8s(
         return False
 
 
+RESULTS_DIR = os.path.join(tempfile.gettempdir(), "mlsecops-training-results")
+
+
 def spawn_local_ray_subprocess(
     cmd: list[str],
     temp_job_dir: str,
@@ -300,8 +304,10 @@ def spawn_local_ray_subprocess(
     """
     Spawns an asynchronous background thread executing Ray training locally as a fallback.
     Ensures environment variable propagation and temporary directory cleanup.
+    Writes results to a persistent location for job status polling.
     """
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
     def run_training_subprocess():
         try:
@@ -318,6 +324,7 @@ def spawn_local_ray_subprocess(
             env["LAKEFS_ENDPOINT"] = settings.LAKEFS_ENDPOINT
             env["LAKEFS_ACCESS_KEY_ID"] = scoped_creds["lakefs_access_key_id"]
             env["LAKEFS_SECRET_ACCESS_KEY"] = scoped_creds["lakefs_secret_access_key"]
+<<<<<<< Updated upstream
             res = subprocess.run(cmd, capture_output=True, text=True, env=env)
             output_log = f"{res.stdout}\n{res.stderr}".strip()
             try:
@@ -377,6 +384,34 @@ def spawn_local_ray_subprocess(
                         repo.save(tj)
             except Exception as db_rec_err:
                 logger.warning(f"Failed to record subprocess error for job {job_id}: {db_rec_err}")
+=======
+            subprocess.run(cmd, check=True, env=env)
+
+            # Copy results from job_dir to persistent location
+            src_results = os.path.join(temp_job_dir, "results.json")
+            dst_results = os.path.join(RESULTS_DIR, f"{job_id}.json")
+            if os.path.exists(src_results):
+                shutil.copy2(src_results, dst_results)
+            else:
+                # Write a minimal success result if the wrapper didn't produce one
+                import json as _json
+                with open(dst_results, "w") as f:
+                    _json.dump({"status": "completed", "job_id": job_id}, f)
+
+            log_audit_event(
+                "model_training_completed",
+                username,
+                None,
+                success_description,
+            )
+        except Exception as subprocess_err:
+            # Write failure result
+            import json as _json
+            dst_results = os.path.join(RESULTS_DIR, f"{job_id}.json")
+            with open(dst_results, "w") as f:
+                _json.dump({"status": "failed", "job_id": job_id, "error": str(subprocess_err)}, f)
+
+>>>>>>> Stashed changes
             log_audit_event(
                 "model_training_error",
                 username,
@@ -386,5 +421,5 @@ def spawn_local_ray_subprocess(
         finally:
             shutil.rmtree(temp_job_dir, ignore_errors=True)
 
-    thread = threading.Thread(target=run_training_subprocess)
+    thread = threading.Thread(target=run_training_subprocess, daemon=True)
     thread.start()
