@@ -103,7 +103,6 @@ class ModelRegistryService:
 
         return {"models": models_list}
 
-<<<<<<< Updated upstream
     def retrieve_model_detail(self, model_name: str, user: User) -> dict:
         """
         Retrieves detailed version history, tags, metrics, and production alias
@@ -214,7 +213,6 @@ class ModelRegistryService:
             "versions": version_details,
         }
 
-=======
     def retrieve_model_versions(self, model_name: str) -> dict:
         """Returns every version of a registered model with stages, aliases and run metrics."""
         mlflow, MlflowClient = load_mlflow()
@@ -325,7 +323,6 @@ class ModelRegistryService:
                 }
             )
         return {"experiment_id": experiment_id, "runs": items}
->>>>>>> Stashed changes
 
     def perform_model_upload(
         self,

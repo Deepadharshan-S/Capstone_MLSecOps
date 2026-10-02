@@ -276,10 +276,7 @@ class ModelTrainingService:
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
         db: Optional[Session] = None,
-<<<<<<< Updated upstream
-=======
         job_svc=None,
->>>>>>> Stashed changes
     ) -> dict:
         """
         Submits an automated pipeline training job either via Kubernetes RayJob CRD

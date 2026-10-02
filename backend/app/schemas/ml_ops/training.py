@@ -84,7 +84,6 @@ class TrainModelResponse(BaseModel):
     model_name: Optional[str] = None
 
 
-<<<<<<< Updated upstream
 class RayJobSummary(BaseModel):
     job_id: str
     rayjob_name: str
@@ -138,7 +137,8 @@ class RayJobLogsResponse(BaseModel):
     logs: str
     lines_count: int
     tail_lines: Optional[int] = None
-=======
+
+
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -158,4 +158,3 @@ class JobStatusResponse(BaseModel):
     error_message: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
->>>>>>> Stashed changes

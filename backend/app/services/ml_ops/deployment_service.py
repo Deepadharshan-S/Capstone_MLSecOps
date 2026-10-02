@@ -8,12 +8,8 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
-<<<<<<< Updated upstream
-from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
-=======
 from app.core.mlflow_loader import load_mlflow
-from app.services.ml_ops.utils import get_scoped_training_credentials
->>>>>>> Stashed changes
+from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
 from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
 

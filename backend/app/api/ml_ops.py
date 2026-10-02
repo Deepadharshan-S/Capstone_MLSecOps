@@ -12,13 +12,10 @@ from app.schemas.ml_ops import (
     DeployModelSchema,
     ManageDeploymentSchema,
     TrainModelResponse,
-<<<<<<< Updated upstream
     RayJobListResponse,
     RayJobDetailResponse,
     RayJobLogsResponse,
-=======
     JobStatusResponse,
->>>>>>> Stashed changes
     ModelListResponse,
     DeployModelResponse,
     ManageDeploymentResponse,
@@ -35,24 +32,18 @@ from app.services.dependencies import (
     get_model_deployment_service,
     get_model_serving_service,
     get_model_registry_service,
-<<<<<<< Updated upstream
     get_training_job_service,
-=======
     get_job_service,
->>>>>>> Stashed changes
 )
 from app.services.ml_ops import (
     ModelTrainingService,
     ModelDeploymentService,
     ModelServingService,
     ModelRegistryService,
-<<<<<<< Updated upstream
     TrainingJobService,
     JobNotFoundError,
     JobAccessDeniedError,
-=======
     JobService,
->>>>>>> Stashed changes
 )
 
 router = APIRouter(prefix="", tags=["mlops"])
@@ -112,10 +103,7 @@ def train_pipeline(
         experiment_name=train_info.experiment_name,
         model_name=train_info.model_name,
         db=db,
-<<<<<<< Updated upstream
-=======
         job_svc=job_svc,
->>>>>>> Stashed changes
     )
 
 

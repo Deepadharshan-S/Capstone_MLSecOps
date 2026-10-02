@@ -1,11 +1,6 @@
-<<<<<<< Updated upstream
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-=======
-from contextlib import asynccontextmanager
-
->>>>>>> Stashed changes
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -86,15 +81,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-<<<<<<< Updated upstream
-    allow_origins=settings.CORS_ORIGINS,
-=======
     allow_origins=[
         origin.strip()
         for origin in settings.ALLOWED_ORIGINS.split(",")
         if origin.strip()
     ],
->>>>>>> Stashed changes
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

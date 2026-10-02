@@ -26,37 +26,25 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-<<<<<<< Updated upstream
     # Token Cleanup Background Task
     TOKEN_CLEANUP_INTERVAL_SECONDS: int = 3600
     TOKEN_CLEANUP_ENABLED: bool = True
 
-    # CORS config
-    CORS_ORIGINS: list[str] = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
-=======
-    # Set to true only when serving the API over HTTPS. When False the
-    # refresh cookie is sent over plain http://localhost, which is required
-    # for local development (browsers drop Secure cookies on http).
     COOKIE_SECURE: bool = False
 
-    # CORS allow-list: comma-separated browser origins.
-    #
-    # This is port-specific, and Vite silently moves to the next free port
-    # (5173 -> 5174) when its first choice is taken. That turns into an
-    # opaque "Network error. Please check the API server is running." in the
-    # UI, because the browser refuses the response outright. Listing the
-    # common dev ports keeps local development working; override this in
-    # .env for production, e.g.
-    #     ALLOWED_ORIGINS=https://app.example.com,https://www.example.com
     ALLOWED_ORIGINS: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"
         "http://localhost:5174,http://127.0.0.1:5174,"
         "http://localhost:5175,http://127.0.0.1:5175"
     )
->>>>>>> Stashed changes
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+    ]
 
     # lakeFS config
     LAKEFS_ENDPOINT: str
