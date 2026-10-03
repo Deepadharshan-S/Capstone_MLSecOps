@@ -57,4 +57,4 @@ echo "Seeding database..."
 $UV_CMD run python -m app.db.seed_db
 
 echo "Starting FastAPI application..."
-$UV_CMD run uvicorn app.main:app --host 127.0.0.1 --port 8001
+$UV_CMD run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
