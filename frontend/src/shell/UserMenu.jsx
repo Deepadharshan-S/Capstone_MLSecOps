@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
-  LogOut, Settings, User, Shield, ChevronDown, LifeBuoy, Mail,
+  LogOut, Database, User, Shield, ChevronDown, Mail,
 } from '../components/icons.jsx'
 
 const ROLE_TONE = {
@@ -73,7 +73,7 @@ export default function UserMenu() {
             <div className="dropdown-head-sub">{user.email || '—'}</div>
           </div>
 
-          <div style={{ padding: '4px 10px 8px' }}>
+          <div className="dropdown-meta">
             <span
               className="badge"
               style={{ background: tone.bg, color: tone.fg }}
@@ -86,15 +86,12 @@ export default function UserMenu() {
             <User size={15} /> Profile &amp; overview
           </button>
           <button className="dropdown-item" role="menuitem" onClick={() => { setOpen(false); navigate('/datasets') }}>
-            <Settings size={15} /> Workspace settings
-          </button>
-          <button className="dropdown-item" role="menuitem" onClick={() => { setOpen(false) }}>
-            <LifeBuoy size={15} /> Help &amp; docs
+            <Database size={15} /> Browse datasets
           </button>
 
           <div className="dropdown-divider" />
 
-          <div style={{ padding: '4px 10px 8px', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-tertiary)', fontSize: 11 }}>
+          <div className="dropdown-meta">
             <Mail size={12} />
             <span className="truncate">{user.email || 'no-email'}</span>
           </div>

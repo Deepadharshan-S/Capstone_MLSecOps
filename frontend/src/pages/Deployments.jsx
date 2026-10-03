@@ -62,7 +62,8 @@ export default function Deployments() {
     setActing(`${deployment_id}:${action}`)
     try {
       const res = await mlOpsApi.manageDeployment(deployment_id, action)
-      toast.success(`Deployment ${action}d`, res.message || `${deployment_id} · ${action}`)
+      const pastTense = action === 'stop' ? 'stopped' : action === 'restart' ? 'restarted' : 'rolled back'
+      toast.success(`Deployment ${pastTense}`, res.message || `${deployment_id} · ${action}`)
       deployments.refetch()
     } catch (err) {
       toast.error(`${action} failed`, err?.message)
@@ -105,9 +106,9 @@ export default function Deployments() {
       <Panel
         icon={Search}
         title="Deployments"
-        subtitle={`${rows.length} of ${all.length}`}
+        subtitle={`${rows.length} of ${all.length} deployments`}
         actions={
-          <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+          <div className="flex items-center gap-2 flex-wrap">
             <SearchInput value={query} onChange={setQuery} placeholder="Search…" />
             <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter deployments by status" style={{ width: 140 }}>
               <option value="">All statuses</option>
@@ -156,13 +157,13 @@ export default function Deployments() {
                 key: 'model_name', strong: true, header: 'Model',
                 render: (d) => (
                   <span className="flex items-center gap-2">
-                    <span className="row-glyph is-success" style={{ width: 26, height: 26 }}><Rocket size={13} /></span>
+                    <span className="row-glyph is-success sm"><Rocket size={13} /></span>
                     <span className="truncate" style={{ maxWidth: 180 }}>{d.model_name || d.deployment_id}</span>
                   </span>
                 ),
               },
               { key: 'version', width: 70, header: 'Version', render: (d) => <Badge tone="outline">v{d.version}</Badge> },
-              { key: 'environment', width: 120, header: 'Env', render: (d) => <Badge tone={d.environment === 'production' ? 'purple' : 'info'} sm>{d.environment}</Badge> },
+              { key: 'environment', width: 120, header: 'Environment', render: (d) => <Badge tone={d.environment === 'production' ? 'purple' : 'info'} sm>{d.environment}</Badge> },
               { key: 'status', width: 130, header: 'Status', render: (d) => <StatusBadge status={d.status} sm /> },
               {
                 key: 'k8s_status', width: 120, header: 'RayService',
@@ -178,23 +179,27 @@ export default function Deployments() {
               {
                 key: 'predict', actions: true, width: 250, header: <span className="sr-only">Actions</span>,
                 render: (d) => (
-                  <span className="flex items-center" style={{ justifyContent: 'flex-end', gap: 4 }}>
+                  <span className="flex items-center" style={{ justifyContent: 'flex-end' }}>
                     <Link
                       className="btn btn-ghost btn-xs"
                       to={`/predict?deployment=${encodeURIComponent(d.deployment_id)}`}
                     >
                       <Terminal size={12} /> Predict
                     </Link>
-                    {canManage && ['restart', 'rollback', 'stop'].map((a) => (
+                    {canManage && [
+                      { id: 'restart', label: 'Restart', icon: RotateCcw },
+                      { id: 'rollback', label: 'Roll back', icon: Layers },
+                      { id: 'stop', label: 'Stop', icon: Square },
+                    ].map((a) => (
                       <Button
-                        key={a}
-                        variant={a === 'stop' ? 'danger-ghost' : 'ghost'}
+                        key={a.id}
+                        variant={a.id === 'stop' ? 'danger-ghost' : 'ghost'}
                         size="xs"
-                        icon={a === 'restart' ? RotateCcw : a === 'rollback' ? Layers : Square}
-                        loading={acting === `${d.deployment_id}:${a}`}
-                        onClick={() => manage(d.deployment_id, a)}
+                        icon={a.icon}
+                        loading={acting === `${d.deployment_id}:${a.id}`}
+                        onClick={() => manage(d.deployment_id, a.id)}
                       >
-                        {a}
+                        {a.label}
                       </Button>
                     ))}
                   </span>
@@ -212,11 +217,11 @@ export default function Deployments() {
             ['Rollback', 'Promotes the previously deployed version of this model and restarts traffic on it.', Layers],
             ['Stop', 'Scales the service to zero and marks the deployment stopped in MLflow.', Square],
           ].map(([t, d, Icon]) => (
-            <div key={t} className="row-item" style={{ alignItems: 'flex-start' }}>
+            <div key={t} className="row-item is-top">
               <span className="row-glyph is-accent"><Icon size={15} /></span>
               <span className="row-info">
                 <span className="row-title">{t}</span>
-                <span className="row-sub" style={{ whiteSpace: 'normal' }}>{d}</span>
+                <span className="row-sub">{d}</span>
               </span>
             </div>
           ))}

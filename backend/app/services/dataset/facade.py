@@ -161,6 +161,9 @@ class DataService:
     def list_branches(self, db: Session, dataset_name: str) -> list[dict]:
         return self.versioning.list_branches(db=db, dataset_name=dataset_name)
 
+    def list_files(self, db: Session, dataset_name: str, ref_id: str) -> list[dict]:
+        return self.versioning.list_files(db=db, dataset_name=dataset_name, ref_id=ref_id)
+
     def delete_branch(
         self, db: Session, dataset_name: str, branch_name: str, username: str
     ) -> dict:

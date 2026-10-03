@@ -19,7 +19,7 @@ export const ChartTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   return (
     <div className="ct">
-      <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>{label}</p>
+      <p>{label}</p>
       {payload.map((p, i) => (
         <p key={i} style={{ color: p.color, fontWeight: 600 }}>
           {p.name}: {typeof p.value === 'number' ? p.value.toFixed(4) : p.value}
@@ -149,14 +149,14 @@ export default function JobResults({ results, isTraining = false, progress = 0, 
   if (isTraining) {
     return (
       <Panel icon={Activity} title="Metrics" subtitle="Waiting for the run to produce metrics">
-        <div className="empty-state" style={{ padding: 'var(--sp-6)' }}>
+        <div className="empty-state">
           <div className="spinner spinner-lg" />
           <div className="empty-state-title mt-3">Training in progress</div>
           <div className="empty-state-desc">
             Metrics, learning curves and the confusion matrix will appear here
             as soon as the estimator finishes fitting.
           </div>
-          <div style={{ width: 'min(420px, 100%)', marginTop: 12 }}>
+          <div style={{ width: 'min(420px, 100%)', marginTop: 'var(--sp-3)' }}>
             <Progress value={progress} label="Overall progress" />
           </div>
         </div>

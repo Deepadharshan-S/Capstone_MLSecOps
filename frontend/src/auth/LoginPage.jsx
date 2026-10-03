@@ -104,7 +104,7 @@ export default function LoginPage({ initialNotice = null }) {
       <aside className="auth-brand-panel">
         <div className="auth-brand-top">
           <div className="auth-brand-mark"><Boxes size={19} /></div>
-          <div className="auth-brand-name">MLSecOps <span>Platform</span></div>
+          <div className="auth-brand-name">SentinelML <span>Platform</span></div>
         </div>
 
         <div className="auth-brand-center">
@@ -138,7 +138,7 @@ export default function LoginPage({ initialNotice = null }) {
         </div>
 
         <div className="auth-brand-foot">
-          Capstone Project · MLSecOps Platform v1.0
+          Capstone Project · SentinelML Platform v1.0
         </div>
       </aside>
 
@@ -146,8 +146,8 @@ export default function LoginPage({ initialNotice = null }) {
       <main className="auth-form-panel">
         <div className="auth-card">
           <div className="auth-mobile-brand">
-            <div className="auth-mobile-mark">M</div>
-            <div className="auth-mobile-name">ML<span>SecOps</span></div>
+            <div className="auth-mobile-mark">S</div>
+            <div className="auth-mobile-name">Sentinel<span>ML</span></div>
           </div>
 
           <h2 className="auth-title">{mode === 'login' ? 'Welcome back' : 'Create account'}</h2>
@@ -201,26 +201,22 @@ export default function LoginPage({ initialNotice = null }) {
 
             <div className="input-group">
               <label className="input-label" htmlFor="login-password">Password <span className="req">*</span></label>
-              <div style={{ position: 'relative' }}>
+              <div className="input-eye-wrap">
                 <input
                   id="login-password"
-                  className="input-field"
+                  className="input-field has-eye"
                   type={showPw ? 'text' : 'password'}
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  style={{ paddingRight: 40 }}
                   required
                 />
                 <button
                   type="button"
+                  className="input-eye"
                   onClick={() => setShowPw((s) => !s)}
                   aria-label={showPw ? 'Hide password' : 'Show password'}
-                  style={{
-                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
-                    color: 'var(--text-tertiary)', display: 'grid', placeItems: 'center',
-                  }}
                 >
                   {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
@@ -258,7 +254,7 @@ export default function LoginPage({ initialNotice = null }) {
 
             <button type="submit" className="auth-submit" disabled={busy}>
               {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
-              {!busy && <ArrowRight size={15} style={{ display: 'inline', verticalAlign: '-2px', marginLeft: 6 }} />}
+              {!busy && <ArrowRight size={15} />}
             </button>
           </form>
 

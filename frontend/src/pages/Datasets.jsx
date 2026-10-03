@@ -146,7 +146,7 @@ export default function Datasets() {
                 key: 'name', strong: true, sortKey: 'name', header: 'Dataset',
                 render: (d) => (
                   <span className="flex items-center gap-2">
-                    <span className="row-glyph is-accent" style={{ width: 26, height: 26 }}><Database size={13} /></span>
+                    <span className="row-glyph is-accent sm"><Database size={13} /></span>
                     {d.name}
                   </span>
                 ),
@@ -170,7 +170,7 @@ export default function Datasets() {
               {
                 key: 'actions', actions: true, width: 190, header: 'Actions',
                 render: (d) => (
-                  <span className="flex items-center" style={{ justifyContent: 'flex-end', gap: 4 }}>
+                  <span className="flex items-center" style={{ justifyContent: 'flex-end' }}>
                     <Button variant="ghost" size="xs" icon={ArrowRight} onClick={() => navigate(`/datasets/${encodeURIComponent(d.name)}`)}>
                       Open
                     </Button>
@@ -205,7 +205,7 @@ export default function Datasets() {
               <span className="row-glyph is-accent"><Icon size={15} /></span>
               <span className="row-info">
                 <span className="row-title">{t}</span>
-                <span className="row-sub" style={{ whiteSpace: 'normal' }}>{d}</span>
+                <span className="row-sub">{d}</span>
               </span>
             </div>
           ))}

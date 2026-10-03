@@ -111,6 +111,10 @@
   font-weight: var(--fw-semibold);
   transition: background var(--t-fast) var(--ease);
   margin-top: var(--sp-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
 }
 .auth-submit:hover:not(:disabled) { background: var(--accent-hover); }
 .auth-submit:disabled { opacity: .6; }
@@ -138,6 +142,20 @@
   transition: color var(--t-fast) var(--ease);
 }
 .auth-switch:hover { color: var(--accent-text); }
+
+/* Password field with visibility toggle */
+.input-eye-wrap { position: relative; }
+.input-field.has-eye { padding-right: 40px; }
+.input-eye {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  display: grid;
+  place-items: center;
+}
+.input-eye:hover { color: var(--text-primary); }
 
 /* Demo accounts */
 .auth-demo { margin-top: var(--sp-5); }

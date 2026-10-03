@@ -137,9 +137,9 @@ export function StatCard({ icon: Icon, tone = 'accent', value, label, sub, onCli
     <Tag className="stat-card" onClick={onClick} style={onClick ? { textAlign: 'left', width: '100%', cursor: 'pointer' } : undefined}>
       {Icon && <div className={`stat-icon t-${tone}`}><Icon size={17} /></div>}
       <div className="stat-body">
-        <div className="stat-value">{value}</div>
+        <div className="stat-value" title={typeof value === 'string' ? value : undefined}>{value}</div>
         <div className="stat-label">{label}</div>
-        {sub && <div className="stat-sub">{sub}</div>}
+        {sub && <div className="stat-sub" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>}
       </div>
     </Tag>
   )

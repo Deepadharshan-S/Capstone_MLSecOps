@@ -111,7 +111,7 @@ export default function Predict() {
         }
       />
 
-      <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
+      <div className="flex items-center gap-3 flex-wrap">
         <Segmented
           value={tab}
           onChange={(v) => { setTab(v); setTarget(''); setResult(null); setError(null) }}
@@ -225,7 +225,7 @@ export default function Predict() {
             )}
             {result && (
               <>
-                <div className="metrics-grid" style={{ marginBottom: 14 }}>
+                <div className="metrics-grid cols-3" style={{ marginBottom: 'var(--sp-4)' }}>
                   <div className="metric-tile t-success">
                     <div className="metric-tile-lbl">Status</div>
                     <div className="metric-tile-val">200</div>
@@ -242,12 +242,12 @@ export default function Predict() {
                   </div>
                 </div>
                 {result?.model_name && (
-                  <div className="pill-row" style={{ marginBottom: 12 }}>
+                  <div className="pill-row" style={{ marginBottom: 'var(--sp-3)' }}>
                     <Badge tone="outline">model · {result.model_name}</Badge>
                     <Badge tone="accent">v{result.model_version || '?'}</Badge>
                   </div>
                 )}
-                <pre className="code-block" style={{ maxHeight: 380, overflow: 'auto' }}>
+                <pre className="code-block is-scroll">
                   {JSON.stringify(result, null, 2)}
                 </pre>
               </>

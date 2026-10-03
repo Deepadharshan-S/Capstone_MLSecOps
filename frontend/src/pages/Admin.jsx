@@ -16,10 +16,26 @@ import {
 const ROLES = ['admin', 'data_scientist', 'ml_engineer', 'viewer']
 
 const ROLE_META = {
-  admin: { tone: 'accent', desc: 'Full access: datasets, training, deployments and user management.' },
-  data_scientist: { tone: 'info', desc: 'Upload datasets, train models, deploy and manage deployments.' },
-  ml_engineer: { tone: 'purple', desc: 'Train and deploy models; read-only on datasets.' },
-  viewer: { tone: 'outline', desc: 'Read-only access to models and registry contents.' },
+  admin: {
+    tone: 'accent',
+    desc: 'Full access: datasets, training, deployments and user management.',
+    scopes: ['datasets:view', 'datasets:upload', 'datasets:delete', 'models:train', 'models:view', 'models:deploy', 'deployments:manage', 'users:manage'],
+  },
+  data_scientist: {
+    tone: 'info',
+    desc: 'Upload datasets, train models, deploy and manage deployments.',
+    scopes: ['datasets:view', 'datasets:upload', 'datasets:delete', 'models:train', 'models:view', 'models:deploy', 'deployments:manage'],
+  },
+  ml_engineer: {
+    tone: 'purple',
+    desc: 'Train and deploy models; read-only on datasets.',
+    scopes: ['datasets:view', 'models:train', 'models:view', 'models:deploy', 'deployments:manage'],
+  },
+  viewer: {
+    tone: 'outline',
+    desc: 'Read-only access to models and registry contents.',
+    scopes: ['models:view'],
+  },
 }
 
 export default function Admin() {
@@ -101,7 +117,7 @@ export default function Admin() {
         <StatCard icon={History} tone="info" value={counts.events} label="Audit events" sub="recorded actions" />
       </div>
 
-      <div className="flex items-center justify-between gap-3" style={{ flexWrap: 'wrap' }}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <Tabs
           active={tab}
           onChange={setTab}
@@ -138,7 +154,7 @@ export default function Admin() {
                   key: 'username', strong: true, header: 'User',
                   render: (u) => (
                     <span className="flex items-center gap-2">
-                      <span className="avatar" style={{ width: 26, height: 26, fontSize: 11 }}>{String(u.username).slice(0, 2)}</span>
+                      <span className="avatar avatar-sm">{String(u.username).slice(0, 2)}</span>
                       {u.username}
                       {(u.user_id || u.id) === (me?.user_id || me?.id) && <Badge tone="accent" sm>you</Badge>}
                     </span>
@@ -166,7 +182,7 @@ export default function Admin() {
                 },
                 {
                   key: 'scopes', width: 150, header: 'Access',
-                  render: (u) => <Badge tone="outline" sm>{(ROLE_META[u.role]?.desc.match(/[a-z:_]+/g) || []).length} scopes</Badge>,
+                  render: (u) => <Badge tone="outline" sm>{(ROLE_META[u.role]?.scopes || []).length} scopes</Badge>,
                 },
               ]}
             />
@@ -176,19 +192,19 @@ export default function Admin() {
 
       {/* ── Role matrix ─────────────────────────── */}
       {tab === 'roles' && (
-        <Panel icon={Shield} title="Role permission matrix" subtitle="Mirrors backend/app/core/roles.py — UI guidance only; the API enforces every scope">
+        <Panel icon={Shield} title="Role permission matrix" subtitle="What each role can do — the API enforces every scope">
           <div className="grid-2">
             {ROLES.map((r) => {
               const meta = ROLE_META[r]
               const count = userList.filter((u) => u.role === r).length
               return (
-                <div key={r} className="row-item" style={{ alignItems: 'flex-start' }}>
+                <div key={r} className="row-item is-top">
                   <span className="row-glyph is-accent"><Shield size={15} /></span>
                   <span className="row-info">
                     <span className="row-title flex items-center gap-2">
                       {r} <Badge tone={meta.tone} sm>{count} user{count === 1 ? '' : 's'}</Badge>
                     </span>
-                    <span className="row-sub" style={{ whiteSpace: 'normal' }}>{meta.desc}</span>
+                    <span className="row-sub">{meta.desc}</span>
                   </span>
                 </div>
               )

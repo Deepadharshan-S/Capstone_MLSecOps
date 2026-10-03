@@ -106,10 +106,17 @@ export const datasetsApi = {
   uploadFile: (name, formData) => api.upload(`/datasets/${enc(name)}/upload`, formData),
   downloadUrl: (name, path, ref = 'main') =>
     `/datasets/${enc(name)}/download?path=${enc(path)}&ref=${enc(ref)}`,
+  // GET /datasets/{name}/files — objects stored under a ref
+  files: (name, ref = 'main') =>
+    api.get(`/datasets/${enc(name)}/files?ref=${enc(ref)}`),
 
   /* ── Versioning ─────────────────────────────────── */
   // POST /datasets/{name}/commit · GET /datasets/{name}/commits
-  commit: (name, body) => api.post(`/datasets/${enc(name)}/commit`, body),
+  // The backend takes the target branch as a query param (defaults to main).
+  commit: (name, body, branch) => api.post(
+    `/datasets/${enc(name)}/commit${branch ? `?branch=${enc(branch)}` : ''}`,
+    body,
+  ),
   commits: (name, ref, limit) => {
     const qs = new URLSearchParams()
     if (ref) qs.set('ref', ref)

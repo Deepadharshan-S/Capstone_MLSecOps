@@ -34,6 +34,7 @@ from app.schemas.dataset import (
     BranchResponse,
     CreateTagRequest,
     TagResponse,
+    FileEntryResponse,
 )
 from app.services.dependencies import get_data_service
 from app.services.dataset import DataService
@@ -299,6 +300,21 @@ def update_dataset_metadata(
 
 
 # --- Branch Management Endpoints ---
+
+
+@router.get("/{dataset_name}/files", response_model=list[FileEntryResponse])
+def list_files(
+    dataset_name: str,
+    ref: Optional[str] = "main",
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Lists objects stored under a ref (branch, tag or commit id).
+    Powers the Files-tab preview picker — no path typing required.
+    """
+    return data_service.list_files(db, dataset_name, ref_id=ref or "main")
 
 
 @router.get("/{dataset_name}/branches", response_model=list[BranchResponse])

@@ -163,8 +163,11 @@
 .shell.sidebar-collapsed .nav-badge,
 .shell.sidebar-collapsed .sidebar-meta,
 .shell.sidebar-collapsed .health-row span { display: none; }
-.shell.sidebar-collapsed .sidebar-brand { justify-content: center; padding: 0; }
-.shell.sidebar-collapsed .sidebar-collapse { display: none; }
+.shell.sidebar-collapsed .sidebar-brand { justify-content: center; padding: 0; gap: 6px; }
+/* Keep the toggle visible when collapsed — it is the only desktop control
+   that expands the sidebar again. Logo (30px) + toggle (26px) + gap fits
+   the 68px rail. */
+.shell.sidebar-collapsed .sidebar-collapse { display: grid; margin-left: 0; }
 .shell.sidebar-collapsed .nav-link { justify-content: center; padding: 9px 0; }
 .shell.sidebar-collapsed .nav-link.nav-active::before { left: -8px; }
 .shell.sidebar-collapsed .sidebar-footer { align-items: center; }
@@ -235,6 +238,7 @@
   text-transform: uppercase;
   flex-shrink: 0;
 }
+.avatar.avatar-sm { width: 26px; height: 26px; font-size: var(--fs-xs); }
 .user-trigger-meta { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
 .user-trigger-name { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-primary); }
 .user-trigger-role { font-size: var(--fs-2xs); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .05em; }
@@ -253,6 +257,14 @@
   animation: fade-in var(--t-fast) var(--ease-out);
 }
 .dropdown-head { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.dropdown-meta {
+  padding: 4px 10px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
 .dropdown-head-name { font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-primary); }
 .dropdown-head-sub { font-size: var(--fs-xs); color: var(--text-tertiary); word-break: break-all; }
 .dropdown-item {

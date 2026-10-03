@@ -77,12 +77,12 @@ export default function Registry() {
         <StatCard
           icon={GitBranch} tone="info"
           value={list.filter((m) => m.experiment_name && m.experiment_name !== 'unknown').length}
-          label="Tracked from experiments" sub="models with a source run"
+          label="Models from runs" sub="models with a source run"
         />
         <StatCard
           icon={Layers} tone="purple"
           value={new Set(list.map((m) => m.experiment_name).filter((n) => n && n !== 'unknown')).size}
-          label="Source experiments" sub="training origins"
+          label="Experiments used" sub="distinct training origins"
         />
       </div>
 
@@ -121,7 +121,7 @@ export default function Registry() {
                 key: 'name', strong: true, sortKey: 'name', header: 'Model',
                 render: (m) => (
                   <span className="flex items-center gap-2">
-                    <span className="row-glyph is-accent" style={{ width: 26, height: 26 }}><Boxes size={13} /></span>
+                    <span className="row-glyph is-accent sm"><Boxes size={13} /></span>
                     <span className="truncate" style={{ maxWidth: 220 }}>{m.name}</span>
                   </span>
                 ),
@@ -224,7 +224,7 @@ function ModelDrawer({ model, versions, onClose, canDeploy, onDeploy, onGoExperi
     >
       {!model ? null : (
         <div className="flex flex-col gap-4">
-          <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
+          <div className="stat-grid is-3">
             <div className="metric-tile t-accent">
               <div className="metric-tile-lbl">Accuracy</div>
               <div className="metric-tile-val">{formatAccuracy(model.accuracy)}</div>
