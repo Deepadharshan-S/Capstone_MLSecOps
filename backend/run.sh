@@ -32,8 +32,15 @@ fi
 # migration attempt (Docker Desktop / `docker compose up -d postgres` often
 # needs a few seconds after boot).
 echo "Waiting for database..."
-DB_HOST="$(grep -E '^POSTGRES_HOST=' .env | cut -d= -f2- | tr -d '"'\''')"
-DB_PORT="$(grep -E '^POSTGRES_PORT=' .env | cut -d= -f2- | tr -d '"'\''')"
+ENV_FILE=".env"
+[ ! -f "$ENV_FILE" ] && [ -f "../.env" ] && ENV_FILE="../.env"
+
+DB_HOST=""
+DB_PORT=""
+if [ -f "$ENV_FILE" ]; then
+    DB_HOST="$(grep -E '^POSTGRES_HOST=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'\''')"
+    DB_PORT="$(grep -E '^POSTGRES_PORT=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'\''')"
+fi
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-5432}"
 
