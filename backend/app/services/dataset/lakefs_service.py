@@ -127,7 +127,13 @@ class LakeFSService(VersionControlService):
             raise RuntimeError("lakeFS client is not initialized.")
         repo = lakefs.Repository(repo_name, client=self.client)
         branch = repo.branch(branch_name)
-        ref = branch.commit(message=message, metadata=metadata)
+        try:
+            ref = branch.commit(message=message, metadata=metadata)
+        except Exception as e:
+            if "no changes" in str(e).lower():
+                ref = branch.commit(message=message, metadata=metadata, allow_empty=True)
+            else:
+                raise
         commit_details = ref.get_commit()
         return {
             "id": ref.id,

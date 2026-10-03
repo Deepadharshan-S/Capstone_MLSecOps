@@ -635,7 +635,13 @@ def main():
 
                         # Log candidate metrics
                         for m_name, m_val in cand_metrics.items():
-                            mlflow.log_metric(m_name, m_val)
+                            if isinstance(m_val, (int, float)):
+                                mlflow.log_metric(m_name, float(m_val))
+                            elif isinstance(m_val, (dict, list)):
+                                try:
+                                    mlflow.log_dict(m_val, f"evaluation/{m_name}.json")
+                                except Exception:
+                                    pass
 
                         # Log candidate evaluation report
                         if cand_X is not None and cand_y_pred is not None:
@@ -678,8 +684,14 @@ def main():
                     "champion_score": str(champion_score),
                 })
                 for m_name, m_val in champion_metrics.items():
-                    mlflow.log_metric(m_name, m_val)
-                    mlflow.log_metric(f"champion_{m_name}", m_val)
+                    if isinstance(m_val, (int, float)):
+                        mlflow.log_metric(m_name, float(m_val))
+                        mlflow.log_metric(f"champion_{m_name}", float(m_val))
+                    elif isinstance(m_val, (dict, list)):
+                        try:
+                            mlflow.log_dict(m_val, f"evaluation/{m_name}.json")
+                        except Exception:
+                            pass
 
                 if training_duration_seconds is not None:
                     mlflow.log_metric("training_duration_seconds", float(training_duration_seconds))
@@ -777,8 +789,14 @@ def main():
 
                 # C. Log Metrics
                 for name, val in metrics.items():
-                    print(f"Logging metric to MLflow: {name}={val}")
-                    mlflow.log_metric(name, val)
+                    if isinstance(val, (int, float)):
+                        print(f"Logging metric to MLflow: {name}={val}")
+                        mlflow.log_metric(name, float(val))
+                    elif isinstance(val, (dict, list)):
+                        try:
+                            mlflow.log_dict(val, f"evaluation/{name}.json")
+                        except Exception:
+                            pass
 
                 # D. Log Detailed Evaluation Artifact (Classification Report)
                 if X is not None and y_pred is not None:

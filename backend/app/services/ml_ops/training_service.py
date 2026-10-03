@@ -235,7 +235,7 @@ class ModelTrainingService:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=(
-                        "Training cluster is unavailable and local fallback execution is disabled. "
+                        "Training cluster is unavailable and local fallback execution is disabled for security. "
                         "Check: kubectl config current-context points at your cluster, "
                         "KubeRay operator is installed (kubectl get crd rayjobs.ray.io), "
                         "and image mlsecops-ray:latest is built/loaded."
@@ -367,18 +367,6 @@ class ModelTrainingService:
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
 
-        if db and job_svc:
-            job_svc.create_job(
-                db=db,
-                job_id=job_id,
-                user_id=user.id,
-                dataset_id=dataset_id,
-                model_type=model_type,
-                target_column=target_column,
-                model_name=output_model_name,
-                experiment_name=experiment_name,
-            )
-
         log_audit_event(
             "model_training_initiated",
             user.username,
@@ -451,21 +439,27 @@ class ModelTrainingService:
                 )
                 # Don't leave an orphan "training" row behind — polling
                 # GET /jobs/{id} would otherwise hang on it forever.
-                if db is not None and job_svc is not None:
+                if db is not None:
                     try:
-                        job_svc.fail_job(
-                            db,
-                            job_id,
-                            "Kubernetes cluster unreachable and local fallback is disabled. "
-                            "Check: kubectl config current-context, KubeRay operator "
-                            "(kubectl get crd rayjobs.ray.io), and image mlsecops-ray:latest.",
-                        )
+                        from app.repositories import TrainingJobRepository
+                        from datetime import timezone
+                        repo = TrainingJobRepository(db)
+                        tj = repo.get_by_job_id(job_id)
+                        if tj:
+                            tj.status = "FAILED"
+                            tj.error_message = (
+                                "Kubernetes cluster unreachable and local fallback is disabled for security. "
+                                "Check: kubectl config current-context, KubeRay operator "
+                                "(kubectl get crd rayjobs.ray.io), and image mlsecops-ray:latest."
+                            )
+                            tj.completed_at = datetime.now(timezone.utc)
+                            repo.save(tj)
                     except Exception:
                         pass
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=(
-                        "Training cluster is unavailable and local fallback execution is disabled. "
+                        "Training cluster is unavailable and local fallback execution is disabled for security. "
                         "Check: kubectl config current-context points at your cluster, "
                         "KubeRay operator is installed (kubectl get crd rayjobs.ray.io), "
                         "and image mlsecops-ray:latest is built/loaded."

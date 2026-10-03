@@ -65,12 +65,6 @@ def register_dataset(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file must have a valid filename.",
         )
-    # The training pipeline (ray_wrapper) only reads CSV via pd.read_csv.
-    if not file_path.lower().endswith(".csv"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only .csv files are supported for training. Got '{file_path}'.",
-        )
 
     try:
         db_dataset = data_service.register_dataset(
