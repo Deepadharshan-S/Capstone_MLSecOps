@@ -43,19 +43,21 @@ def _save_results_file(job_id: str, metrics: dict) -> None:
 
 
 def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str) -> dict:
-    """Fallback: queries MLflow directly for logged run metrics if results file is missing."""
-    if not experiment_name:
-        return {}
+    """Queries MLflow directly for logged run metrics and evaluation artifacts."""
     try:
         import mlflow
         from app.core.config import settings
 
+        os.environ["AWS_ACCESS_KEY_ID"] = settings.MINIO_ROOT_USER
+        os.environ["AWS_SECRET_ACCESS_KEY"] = settings.MINIO_ROOT_PASSWORD
+        os.environ["MLFLOW_S3_ENDPOINT_URL"] = settings.MINIO_ENDPOINT
+        os.environ["MLFLOW_S3_IGNORE_TLS"] = "true"
+
         client = mlflow.tracking.MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
-        exp = client.get_experiment_by_name(experiment_name)
-        if not exp:
-            return {}
+        exp = client.get_experiment_by_name(experiment_name) if experiment_name else None
+        exp_ids = [exp.experiment_id] if exp else [e.experiment_id for e in client.search_experiments()]
         runs = client.search_runs(
-            experiment_ids=[exp.experiment_id],
+            experiment_ids=exp_ids,
             filter_string=f"tags.sentinelml.job_id = '{job_id}'",
             max_results=1,
         )
@@ -63,25 +65,48 @@ def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str) -> dict:
             return {}
         run = runs[0]
         m = run.data.metrics or {}
-        return {
+        res = {
+            "status": "completed",
             "accuracy": m.get("accuracy") if "accuracy" in m else m.get("champion_accuracy"),
             "precision": m.get("precision") if "precision" in m else m.get("champion_precision"),
             "recall": m.get("recall") if "recall" in m else m.get("champion_recall"),
             "f1_score": m.get("f1_score") if "f1_score" in m else m.get("champion_f1_score"),
             "training_duration_seconds": m.get("training_duration_seconds"),
         }
+
+        # Download evaluation artifacts if available
+        for artifact_file, key in [
+            ("confusion_matrix.json", "confusion_matrix"),
+            ("feature_importance.json", "feature_importance"),
+            ("roc_curve.json", "roc_curve"),
+            ("history.json", "history"),
+        ]:
+            try:
+                p = client.download_artifacts(run.info.run_id, f"evaluation/{artifact_file}")
+                with open(p, "r") as af:
+                    res[key] = json.load(af)
+            except Exception:
+                pass
+
+        return res
     except Exception as e:
         logger.debug(f"Failed to fetch MLflow metrics for job {job_id}: {e}")
         return {}
 
 
-def _fetch_job_logs(job_id: str) -> Optional[list[dict]]:
-    """Retrieves execution logs from MinIO storage for the given job."""
+def _fetch_job_logs(job_id: str, rayjob_name: Optional[str] = None, status_val: str = "PENDING") -> Optional[list[dict]]:
+    """Retrieves execution logs from Kubernetes head pod or MinIO storage for the given job."""
     try:
         from app.services.dataset.s3_storage_service import S3StorageService
+        from app.services.ml_ops.rayjob_service import RayJobService
+        from app.services.ml_ops.training_log_service import TrainingLogService
 
-        s3 = S3StorageService()
-        content = s3.get_log_content("mlflow", f"logs/{job_id}/training.log")
+        storage = S3StorageService()
+        ray_svc = RayJobService()
+        log_svc = TrainingLogService(storage_service=storage, rayjob_service=ray_svc)
+        r_name = rayjob_name or f"rayjob-{job_id}"
+        logs_res = log_svc.get_logs(job_id=job_id, rayjob_name=r_name, status=status_val)
+        content = logs_res.get("logs", "")
         if not content:
             return None
         lines = content.strip().splitlines()
@@ -105,7 +130,7 @@ def _fetch_job_logs(job_id: str) -> Optional[list[dict]]:
 class JobService:
     """
     Tracks and hydrates training job lifecycle, results, metrics, and logs.
-    Interfaces cleanly with the canonical PostgreSQL TrainingJob model.
+    Reconciles with Kubernetes KubeRay CRD state and MLflow metrics.
     """
 
     def _build_job_response(
@@ -115,9 +140,66 @@ class JobService:
         include_logs: bool = False,
     ) -> JobStatusResponse:
         clean_id = job.job_id.removeprefix("rayjob-")
-
-        # 1. Normalize status and map progress
         raw_status = (job.status or "PENDING").upper()
+
+        # 1. Reconcile with Kubernetes RayJob state if active
+        if raw_status in ("PENDING", "RUNNING"):
+            try:
+                from app.services.ml_ops.rayjob_service import RayJobService
+
+                ray_svc = RayJobService()
+                k8s_job = ray_svc.get_rayjob(job.rayjob_name)
+                if k8s_job:
+                    st = k8s_job.get("status", {})
+                    norm = ray_svc.normalize_status(st.get("jobStatus"), st.get("jobDeploymentStatus"))
+                    if norm != job.status:
+                        job.status = norm
+                        if norm in ("SUCCEEDED", "FAILED"):
+                            job.completed_at = ray_svc.parse_k8s_time(st.get("endTime")) or datetime.now(timezone.utc)
+                            if job.started_at and job.completed_at:
+                                job.duration_seconds = round((job.completed_at - job.started_at).total_seconds(), 2)
+                            job.error_message = st.get("message") or st.get("reason")
+                            try:
+                                from app.services.dataset.s3_storage_service import S3StorageService
+                                from app.services.ml_ops.training_log_service import TrainingLogService
+
+                                log_svc = TrainingLogService(storage_service=S3StorageService(), rayjob_service=ray_svc)
+                                log_svc.archive_pod_logs(clean_id)
+                            except Exception as log_arch_err:
+                                logger.debug(f"Failed to archive pod logs for {clean_id}: {log_arch_err}")
+                        try:
+                            db.commit()
+                            db.refresh(job)
+                            raw_status = (job.status or "PENDING").upper()
+                        except Exception:
+                            db.rollback()
+            except Exception as k8s_err:
+                logger.debug(f"Kubernetes rayjob check skipped: {k8s_err}")
+
+        # 2. Check local results file or MLflow if still PENDING/RUNNING
+        res_data = _load_results_file(clean_id)
+        if not res_data:
+            res_data = _fetch_mlflow_metrics(job.experiment_name, clean_id)
+
+        if raw_status in ("PENDING", "RUNNING") and (
+            res_data.get("status") in ("completed", "failed")
+            or res_data.get("accuracy") is not None
+        ):
+            new_status = "FAILED" if res_data.get("status") == "failed" else "SUCCEEDED"
+            job.status = new_status
+            job.completed_at = datetime.now(timezone.utc)
+            if job.started_at:
+                job.duration_seconds = round((job.completed_at - job.started_at).total_seconds(), 2)
+            elif res_data.get("training_duration_seconds"):
+                job.duration_seconds = float(res_data["training_duration_seconds"])
+            try:
+                db.commit()
+                db.refresh(job)
+                raw_status = new_status
+            except Exception:
+                db.rollback()
+
+        # 3. Map status and progress for frontend
         if raw_status in ("SUCCEEDED", "SUCCESS"):
             status_str = "completed"
             progress = 100
@@ -134,7 +216,7 @@ class JobService:
             status_str = raw_status.lower()
             progress = 0
 
-        # 2. Extract model_type from entrypoint if present
+        # 4. Extract model_type from entrypoint if present
         model_type = None
         if job.entrypoint:
             m = re.search(r"--model_type\s+['\"]?([a-zA-Z0-9_\-]+)['\"]?", job.entrypoint)
@@ -143,26 +225,7 @@ class JobService:
         if not model_type:
             model_type = job.model_name or "Custom Model"
 
-        # 3. Read results file or fallback to MLflow
-        res_data = _load_results_file(clean_id)
-        if not res_data and status_str == "completed" and job.experiment_name:
-            res_data = _fetch_mlflow_metrics(job.experiment_name, clean_id)
-
-        # 4. Reconcile DB if local background process finished
-        if status_str in ("pending", "training") and res_data.get("status") in ("completed", "failed"):
-            new_status = "SUCCEEDED" if res_data.get("status") == "completed" else "FAILED"
-            job.status = new_status
-            job.completed_at = datetime.now(timezone.utc)
-            if job.started_at:
-                job.duration_seconds = round((job.completed_at - job.started_at).total_seconds(), 2)
-            try:
-                db.commit()
-                db.refresh(job)
-            except Exception:
-                db.rollback()
-            status_str = "completed" if new_status == "SUCCEEDED" else "failed"
-            progress = 100
-
+        # 5. Extract metrics from res_data
         accuracy = res_data.get("accuracy")
         precision_score = res_data.get("precision") or res_data.get("precision_score")
         recall_score = res_data.get("recall") or res_data.get("recall_score")
@@ -179,7 +242,7 @@ class JobService:
 
         logs = None
         if include_logs:
-            logs = _fetch_job_logs(clean_id)
+            logs = _fetch_job_logs(clean_id, rayjob_name=job.rayjob_name, status_val=raw_status)
 
         return JobStatusResponse(
             job_id=clean_id,
