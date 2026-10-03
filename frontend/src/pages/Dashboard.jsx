@@ -72,8 +72,8 @@ export default function Dashboard() {
         <PageHeader icon={Activity} title="Dashboard" subtitle="Loading workspace overview…" />
         <SkeletonCards count={4} />
         <div className="grid-2">
-          <div className="skeleton" style={{ height: 260, borderRadius: 14 }} />
-          <div className="skeleton" style={{ height: 260, borderRadius: 14 }} />
+          <div className="skeleton" style={{ height: 260, borderRadius: 'var(--r-xl)' }} />
+          <div className="skeleton" style={{ height: 260, borderRadius: 'var(--r-xl)' }} />
         </div>
       </div>
     )
@@ -129,7 +129,7 @@ export default function Dashboard() {
         />
         <StatCard
           icon={Rocket} tone="success"
-          value={activeDeps.length || counts.deployments} label="Active deployments"
+          value={activeDeps.length} label="Active deployments"
           sub={`${depList.length} total tracked`}
           onClick={() => navigate('/deployments')}
         />
@@ -219,7 +219,7 @@ export default function Dashboard() {
           title="Model registry"
           subtitle={`${modelList.length} models · ${expList.length} experiments`}
           actions={<Button variant="ghost" size="sm" icon={ArrowRight} onClick={() => navigate('/registry')}>Open registry</Button>}
-          bodyClass={modelList.length ? 'tight' : ''}
+          bodyClass={modelList.length ? 'tight-padded' : ''}
         >
           {modelList.length === 0 ? (
             <EmptyState
@@ -228,10 +228,10 @@ export default function Dashboard() {
               desc="Train a model to register its first version."
             />
           ) : (
-            <div style={{ padding: 'var(--sp-4) var(--sp-5)' }}>
+            <div>
               <div className="row-list">
                 {modelList.slice(0, 5).map((m) => (
-                  <Link key={m.name} to={`/registry?model=${encodeURIComponent(m.name)}`} className="row-item" style={{ textDecoration: 'none' }}>
+                  <Link key={m.name} to={`/registry?model=${encodeURIComponent(m.name)}`} className="row-item">
                     <span className="row-glyph is-accent"><Boxes size={15} /></span>
                     <span className="row-info">
                       <span className="row-title">{m.name}</span>
@@ -254,7 +254,7 @@ export default function Dashboard() {
           title="Deployments"
           subtitle={`${activeDeps.length} active of ${depList.length} tracked`}
           actions={<Button variant="ghost" size="sm" icon={ArrowRight} onClick={() => navigate('/deployments')}>Manage</Button>}
-          bodyClass={depList.length ? 'tight' : ''}
+          bodyClass={depList.length ? 'tight-padded' : ''}
         >
           {depList.length === 0 ? (
             <EmptyState
@@ -263,7 +263,7 @@ export default function Dashboard() {
               desc="Promote a registry model to staging or production."
             />
           ) : (
-            <div style={{ padding: 'var(--sp-4) var(--sp-5)' }}>
+            <div>
               <div className="row-list">
                 {depList.slice(0, 5).map((d) => (
                   <div key={d.deployment_id} className="row-item">

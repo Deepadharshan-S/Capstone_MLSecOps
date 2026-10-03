@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response, Security, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.core.rate_limiter import RateLimiter
+from app.core.config import settings
 
 from app.db.session import get_db
 from app.models.user import User
@@ -65,12 +66,14 @@ def login(
         ip_address=ip_addr,
     )
 
-    # Set secure HttpOnly cookie for the refresh token
+    # Set secure HttpOnly cookie for the refresh token.
+    # Secure must be False on plain http://localhost or browsers silently
+    # drop the cookie and every /auth/refresh returns 401 "Refresh token missing".
     response.set_cookie(
         key="refresh_token",
         value=token_dict["refresh_token"],
         httponly=True,
-        secure=True,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 3600,
         path="/api/auth",
@@ -103,12 +106,12 @@ def refresh(
         ip_address=ip_addr,
     )
 
-    # Re-issue rotated secure HttpOnly cookie
+    # Re-issue rotated secure HttpOnly cookie (see login note on Secure).
     response.set_cookie(
         key="refresh_token",
         value=token_dict["refresh_token"],
         httponly=True,
-        secure=True,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 3600,
         path="/api/auth",

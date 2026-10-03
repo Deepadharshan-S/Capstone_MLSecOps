@@ -13,6 +13,7 @@ from app.schemas.dataset.versioning import (
     BranchResponse,
     CreateTagRequest,
     TagResponse,
+    FileEntryResponse,
 )
 from app.schemas.dataset.storage import FileUploadResponse
 from app.schemas.dataset.diff import CompareResponse
@@ -30,6 +31,7 @@ __all__ = [
     "BranchResponse",
     "CreateTagRequest",
     "TagResponse",
+    "FileEntryResponse",
     "FileUploadResponse",
     "CompareResponse",
 ]

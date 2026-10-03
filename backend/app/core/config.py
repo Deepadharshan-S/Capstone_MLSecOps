@@ -26,17 +26,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-<<<<<<< Updated upstream
     # Token Cleanup Background Task
     TOKEN_CLEANUP_INTERVAL_SECONDS: int = 3600
     TOKEN_CLEANUP_ENABLED: bool = True
 
-    # CORS config
-    CORS_ORIGINS: list[str] = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
-=======
     # Set to true only when serving the API over HTTPS. When False the
     # refresh cookie is sent over plain http://localhost, which is required
     # for local development (browsers drop Secure cookies on http).
@@ -56,7 +49,13 @@ class Settings(BaseSettings):
         "http://localhost:5174,http://127.0.0.1:5174,"
         "http://localhost:5175,http://127.0.0.1:5175"
     )
->>>>>>> Stashed changes
+
+    # CORS config (legacy list form; kept for backwards compatibility —
+    # ALLOWED_ORIGINS above is what main.py actually uses).
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
 
     # lakeFS config
     LAKEFS_ENDPOINT: str

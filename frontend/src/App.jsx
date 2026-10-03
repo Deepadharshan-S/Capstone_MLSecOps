@@ -40,10 +40,14 @@ function Topbar({ onMenuOpen, menuOpen, health, onHealthClick }) {
         </button>
         <div className="topbar-title">{title}</div>
         <nav className="breadcrumb" aria-label="Breadcrumb">
-          {crumbs.map((c, i) => (
+          {crumbs
+            // The trailing crumb duplicates the topbar title — hide it so the
+            // bar reads "Datasets › my-data" instead of "Datasets › SentinelML › Datasets".
+            .filter((c, i, arr) => !(i === arr.length - 1 && c.label === title))
+            .map((c, i, arr) => (
             <span key={`${c.label}-${i}`} className="flex items-center gap-1">
               {i > 0 && <ChevronRight size={12} />}
-              {c.to && i < crumbs.length - 1
+              {c.to && i < arr.length - 1
                 ? <Link to={c.to}>{c.label}</Link>
                 : <span className="crumb-current">{c.label}</span>}
             </span>
@@ -63,7 +67,7 @@ function Topbar({ onMenuOpen, menuOpen, health, onHealthClick }) {
 }
 
 export default function App() {
-  const [collapsed, setCollapsed] = useLocalStorage('mlsecops.sidebar.collapsed', false)
+  const [collapsed, setCollapsed] = useLocalStorage('sentinelml.sidebar.collapsed', false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
 

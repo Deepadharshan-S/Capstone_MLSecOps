@@ -12,7 +12,7 @@ import {
 import {
   Database, GitBranch, GitCommitHorizontal, Tag, GitCompareArrows, Settings,
   ArrowLeft, RefreshCw, Upload, Download, Plus, Trash2, Check, Layers,
-  Info, Save, Undo2, FolderTree, HardDrive, RotateCcw,
+  Info, Save, Undo2, FolderTree, HardDrive, RotateCcw, FileText,
 } from '../components/icons.jsx'
 
 const TABS = [
@@ -30,6 +30,16 @@ export default function DatasetDetail() {
   const navigate = useNavigate()
 
   const [tab, setTab] = useState('overview')
+
+  // Tab-local drafts live here (not in the tab components) so switching
+  // tabs — which unmounts the inactive panel — no longer wipes a half-typed
+  // commit message, a chosen rollback target, or a compare selection.
+  const [commitMsg, setCommitMsg] = useState('')
+  const [commitBranch, setCommitBranch] = useState('')
+  const [rollbackTarget, setRollbackTarget] = useState(null)
+  const [cmpLeft, setCmpLeft] = useState('main')
+  const [cmpRight, setCmpRight] = useState('')
+  const [cmpRows, setCmpRows] = useState(null)
 
   const meta = useFetch(() => datasetsApi.metadata(name), [name])
   // GET /datasets/{name} only returns lakeFS + custom metadata; the human
@@ -93,10 +103,39 @@ export default function DatasetDetail() {
 
       {tab === 'overview' && <OverviewTab meta={meta.data} dbMeta={dbMeta} lfMeta={lfMeta} />}
       {tab === 'files' && <FilesTab name={name} defaultBranch={dbMeta.default_branch || 'main'} branches={branchList} />}
-      {tab === 'commits' && <CommitsTab name={name} commits={commitList} loading={commits.loading} error={commits.error} onRefresh={commits.refetch} />}
+      {tab === 'commits' && (
+        <CommitsTab
+          name={name}
+          commits={commitList}
+          loading={commits.loading}
+          error={commits.error}
+          onRefresh={commits.refetch}
+          branches={branchList}
+          defaultBranch={dbMeta.default_branch || 'main'}
+          message={commitMsg}
+          onMessage={setCommitMsg}
+          branch={commitBranch || dbMeta.default_branch || 'main'}
+          onBranch={setCommitBranch}
+          rollbackTarget={rollbackTarget}
+          onRollbackTarget={setRollbackTarget}
+        />
+      )}
       {tab === 'branches' && <BranchesTab name={name} branches={branchList} loading={branches.loading} error={branches.error} onRefresh={branches.refetch} />}
       {tab === 'tags' && <TagsTab name={name} tags={tagList} commits={commitList} loading={tags.loading} error={tags.error} onRefresh={tags.refetch} />}
-      {tab === 'compare' && <CompareTab name={name} refs={[...branchList.map((b) => b.name), ...tagList.map((t) => t.name)]} commits={commitList} />}
+      {tab === 'compare' && (
+        <CompareTab
+          name={name}
+          branches={branchList}
+          tags={tagList}
+          commits={commitList}
+          left={cmpLeft}
+          onLeft={setCmpLeft}
+          right={cmpRight}
+          onRight={setCmpRight}
+          rows={cmpRows}
+          onRows={setCmpRows}
+        />
+      )}
       {tab === 'manage' && <ManageTab name={name} dbMeta={dbMeta} onSaved={meta.refetch} onDeleted={() => navigate('/datasets')} />}
     </div>
   )
@@ -110,6 +149,47 @@ function norm(data, key) {
 
 function serializeMeta(dbMeta) {
   return dbMeta?.metadata_info ? JSON.stringify(dbMeta.metadata_info, null, 2) : '{}'
+}
+
+const PREVIEW_ROWS = 20
+const PREVIEW_BYTES = 512 * 1024
+
+// Minimal CSV splitter (handles quoted commas + doubled quotes) — enough
+// for a first-N-rows preview without pulling in a parser dependency.
+function splitCsvLine(line) {
+  const out = []
+  let cur = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++ } else { inQuotes = false }
+      } else { cur += ch }
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === ',') {
+      out.push(cur); cur = ''
+    } else { cur += ch }
+  }
+  out.push(cur)
+  return out.map((c) => c.trim())
+}
+
+function parsePreview(text, byteTruncated) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '')
+  if (lines.length === 0) return { empty: true, byteTruncated }
+  if (!lines[0].includes(',')) {
+    return { isText: true, text: text.slice(0, 2000), byteTruncated }
+  }
+  const columns = splitCsvLine(lines[0])
+  const dataLines = lines.slice(1)
+  return {
+    columns,
+    rows: dataLines.slice(0, PREVIEW_ROWS).map(splitCsvLine),
+    rowTruncated: dataLines.length > PREVIEW_ROWS,
+    byteTruncated,
+  }
 }
 
 /* ══════════════════════════════════════════════════════
@@ -165,6 +245,16 @@ function FilesTab({ name, defaultBranch, branches }) {
   const [error, setError] = useState(null)
   const [drag, setDrag] = useState(false)
   const [log, setLog] = useState([])
+  const [pvFile, setPvFile] = useState('')
+  const [pvBusy, setPvBusy] = useState(false)
+  const [pvError, setPvError] = useState(null)
+  const [pvResult, setPvResult] = useState(null)
+
+  // Objects stored on the selected branch — drives the preview picker so no
+  // path typing is needed. Refetches automatically on branch switch.
+  const files = useFetch(() => datasetsApi.files(name, branch), [name, branch])
+  const fileList = Array.isArray(files.data) ? files.data : files.data?.files || []
+  const filePaths = fileList.map((f) => f?.path).filter(Boolean)
 
   async function upload(file) {
     if (!file) return
@@ -177,6 +267,10 @@ function FilesTab({ name, defaultBranch, branches }) {
       await datasetsApi.uploadFile(name, body)
       toast.success('File uploaded', `${file.name} staged on ${branch}. Commit to publish it.`)
       setLog((l) => [{ file: file.name, at: new Date(), branch }, ...l])
+      // The listing is now stale — refresh it and preview the new file.
+      files.refetch()
+      setPvFile(file.name)
+      preview(file.name)
     } catch (err) {
       setError(err?.message || 'Upload failed.')
       toast.error('Upload failed', err?.message)
@@ -187,7 +281,7 @@ function FilesTab({ name, defaultBranch, branches }) {
 
   async function download(path) {
     try {
-      const blob = await api.download(datasetsApi.downloadUrl(name, path, branch).replace(/^\//, ''))
+      const blob = await api.download(datasetsApi.downloadUrl(name, path, branch))
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -200,11 +294,47 @@ function FilesTab({ name, defaultBranch, branches }) {
     }
   }
 
+  async function preview(path) {
+    const p = (path || '').trim()
+    if (!p) { toast.warning('Path required', 'Enter the file path to preview.'); return }
+    setPvBusy(true); setPvError(null); setPvResult(null)
+    try {
+      // Reuses the download stream but only reads the first bytes — safe for
+      // large datasets. The ref follows the branch selector above, so staged
+      // (uncommitted) content is previewable too.
+      const blob = await api.download(datasetsApi.downloadUrl(name, p, branch))
+      const byteTruncated = blob.size > PREVIEW_BYTES
+      let text = await blob.slice(0, PREVIEW_BYTES).text()
+      if (byteTruncated) text = text.slice(0, Math.max(0, text.lastIndexOf('\n')))
+      setPvResult({ path: p, ...parsePreview(text, byteTruncated) })
+    } catch (err) {
+      setPvError(err?.message || 'Preview failed.')
+    } finally { setPvBusy(false) }
+  }
+
   // `branches` arrives as BranchResponse objects ({name, head_commit_id}).
   // Rendering the objects themselves in <option> throws — reduce to names.
   const branchNames = (Array.isArray(branches) ? branches : [])
     .map((b) => (typeof b === 'string' ? b : b?.name))
     .filter(Boolean)
+
+  // Open in preview: when the file list for the current dataset@branch
+  // arrives (tab open, branch switch, post-upload refresh), automatically
+  // preview the selected file — preferring CSVs — so the panel never sits
+  // empty. Guarded per list contents to avoid preview loops.
+  const autoPvKey = useRef('')
+  useEffect(() => {
+    if (files.loading || files.error || filePaths.length === 0) return
+    const key = `${branch}:${filePaths.join(',')}`
+    if (autoPvKey.current === key) return
+    autoPvKey.current = key
+    const stillThere = pvFile && filePaths.includes(pvFile)
+    const csvFirst = filePaths.find((p) => p.toLowerCase().endsWith('.csv'))
+    const pick = stillThere ? pvFile : (csvFirst || filePaths[0])
+    setPvFile(pick)
+    preview(pick)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files.data, files.loading, files.error, branch])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
@@ -268,6 +398,91 @@ function FilesTab({ name, defaultBranch, branches }) {
         </div>
       </Panel>
 
+      <Panel icon={FileText} title="Preview data" subtitle={`First ${PREVIEW_ROWS} rows of ${name} @ ${branch}`}>
+        {filePaths.length > 0 ? (
+          <Field label="File" htmlFor="pv-file" hint={`${filePaths.length} object${filePaths.length === 1 ? '' : 's'} on this ref`}>
+            <select
+              id="pv-file"
+              className="select-field"
+              value={pvFile}
+              onChange={(e) => { setPvFile(e.target.value); preview(e.target.value) }}
+            >
+              {filePaths.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </Field>
+        ) : (
+          <Field
+            label="File path"
+            htmlFor="pv-path"
+            hint={
+              files.error?.status === 404
+                ? 'This backend is outdated — restart it to enable file listing, or type the path manually'
+                : 'Listing failed — type the path manually'
+            }
+          >
+            <TextInput
+              id="pv-path"
+              placeholder="data.csv"
+              value={pvFile}
+              onChange={(e) => setPvFile(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') preview(e.currentTarget.value) }}
+            />
+          </Field>
+        )}
+        <div className="mt-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={FileText}
+            loading={pvBusy}
+            onClick={() => { if (filePaths.length === 0 && !pvFile) files.refetch(); else preview(pvFile) }}
+          >
+            Preview
+          </Button>
+        </div>
+        {files.loading && (
+          <div className="mt-3"><LoadingState label="Listing files…" /></div>
+        )}
+        <div className="mt-3">
+          {pvBusy && <LoadingState label="Loading preview…" />}
+          {pvError && <Alert tone="error">{pvError}</Alert>}
+          {!pvBusy && !pvError && pvResult && (
+            pvResult.empty ? (
+              <EmptyState icon={FileText} title="Empty file" desc={`${pvResult.path} has no readable rows.`} />
+            ) : pvResult.isText ? (
+              <>
+                <div className="muted text-xs mb-2">{pvResult.path} · not tabular — showing raw text{pvResult.byteTruncated ? ' (truncated)' : ''}</div>
+                <pre className="code-block is-scroll">{pvResult.text}</pre>
+              </>
+            ) : (
+              <>
+                <div className="muted text-xs mb-2">
+                  {pvResult.path} · {pvResult.rows.length} row{pvResult.rows.length === 1 ? '' : 's'} shown
+                  {pvResult.rowTruncated ? ` · more rows in file (first ${PREVIEW_ROWS} shown)` : ''}
+                  {pvResult.byteTruncated ? ' · preview truncated at 512 KB' : ''}
+                </div>
+                <DataTable
+                  caption={`Preview of ${pvResult.path}`}
+                  keyOf={(_, i) => i}
+                  rows={pvResult.rows}
+                  pageSize={10}
+                  columns={pvResult.columns.map((c, i) => ({
+                    key: `c${i}`,
+                    header: c || `col ${i + 1}`,
+                    render: (r) => {
+                      const v = r[i] ?? ''
+                      return <span className="truncate" style={{ maxWidth: 220 }} title={v}>{v === '' ? <span className="muted">—</span> : v}</span>
+                    },
+                  }))}
+                />
+              </>
+            )
+          )}
+        </div>
+      </Panel>
+
       {log.length > 0 && (
         <Panel icon={Check} iconTone="success" title="Upload history (this session)">
           <div className="row-list">
@@ -290,21 +505,29 @@ function FilesTab({ name, defaultBranch, branches }) {
 /* ══════════════════════════════════════════════════════
    Commits + rollback
    ══════════════════════════════════════════════════════ */
-function CommitsTab({ name, commits, loading, error, onRefresh }) {
+function CommitsTab({
+  name, commits, loading, error, onRefresh,
+  branches, defaultBranch, message, onMessage, branch, onBranch,
+  rollbackTarget, onRollbackTarget,
+}) {
   const toast = useToast()
   const confirm = useConfirm()
-  const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [rollbackTarget, setRollbackTarget] = useState(null)
+
+  const branchNames = (Array.isArray(branches) ? branches : [])
+    .map((b) => (typeof b === 'string' ? b : b?.name))
+    .filter(Boolean)
+  const effectiveBranch = branch || defaultBranch || 'main'
+  const branchOptions = branchNames.length ? branchNames : [effectiveBranch]
 
   async function commit(e) {
     e.preventDefault()
     if (!message.trim()) { toast.warning('Message required', 'Describe the change before committing.'); return }
     setBusy(true)
     try {
-      await datasetsApi.commit(name, { message: message.trim() })
-      toast.success('Committed', message)
-      setMessage('')
+      await datasetsApi.commit(name, { message: message.trim() }, effectiveBranch)
+      toast.success('Committed', `${message} → ${effectiveBranch}`)
+      onMessage('')
       onRefresh()
     } catch (err) {
       toast.error('Commit failed', err?.message)
@@ -314,7 +537,7 @@ function CommitsTab({ name, commits, loading, error, onRefresh }) {
   async function rollback() {
     const ok = await confirm({
       title: 'Roll back to this commit?',
-      text: `A new commit will be written on main that restores ${String(rollbackTarget).slice(0, 10)} as the effective dataset state. History is never rewritten.`,
+      text: `A new commit will be written on ${effectiveBranch} that restores ${String(rollbackTarget).slice(0, 10)} as the effective dataset state. History is never rewritten.`,
       confirmLabel: 'Roll back',
       tone: 'danger',
     })
@@ -324,11 +547,11 @@ function CommitsTab({ name, commits, loading, error, onRefresh }) {
       // RollbackRequest accepts only { branch, commit_id } — the backend
       // generates its own commit message.
       await datasetsApi.rollback(name, {
-        branch: 'main',
+        branch: effectiveBranch,
         commit_id: rollbackTarget,
       })
-      toast.success('Rolled back', `Reverted to ${String(rollbackTarget).slice(0, 10)}.`)
-      setRollbackTarget(null)
+      toast.success('Rolled back', `Reverted to ${String(rollbackTarget).slice(0, 10)} on ${effectiveBranch}.`)
+      onRollbackTarget(null)
       onRefresh()
     } catch (err) {
       toast.error('Rollback failed', err?.message)
@@ -337,12 +560,21 @@ function CommitsTab({ name, commits, loading, error, onRefresh }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-      <Panel icon={Save} title="Commit pending changes" subtitle="Publish staged uploads to the branch head">
-        <form onSubmit={commit} className="field-row" style={{ gridTemplateColumns: '1fr auto', alignItems: 'end' }}>
-          <Field label="Commit message" htmlFor="commit-msg" required>
-            <TextInput id="commit-msg" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Add churn features" />
+      <Panel icon={Save} title="Commit pending changes" subtitle={`Publish staged uploads to the ${effectiveBranch} branch head`}>
+        <form onSubmit={commit} className="field-row field-row-3">
+          <Field label="Branch" htmlFor="commit-branch" hint="Staged uploads land here">
+            <select id="commit-branch" className="select-field" value={effectiveBranch} onChange={(e) => onBranch(e.target.value)}>
+              {branchOptions.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
           </Field>
-          <Button type="submit" variant="primary" icon={GitCommitHorizontal} loading={busy}>Commit</Button>
+          <Field label="Commit message" htmlFor="commit-msg" required>
+            <TextInput id="commit-msg" value={message} onChange={(e) => onMessage(e.target.value)} placeholder="Add churn features" />
+          </Field>
+          <Field label="&nbsp;">
+            <Button type="submit" variant="primary" icon={GitCommitHorizontal} loading={busy} block>Commit</Button>
+          </Field>
         </form>
       </Panel>
 
@@ -380,7 +612,7 @@ function CommitsTab({ name, commits, loading, error, onRefresh }) {
                 {
                   key: 'actions', actions: true, header: <span className="sr-only">Actions</span>,
                   render: (c) => (
-                    <Button variant="danger-ghost" size="xs" icon={Undo2} onClick={() => setRollbackTarget(c.id)}>
+                    <Button variant="danger-ghost" size="xs" icon={Undo2} onClick={() => onRollbackTarget(c.id)}>
                       Roll back
                     </Button>
                   ),
@@ -392,24 +624,24 @@ function CommitsTab({ name, commits, loading, error, onRefresh }) {
 
       <Modal
         open={!!rollbackTarget}
-        onClose={() => setRollbackTarget(null)}
+        onClose={() => onRollbackTarget(null)}
         title="Roll back dataset"
         subtitle={`Target commit ${String(rollbackTarget || '').slice(0, 10)}`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setRollbackTarget(null)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => onRollbackTarget(null)}>Cancel</Button>
             <Button variant="danger" icon={Undo2} loading={busy} onClick={rollback}>Roll back</Button>
           </>
         }
       >
         <div className="flex flex-col gap-3">
           <Alert tone="warning">
-            Rolling back writes a <strong>new</strong> commit on main — existing history is never
+            Rolling back writes a <strong>new</strong> commit on {effectiveBranch} — existing history is never
             rewritten, so you can always roll forward again.
           </Alert>
           <KeyValue
             items={[
-              ['Branch', 'main'],
+              ['Branch', effectiveBranch],
               ['Restore commit', <code key="c" className="mono">{String(rollbackTarget || '')}</code>],
               ['Commits kept', 'all of them'],
             ]}
@@ -613,24 +845,32 @@ function TagsTab({ name, tags, commits, loading, error, onRefresh }) {
 /* ══════════════════════════════════════════════════════
    Compare (three-dot diff)
    ══════════════════════════════════════════════════════ */
-function CompareTab({ name, refs, commits }) {
+function CompareTab({ name, branches, tags, commits, left, onLeft, right, onRight, rows, onRows }) {
   const toast = useToast()
-  const [left, setLeft] = useState('main')
-  const [right, setRight] = useState('')
-  const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const options = [...new Set([...refs, 'main', ...commits.map((c) => String(c.id).slice(0, 10))])].filter(Boolean)
+  const branchNames = (Array.isArray(branches) ? branches : [])
+    .map((b) => (typeof b === 'string' ? b : b?.name))
+    .filter(Boolean)
+  const tagNames = (Array.isArray(tags) ? tags : [])
+    .map((t) => (typeof t === 'string' ? t : t?.name))
+    .filter(Boolean)
+  const commitIds = (Array.isArray(commits) ? commits : [])
+    .map((c) => String(c?.id || '').slice(0, 10))
+    .filter(Boolean)
+  // Harden the restored left ref (e.g. a branch deleted elsewhere).
+  const leftOptions = [...new Set([...branchNames, ...tagNames, ...commitIds, 'main'])]
+  const effectiveLeft = leftOptions.includes(left) ? left : (leftOptions[0] || 'main')
 
   async function run() {
-    if (!left || !right) { toast.warning('Pick both refs', 'Choose a left and right ref to compare.'); return }
+    if (!effectiveLeft || !right) { toast.warning('Pick both refs', 'Choose a left and right ref to compare.'); return }
     setLoading(true); setError(null)
     try {
-      const res = await datasetsApi.compare(name, left, right, 'three_dot')
-      setRows(Array.isArray(res) ? res : [])
+      const res = await datasetsApi.compare(name, effectiveLeft, right, 'three_dot')
+      onRows(Array.isArray(res) ? res : [])
     } catch (err) {
-      setError(err); setRows(null)
+      setError(err); onRows(null)
     } finally { setLoading(false) }
   }
 
@@ -652,18 +892,56 @@ function CompareTab({ name, refs, commits }) {
       <Panel icon={GitCompareArrows} title="Compare refs" subtitle="Three-dot diff between two branches, tags or commits">
         <div className="field-row field-row-3">
           <Field label="Left ref" htmlFor="cmp-left">
-            <TextInput id="cmp-left" list="ref-options" value={left} onChange={(e) => setLeft(e.target.value)} />
+            <select id="cmp-left" className="select-field" value={effectiveLeft} onChange={(e) => onLeft(e.target.value)}>
+              <optgroup label="Branches">
+                {branchNames.map((b) => (
+                  <option key={`b:${b}`} value={b}>{b}</option>
+                ))}
+              </optgroup>
+              {tagNames.length > 0 && (
+                <optgroup label="Tags">
+                  {tagNames.map((t) => (
+                    <option key={`t:${t}`} value={t}>{t}</option>
+                  ))}
+                </optgroup>
+              )}
+              {commitIds.length > 0 && (
+                <optgroup label="Commits">
+                  {commitIds.map((c) => (
+                    <option key={`c:${c}`} value={c}>{c}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
           </Field>
           <Field label="Right ref" htmlFor="cmp-right">
-            <TextInput id="cmp-right" list="ref-options" value={right} onChange={(e) => setRight(e.target.value)} placeholder="v1.0-release" />
+            <select id="cmp-right" className="select-field" value={right} onChange={(e) => onRight(e.target.value)}>
+              <option value="" disabled>Select a ref…</option>
+              <optgroup label="Branches">
+                {branchNames.map((b) => (
+                  <option key={`b:${b}`} value={b}>{b}</option>
+                ))}
+              </optgroup>
+              {tagNames.length > 0 && (
+                <optgroup label="Tags">
+                  {tagNames.map((t) => (
+                    <option key={`t:${t}`} value={t}>{t}</option>
+                  ))}
+                </optgroup>
+              )}
+              {commitIds.length > 0 && (
+                <optgroup label="Commits">
+                  {commitIds.map((c) => (
+                    <option key={`c:${c}`} value={c}>{c}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
           </Field>
           <Field label="&nbsp;">
             <Button variant="primary" icon={GitCompareArrows} loading={loading} onClick={run} block>Compare</Button>
           </Field>
         </div>
-        <datalist id="ref-options">
-          {options.map((o) => <option key={o} value={o} />)}
-        </datalist>
       </Panel>
 
       <Panel
@@ -829,7 +1107,7 @@ function ManageTab({ name, dbMeta, onSaved, onDeleted }) {
           <span className="row-glyph is-danger"><Trash2 size={15} /></span>
           <span className="row-info">
             <span className="row-title">Delete this dataset</span>
-            <span className="row-sub" style={{ whiteSpace: 'normal' }}>
+            <span className="row-sub">
               Removes the lakeFS repository, all branches and tags, and the PostgreSQL record.
             </span>
           </span>

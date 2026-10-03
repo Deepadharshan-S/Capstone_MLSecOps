@@ -18,12 +18,9 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.models.blacklisted_token import BlacklistedToken
 from app.schemas.auth import UserCreate
-<<<<<<< Updated upstream
 from app.repositories.user_repository import UserRepository
 from app.repositories.token_repository import RefreshTokenRepository, BlacklistedTokenRepository
-=======
 from app.core.config import settings
->>>>>>> Stashed changes
 from app.core.logging_config import log_audit_event
 from app.services.auth.exceptions import (
     WeakPasswordError,
@@ -243,25 +240,8 @@ class AuthService:
             db.rollback()
             raise AuthDomainError(
                 detail="An error occurred during token generation.",
-<<<<<<< Updated upstream
                 status_code=500,
             ) from e
-=======
-            )
-
-        # HttpOnly cookie for the refresh token. Secure must be False on
-        # plain http://localhost or browsers silently drop the cookie and
-        # every /auth/refresh returns 401 "Refresh token missing".
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=settings.COOKIE_SECURE,
-            samesite="lax",
-            max_age=7 * 24 * 3600,
-            path="/api/auth",
-        )
->>>>>>> Stashed changes
 
         log_audit_event(
             "login_success",
@@ -354,22 +334,8 @@ class AuthService:
             db.rollback()
             raise AuthDomainError(
                 detail="An error occurred during token rotation.",
-<<<<<<< Updated upstream
                 status_code=500,
             ) from e
-=======
-            )
-
-        response.set_cookie(
-            key="refresh_token",
-            value=new_refresh_token,
-            httponly=True,
-            secure=settings.COOKIE_SECURE,
-            samesite="lax",
-            max_age=7 * 24 * 3600,
-            path="/api/auth",
-        )
->>>>>>> Stashed changes
 
         log_audit_event(
             "token_refresh_success",

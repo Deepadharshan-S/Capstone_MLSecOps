@@ -85,10 +85,10 @@ export default function Experiments() {
           sub={tab === 'runs' ? 'aggregated, newest first' : 'open the All runs tab'}
         />
         <StatCard icon={Layers} tone="purple" value={expList.filter((e) => e.lifecycle_stage === 'active').length} label="Active" sub="lifecycle stage" />
-        <StatCard icon={Activity} tone="success" value={runRows?.length || 0} label={tab === 'runs' ? 'Visible runs' : 'Runs in view'} sub="current filter" />
+        <StatCard icon={Activity} tone="success" value={runRows?.length || 0} label="Runs in view" sub="current filter" />
       </div>
 
-      <div className="flex items-center justify-between gap-3" style={{ flexWrap: 'wrap' }}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <Tabs
           active={tab}
           onChange={setTab}
@@ -104,7 +104,7 @@ export default function Experiments() {
         <Panel
           icon={FlaskConical}
           title="Experiments"
-          subtitle={`${filteredExp.length} of ${expList.length}`}
+          subtitle={`${filteredExp.length} of ${expList.length} experiments`}
           bodyClass={filteredExp.length ? 'tight' : ''}
         >
           {experiments.loading ? (
@@ -229,7 +229,7 @@ function RunsTable({ rows }) {
           render: (r) => {
             const entries = Object.entries(r.metrics || {}).slice(0, 4)
             return entries.length
-              ? <span className="mono text-xs">{entries.map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join('  ')}</span>
+              ? <span className="mono text-xs">{entries.map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join(' · ')}</span>
               : <span className="muted">—</span>
           },
         },

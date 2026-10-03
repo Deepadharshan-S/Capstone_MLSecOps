@@ -34,6 +34,7 @@ from app.schemas.dataset import (
     BranchResponse,
     CreateTagRequest,
     TagResponse,
+    FileEntryResponse,
 )
 from app.services.dependencies import get_data_service
 from app.services.dataset import DataService
@@ -47,7 +48,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
-def register_dataset(
+async def register_dataset(
     name: str = Form(...),
     description: Optional[str] = Form(None),
     file: UploadFile = File(...),
@@ -58,17 +59,6 @@ def register_dataset(
     """
     Registers a new dataset (creates database record and lakeFS repository) and uploads the dataset file via streaming.
     """
-<<<<<<< Updated upstream
-    db_dataset = data_service.register_dataset(
-        db=db,
-        dataset_name=name,
-        description=description,
-        user_id=user.id,
-        username=user.username,
-    )
-
-=======
->>>>>>> Stashed changes
     file_path = file.filename
     if not file_path:
         raise HTTPException(
@@ -82,16 +72,6 @@ def register_dataset(
             detail=f"Only .csv files are supported for training. Got '{file_path}'.",
         )
 
-<<<<<<< Updated upstream
-    data_service.upload_file(
-        db=db,
-        dataset_name=name,
-        file_path=file_path,
-        content=file.file,
-        branch_name=db_dataset.default_branch,
-        username=user.username,
-    )
-=======
     try:
         db_dataset = data_service.register_dataset(
             db=db,
@@ -142,7 +122,6 @@ def register_dataset(
         except Exception:
             pass
         raise
->>>>>>> Stashed changes
 
     return db_dataset
 
@@ -334,6 +313,21 @@ def update_dataset_metadata(
 
 
 # --- Branch Management Endpoints ---
+
+
+@router.get("/{dataset_name}/files", response_model=list[FileEntryResponse])
+def list_files(
+    dataset_name: str,
+    ref: Optional[str] = "main",
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Lists objects stored under a ref (branch, tag or commit id).
+    Powers the Files-tab preview picker — no path typing required.
+    """
+    return data_service.list_files(db, dataset_name, ref_id=ref or "main")
 
 
 @router.get("/{dataset_name}/branches", response_model=list[BranchResponse])

@@ -276,10 +276,7 @@ class ModelTrainingService:
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
         db: Optional[Session] = None,
-<<<<<<< Updated upstream
-=======
         job_svc=None,
->>>>>>> Stashed changes
     ) -> dict:
         """
         Submits an automated pipeline training job either via Kubernetes RayJob CRD
@@ -304,17 +301,9 @@ class ModelTrainingService:
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
 
-        if db and job_svc:
-            job_svc.create_job(
-                db=db,
-                job_id=job_id,
-                user_id=user.id,
-                dataset_id=dataset_id,
-                model_type=model_type,
-                target_column=target_column,
-                model_name=output_model_name,
-                experiment_name=experiment_name,
-            )
+        # NOTE: the initial DB record is persisted by self._record_job below
+        # (RayJob schema). Do NOT also call the legacy job_svc.create_job
+        # here — it would insert a second row with a duplicate job_id.
 
         log_audit_event(
             "model_training_initiated",

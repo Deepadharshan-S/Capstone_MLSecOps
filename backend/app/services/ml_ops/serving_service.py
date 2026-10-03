@@ -34,11 +34,7 @@ class ModelServingService:
         Routes request directly to the active live Kubernetes RayService endpoint.
         Returns 503 with Retry-After header if the RayService is initializing or offline.
         """
-<<<<<<< Updated upstream
-        from mlflow.tracking import MlflowClient
-=======
         mlflow, MlflowClient = load_mlflow()
->>>>>>> Stashed changes
 
         start_time = time.time()
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)

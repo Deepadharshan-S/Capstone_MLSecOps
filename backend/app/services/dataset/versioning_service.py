@@ -94,6 +94,17 @@ class DatasetVersioningService:
                 detail=f"Failed to list branches: {str(e)}",
             )
 
+    def list_files(self, db: Session, dataset_name: str, ref_id: str) -> list[dict]:
+        """Lists objects stored under a ref (branch, tag or commit)."""
+        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        try:
+            return self.version_control_service.list_files(sanitized_repo_name, ref_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to list files: {str(e)}",
+            )
+
     def delete_branch(
         self, db: Session, dataset_name: str, branch_name: str, username: str
     ) -> dict:

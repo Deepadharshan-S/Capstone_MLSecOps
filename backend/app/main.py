@@ -1,11 +1,6 @@
-<<<<<<< Updated upstream
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-=======
-from contextlib import asynccontextmanager
-
->>>>>>> Stashed changes
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -45,6 +40,11 @@ logger = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Import mlflow once, single-threaded, before uvicorn accepts any request.
+    # Its first import is not thread-safe: a cold dashboard load otherwise races
+    # it from three handlers at once and leaves a half-initialized mlflow.tracking
+    # in sys.modules that only a restart can clear.
+    warm_mlflow()
     cleanup_task = None
     if settings.TOKEN_CLEANUP_ENABLED:
         cleanup_task = asyncio.create_task(
@@ -67,17 +67,6 @@ async def lifespan(app: FastAPI):
             logger.info("Automated token cleanup background task stopped.")
 
 
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    # Import mlflow once, single-threaded, before uvicorn accepts any request.
-    # Its first import is not thread-safe: a cold dashboard load otherwise races
-    # it from three handlers at once and leaves a half-initialized mlflow.tracking
-    # in sys.modules that only a restart can clear.
-    warm_mlflow()
-    yield
-
-
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -86,15 +75,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-<<<<<<< Updated upstream
-    allow_origins=settings.CORS_ORIGINS,
-=======
     allow_origins=[
         origin.strip()
         for origin in settings.ALLOWED_ORIGINS.split(",")
         if origin.strip()
     ],
->>>>>>> Stashed changes
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -181,6 +166,25 @@ def health(
     storage_service: ObjectStorageService = Depends(get_storage_service),
     ml_ops_service: MLOpsService = Depends(get_ml_ops_service),
 ):
+    # Each downstream check runs with a hard timeout: the SDK clients have
+    # no timeout of their own, and a dead container (Docker down, proxy
+    # blackholing TCP) would otherwise hang this endpoint — and every
+    # dashboard panel polling it — indefinitely.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def check_with_timeout(fn, timeout_s=5):
+        ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = ex.submit(fn)
+            return fut.result(timeout=timeout_s)
+        except Exception as e:
+            detail = str(e).strip()
+            if type(e).__name__ == "TimeoutError" or not detail:
+                detail = f"no response within {timeout_s}s"
+            return False, f"error: {detail[:150]}"
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+
     # 1. Database check (PostgreSQL)
     db_status = "connected"
     try:
@@ -189,13 +193,13 @@ def health(
         db_status = f"error: {str(e)}"
 
     # 2. lakeFS check (Version Control)
-    is_lakefs_healthy, lakefs_status = version_control_service.check_health()
+    is_lakefs_healthy, lakefs_status = check_with_timeout(version_control_service.check_health)
 
     # 3. MinIO S3 check (Object Storage)
-    is_minio_healthy, minio_status = storage_service.check_health()
+    is_minio_healthy, minio_status = check_with_timeout(storage_service.check_health)
 
     # 4. MLflow check (Tracking & Model Registry)
-    is_mlflow_healthy, mlflow_status = ml_ops_service.check_health()
+    is_mlflow_healthy, mlflow_status = check_with_timeout(ml_ops_service.check_health)
 
     is_healthy = (
         db_status == "connected"

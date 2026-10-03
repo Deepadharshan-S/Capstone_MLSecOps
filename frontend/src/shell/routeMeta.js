@@ -14,8 +14,8 @@ export function routeMeta(pathname) {
     experiments: 'Experiments',
     admin: 'Admin',
   }
-  const title = TITLES[base] || 'MLSecOps'
-  const crumbs = [{ label: 'MLSecOps', to: '/' }, { label: title }]
+  const title = TITLES[base] || 'SentinelML'
+  const crumbs = [{ label: 'SentinelML', to: '/' }, { label: title }]
   if (base === 'datasets' && seg[1]) crumbs.push({ label: decodeURIComponent(seg[1]) })
   if (base === 'jobs' && seg[1]) crumbs.push({ label: seg[1] })
   if (base === 'registry' && seg[1]) crumbs.push({ label: decodeURIComponent(seg[1]) })

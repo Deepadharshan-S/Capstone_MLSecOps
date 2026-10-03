@@ -324,7 +324,6 @@ def spawn_local_ray_subprocess(
             env["LAKEFS_ENDPOINT"] = settings.LAKEFS_ENDPOINT
             env["LAKEFS_ACCESS_KEY_ID"] = scoped_creds["lakefs_access_key_id"]
             env["LAKEFS_SECRET_ACCESS_KEY"] = scoped_creds["lakefs_secret_access_key"]
-<<<<<<< Updated upstream
             res = subprocess.run(cmd, capture_output=True, text=True, env=env)
             output_log = f"{res.stdout}\n{res.stderr}".strip()
             try:
@@ -333,6 +332,31 @@ def spawn_local_ray_subprocess(
                 s3_svc.put_log_content("mlflow", f"logs/{job_id}/training.log", output_log)
             except Exception as log_err:
                 logger.warning(f"Failed to upload local training log for {job_id}: {log_err}")
+
+            # Persist a results file for JobService.get_job polling, which
+            # flips "training" jobs to completed/failed when it sees one.
+            import json as _json
+            dst_results = os.path.join(RESULTS_DIR, f"{job_id}.json")
+            try:
+                if res.returncode == 0:
+                    src_results = os.path.join(temp_job_dir, "results.json")
+                    if os.path.exists(src_results):
+                        shutil.copy2(src_results, dst_results)
+                    else:
+                        with open(dst_results, "w") as f:
+                            _json.dump({"status": "completed", "job_id": job_id}, f)
+                else:
+                    with open(dst_results, "w") as f:
+                        _json.dump(
+                            {
+                                "status": "failed",
+                                "job_id": job_id,
+                                "error": (res.stderr[:500] if res.stderr else "Local training subprocess failed"),
+                            },
+                            f,
+                        )
+            except Exception as res_err:
+                logger.warning(f"Failed to write local training result for {job_id}: {res_err}")
 
             try:
                 from app.db.session import SessionLocal
@@ -384,34 +408,14 @@ def spawn_local_ray_subprocess(
                         repo.save(tj)
             except Exception as db_rec_err:
                 logger.warning(f"Failed to record subprocess error for job {job_id}: {db_rec_err}")
-=======
-            subprocess.run(cmd, check=True, env=env)
-
-            # Copy results from job_dir to persistent location
-            src_results = os.path.join(temp_job_dir, "results.json")
-            dst_results = os.path.join(RESULTS_DIR, f"{job_id}.json")
-            if os.path.exists(src_results):
-                shutil.copy2(src_results, dst_results)
-            else:
-                # Write a minimal success result if the wrapper didn't produce one
-                import json as _json
-                with open(dst_results, "w") as f:
-                    _json.dump({"status": "completed", "job_id": job_id}, f)
-
-            log_audit_event(
-                "model_training_completed",
-                username,
-                None,
-                success_description,
-            )
-        except Exception as subprocess_err:
-            # Write failure result
+            # Write failure result so polling flips the job to failed.
             import json as _json
             dst_results = os.path.join(RESULTS_DIR, f"{job_id}.json")
-            with open(dst_results, "w") as f:
-                _json.dump({"status": "failed", "job_id": job_id, "error": str(subprocess_err)}, f)
-
->>>>>>> Stashed changes
+            try:
+                with open(dst_results, "w") as f:
+                    _json.dump({"status": "failed", "job_id": job_id, "error": str(subprocess_err)}, f)
+            except Exception as res_err:
+                logger.warning(f"Failed to write local training failure result for {job_id}: {res_err}")
             log_audit_event(
                 "model_training_error",
                 username,

@@ -49,8 +49,8 @@ export default function Sidebar({ collapsed, onToggle, onNavigate, health }) {
   return (
     <aside className="sidebar" id="app-sidebar" aria-label="Primary navigation">
       <div className="sidebar-brand">
-        <div className="sidebar-logo" aria-hidden>M</div>
-        <span className="sidebar-brand-name">ML<span>SecOps</span></span>
+        <div className="sidebar-logo" aria-hidden>S</div>
+        <span className="sidebar-brand-name">Sentinel<span>ML</span></span>
         <button
           className="sidebar-collapse"
           onClick={onToggle}
@@ -96,7 +96,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate, health }) {
           <span>{healthLabel}</span>
         </div>
         <div className="sidebar-meta">
-          MLSecOps Platform v1.0<br />
+          SentinelML Platform v1.0<br />
           Capstone · {new Date().getFullYear()}
         </div>
       </div>

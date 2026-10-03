@@ -12,13 +12,10 @@ from app.schemas.ml_ops import (
     DeployModelSchema,
     ManageDeploymentSchema,
     TrainModelResponse,
-<<<<<<< Updated upstream
     RayJobListResponse,
     RayJobDetailResponse,
     RayJobLogsResponse,
-=======
     JobStatusResponse,
->>>>>>> Stashed changes
     ModelListResponse,
     DeployModelResponse,
     ManageDeploymentResponse,
@@ -35,27 +32,72 @@ from app.services.dependencies import (
     get_model_deployment_service,
     get_model_serving_service,
     get_model_registry_service,
-<<<<<<< Updated upstream
     get_training_job_service,
-=======
     get_job_service,
->>>>>>> Stashed changes
 )
 from app.services.ml_ops import (
     ModelTrainingService,
     ModelDeploymentService,
     ModelServingService,
     ModelRegistryService,
-<<<<<<< Updated upstream
     TrainingJobService,
     JobNotFoundError,
     JobAccessDeniedError,
-=======
     JobService,
->>>>>>> Stashed changes
 )
 
 router = APIRouter(prefix="", tags=["mlops"])
+
+
+# Legacy `/jobs` API compatibility.
+#
+# The `training_jobs` table now uses the RayJob schema (canonical statuses
+# PENDING/RUNNING/SUCCEEDED/FAILED, no progress or per-metric columns), but
+# the dashboard/Jobs/Pipeline UI consumes the legacy `JobStatusResponse`
+# shape with lowercase statuses (pending/training/completed/failed) and a
+# numeric progress. This mapper bridges the two so the panels load; metric
+# fields are None for Ray-scheduled rows (metrics live in MLflow tracking).
+_LEGACY_STATUS = {
+    "PENDING": "pending",
+    "RUNNING": "training",
+    "SUCCEEDED": "completed",
+    "FAILED": "failed",
+}
+
+# Status-derived progress estimate (the table tracks status, not percent).
+_LEGACY_PROGRESS = {
+    "pending": 5,
+    "training": 50,
+    "completed": 100,
+    "failed": 100,
+}
+
+
+def _to_job_status_response(job) -> JobStatusResponse:
+    legacy_status = _LEGACY_STATUS.get(
+        str(job.status).upper(),
+        str(job.status).lower(),
+    )
+    return JobStatusResponse(
+        job_id=job.job_id,
+        status=legacy_status,
+        progress=_LEGACY_PROGRESS.get(legacy_status, 0),
+        model_name=job.model_name,
+        model_type=None,
+        dataset_id=job.dataset_id,
+        accuracy=None,
+        precision_score=None,
+        recall_score=None,
+        f1_score=None,
+        training_duration=job.duration_seconds,
+        confusion_matrix=None,
+        feature_importance=None,
+        roc_curve=None,
+        history=None,
+        error_message=job.error_message,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+    )
 
 
 @router.post(
@@ -112,10 +154,7 @@ def train_pipeline(
         experiment_name=train_info.experiment_name,
         model_name=train_info.model_name,
         db=db,
-<<<<<<< Updated upstream
-=======
         job_svc=job_svc,
->>>>>>> Stashed changes
     )
 
 
@@ -471,26 +510,7 @@ def get_job_status(
     Get the status and results of a training job.
     """
     job = job_svc.get_job(db, job_id)
-    return JobStatusResponse(
-        job_id=job.job_id,
-        status=job.status,
-        progress=job.progress,
-        model_name=job.model_name,
-        model_type=job.model_type,
-        dataset_id=job.dataset_id,
-        accuracy=job.accuracy,
-        precision_score=job.precision_score,
-        recall_score=job.recall_score,
-        f1_score=job.f1_score,
-        training_duration=job.training_duration,
-        confusion_matrix=job.confusion_matrix,
-        feature_importance=job.feature_importance,
-        roc_curve=job.roc_curve,
-        history=job.history,
-        error_message=job.error_message,
-        started_at=job.started_at,
-        completed_at=job.completed_at,
-    )
+    return _to_job_status_response(job)
 
 
 @router.get("/jobs", response_model=list[JobStatusResponse])
@@ -504,26 +524,4 @@ def list_user_jobs(
     List recent training jobs for the current user.
     """
     jobs = job_svc.get_user_jobs(db, user.id, limit=limit)
-    return [
-        JobStatusResponse(
-            job_id=j.job_id,
-            status=j.status,
-            progress=j.progress,
-            model_name=j.model_name,
-            model_type=j.model_type,
-            dataset_id=j.dataset_id,
-            accuracy=j.accuracy,
-            precision_score=j.precision_score,
-            recall_score=j.recall_score,
-            f1_score=j.f1_score,
-            training_duration=j.training_duration,
-            confusion_matrix=j.confusion_matrix,
-            feature_importance=j.feature_importance,
-            roc_curve=j.roc_curve,
-            history=j.history,
-            error_message=j.error_message,
-            started_at=j.started_at,
-            completed_at=j.completed_at,
-        )
-        for j in jobs
-    ]
+    return [_to_job_status_response(j) for j in jobs]

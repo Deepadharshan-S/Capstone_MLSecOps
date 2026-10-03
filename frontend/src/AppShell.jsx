@@ -7,7 +7,7 @@ import { ToastProvider, ConfirmProvider } from './components/ui/index.jsx'
 function BootScreen() {
   return (
     <div className="boot-screen">
-      <div className="boot-mark">M</div>
+      <div className="boot-mark">S</div>
       <div className="spinner" />
       <div className="boot-text">Restoring your session…</div>
     </div>

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   datasetsApi, mlOpsApi,
 } from '../api/endpoints.js'
-import { useFetch } from '../hooks/useFetch.js'
+import { useFetch, useDebounced } from '../hooks/useFetch.js'
 import {
   AVAILABLE_ALGORITHMS, toRepoName, formatAccuracy, fmtUnixDate,
 } from '../lib/models.js'
@@ -23,6 +23,25 @@ import {
 
 // recharts lives in JobResults — defer it until the Results stage renders.
 const JobResults = lazy(() => import('./JobResults.jsx'))
+
+// Draft persistence: navigating away unmounts this route, so the wizard
+// state (dataset, hyperparams, run output…) is snapshotted to sessionStorage
+// and restored on mount. Job polling resumes for still-active runs.
+const DRAFT_KEY = 'sentinelml.pipeline.draft'
+
+function loadDraft() {
+  try {
+    const raw = window.sessionStorage.getItem(DRAFT_KEY)
+    const d = raw ? JSON.parse(raw) : null
+    return d && typeof d === 'object' ? d : null
+  } catch {
+    return null
+  }
+}
+
+function clearDraft() {
+  try { window.sessionStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
+}
 
 /* ══════════════════════════════════════════════════════
    Step model
@@ -179,7 +198,7 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
           <span className="file-drop-sub">
             {canUpload ? 'Max 100 MB · registered as a versioned lakeFS repository' : 'Your role cannot upload datasets'}
           </span>
-          <span className="pill-row" style={{ marginTop: 6, justifyContent: 'center' }}>
+          <span className="pill-row" style={{ justifyContent: 'center' }}>
             <span className="format-chip">csv</span>
             <span className="format-chip">header row</span>
             <span className="format-chip">numeric + categorical</span>
@@ -201,7 +220,7 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
         title="Or pick an existing dataset"
         subtitle={`${datasets.length} dataset${datasets.length === 1 ? '' : 's'} available`}
         actions={<TextInput placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 200 }} />}
-        bodyClass={visible.length ? 'tight' : ''}
+        bodyClass={visible.length ? 'tight-padded' : ''}
       >
         {visible.length === 0 ? (
           <EmptyState
@@ -210,7 +229,7 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
             desc={datasets.length ? 'Nothing matches that filter.' : 'Upload a CSV above to get started.'}
           />
         ) : (
-          <div style={{ padding: 'var(--sp-4) var(--sp-5)' }}>
+          <div>
             <div className="row-list">
               {visible.map((d) => {
                 const isSel = selected?.name === d.name
@@ -256,11 +275,19 @@ function VersionStep({ dataset, ref, onRefChange }) {
   const name = dataset?.name
   const branches = useFetch(() => datasetsApi.branches(name), [name], { enabled: !!name })
   const tags = useFetch(() => datasetsApi.tags(name), [name], { enabled: !!name })
-  const commits = useFetch(() => datasetsApi.commits(name, ref), [name, ref], { enabled: !!name })
+  // Debounce the free-typed ref: without this, every keystroke fires a
+  // lakeFS-backed commits request and flips the panel into its loading
+  // skeleton, making the whole page jump while typing.
+  const commitsRef = useDebounced(ref, 500)
+  const commits = useFetch(() => datasetsApi.commits(name, commitsRef), [name, commitsRef], { enabled: !!name })
 
   const branchList = Array.isArray(branches.data) ? branches.data : branches.data?.branches || []
   const tagList = Array.isArray(tags.data) ? tags.data : tags.data?.tags || []
   const commitList = Array.isArray(commits.data) ? commits.data : commits.data?.commits || []
+  // useFetch keeps the previous payload while refetching, so keep rendering
+  // it: only the very first load (no data yet) shows a skeleton. This is
+  // what stops the panel flashing on every ref change.
+  const showCommitsLoading = commits.loading && commitList.length === 0
 
   if (!name) {
     return <EmptyState icon={GitBranch} title="Pick a dataset first" desc="A dataset is required before choosing a version ref." />
@@ -311,8 +338,8 @@ function VersionStep({ dataset, ref, onRefChange }) {
         )}
       </Panel>
 
-      <Panel icon={GitCommitHorizontal} title="Recent commits" subtitle={`On ref "${ref || 'main'}"`} bodyClass={commitList.length ? 'tight' : ''}>
-        {commits.loading ? (
+      <Panel icon={GitCommitHorizontal} title="Recent commits" subtitle={`On ref "${commitsRef || 'main'}"`} bodyClass={commitList.length ? 'tight' : ''}>
+        {showCommitsLoading ? (
           <LoadingState label="Loading commits…" />
         ) : commitList.length === 0 ? (
           <EmptyState icon={GitCommitHorizontal} title="No commits" desc="Commit your data to create a version." />
@@ -540,37 +567,44 @@ export default function Pipeline() {
   const confirm = useConfirm()
   const { hasPermission } = useAuth()
 
-  const [step, setStep] = useState(0)
-  const [maxReached, setMaxReached] = useState(0)
+  const canRun = hasPermission('models:train')
+  const canUpload = hasPermission('datasets:upload')
+
+  // Snapshot of the pre-navigation draft; consumed only by the initializers
+  // and the mount effects below (never written back during the session).
+  const [draft] = useState(loadDraft)
+
+  const [step, setStep] = useState(() => draft?.step ?? 0)
+  const [maxReached, setMaxReached] = useState(() => draft?.maxReached ?? 0)
 
   const [datasets, setDatasets] = useState([])
   const [dsLoading, setDsLoading] = useState(true)
   const [dsError, setDsError] = useState(null)
   const [selectedDs, setSelectedDs] = useState(null)
-  const [ref, setRef] = useState('main')
+  const [ref, setRef] = useState(() => draft?.ref ?? 'main')
 
-  const [mode, setMode] = useState('pipeline')
-  const [modelId, setModelId] = useState('')
-  const [hyperparams, setHyperparams] = useState({})
-  const [meta, setMeta] = useState({ experiment_name: '', model_name: '', target_column: 'label' })
-  const [code, setCode] = useState(DEFAULT_CODE)
-  const [epochs, setEpochs] = useState(10)
+  const [mode, setMode] = useState(() => draft?.mode ?? 'pipeline')
+  const [modelId, setModelId] = useState(() => draft?.modelId ?? '')
+  const [hyperparams, setHyperparams] = useState(() => draft?.hyperparams ?? {})
+  const [meta, setMeta] = useState(() => ({
+    experiment_name: '', model_name: '', target_column: 'label',
+    ...(draft?.meta || {}),
+  }))
+  const [code, setCode] = useState(() => draft?.code ?? DEFAULT_CODE)
+  const [epochs, setEpochs] = useState(() => draft?.epochs ?? 10)
 
   const supported = useFetch(() => mlOpsApi.supportedModels(), [])
   const registered = useFetch(() => mlOpsApi.listModels(), [])
 
-  const [job, setJob] = useState(null)        // { job_id, status }
-  const [progress, setProgress] = useState(0)
+  const [job, setJob] = useState(() => draft?.job ?? null)        // { job_id, status }
+  const [progress, setProgress] = useState(() => draft?.progress ?? 0)
   const [logs, setLogs] = useState([])
-  const [results, setResults] = useState(null)
+  const [results, setResults] = useState(() => draft?.results ?? null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
 
   const pollRef = useRef(null)
   const pollFails = useRef(0)
-
-  const canRun = hasPermission('models:train')
-  const canUpload = hasPermission('datasets:upload')
 
   /* ── datasets ─────────────────────────────────── */
   const loadDatasets = useCallback(async () => {
@@ -592,10 +626,60 @@ export default function Pipeline() {
   useEffect(() => { loadDatasets() }, [loadDatasets])
 
   /* ── seed hyperparams when the model changes ──── */
+  // Skip the mount run when a draft was restored: the saved hyperparameters
+  // are authoritative, reseeding would wipe user edits on every return.
+  const modelIdPrev = useRef(modelId)
   useEffect(() => {
+    if (modelIdPrev.current === modelId) return
+    modelIdPrev.current = modelId
     const preset = AVAILABLE_ALGORITHMS.find((a) => a.id === modelId)
     setHyperparams({ ...(preset?.params || {}) })
   }, [modelId])
+
+  /* ── draft persistence ────────────────────────── */
+  // Re-resolve the saved dataset by name once the fresh list arrives. If it
+  // is gone (deleted elsewhere), fall back to step 0 instead of stranding
+  // the wizard on a phantom selection.
+  const rehydratedDs = useRef(false)
+  useEffect(() => {
+    if (rehydratedDs.current || dsLoading) return
+    rehydratedDs.current = true
+    const name = draft?.selectedDsName
+    if (!name) return
+    const found = datasets.find((d) => (d.name || d.repository || d) === name)
+    if (found) {
+      setSelectedDs(found)
+    } else if ((draft?.step ?? 0) > 0) {
+      setStep(0)
+      setMaxReached(0)
+    }
+  }, [datasets, dsLoading, draft])
+
+  // Snapshot the wizard on every meaningful change so navigating away and
+  // back restores the exact state (ephemeral list/loading/logs excluded).
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        step,
+        maxReached,
+        selectedDsName: selectedDs?.name || null,
+        ref,
+        mode,
+        modelId,
+        hyperparams,
+        meta,
+        epochs,
+        code,
+        job,
+        progress,
+        results,
+      }))
+    } catch { /* quota / private mode */ }
+  }, [step, maxReached, selectedDs, ref, mode, modelId, hyperparams, meta, epochs, code, job, progress, results])
+
+  // Resume polling when returning to an in-flight run; completed runs keep
+  // their restored results without re-polling.
+  const resumedJob = useRef(false)
 
   /* ── log helper ───────────────────────────────── */
   const addLog = useCallback((level, msg) => {
@@ -648,6 +732,20 @@ export default function Pipeline() {
   }, [addLog, registered, stopPolling, toast])
 
   useEffect(() => () => stopPolling(), [stopPolling])
+
+  useEffect(() => {
+    if (resumedJob.current) return
+    resumedJob.current = true
+    const saved = draft?.job
+    if (saved?.job_id && !draft?.results) {
+      const s = String(saved.status || '').toLowerCase()
+      if (s !== 'completed' && s !== 'failed') {
+        setSubmitting(true)
+        setJob(saved)
+        pollJob(saved.job_id)
+      }
+    }
+  }, [draft, pollJob])
 
   /* ── validation ───────────────────────────────── */
   const validation = useMemo(() => {
@@ -745,6 +843,7 @@ export default function Pipeline() {
     })
     if (!ok) return
     stopPolling()
+    clearDraft()
     setStep(0); setMaxReached(0)
     setSelectedDs(null); setRef('main')
     setModelId(''); setHyperparams({})
@@ -928,7 +1027,7 @@ export default function Pipeline() {
       )}
 
       {/* ── Nav footer ───────────────────────────── */}
-      <div className="flex items-center justify-between gap-3" style={{ paddingTop: 4 }}>
+      <div className="flex items-center justify-between gap-3" style={{ paddingTop: 'var(--sp-1)' }}>
         <Button variant="secondary" size="sm" icon={ChevronLeft} onClick={goBack} disabled={step === 0}>
           Back
         </Button>

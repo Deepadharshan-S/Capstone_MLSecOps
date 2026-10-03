@@ -1,4 +1,4 @@
-// Thin fetch wrapper for the MLSecOps API.
+// Thin fetch wrapper for the SentinelML API.
 //
 // Security notes:
 // - The access token lives ONLY in memory (a module-level variable), never

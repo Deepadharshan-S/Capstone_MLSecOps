@@ -245,4 +245,26 @@ class LakeFSService(VersionControlService):
         tag = repo.tag(tag_name)
         tag.delete()
 
+    def list_files(self, repo_name: str, ref_id: str, limit: int = 1000) -> list[dict]:
+        if not self.client:
+            raise RuntimeError("lakeFS client is not initialized.")
+        repo = lakefs.Repository(repo_name, client=self.client)
+        ref = repo.ref(ref_id)
+        files = []
+        # Manual cap instead of an SDK listing kwarg (kwarg names vary
+        # across lakefs wrapper versions).
+        for i, obj in enumerate(ref.objects()):
+            if i >= limit:
+                break
+            # Skip lakeFS-internal bookkeeping prefixes.
+            if obj.path.startswith(".lakefs"):
+                continue
+            files.append(
+                {
+                    "path": obj.path,
+                    "size_bytes": getattr(obj, "size_bytes", None),
+                }
+            )
+        return files
+
 lakefs_service = LakeFSService()

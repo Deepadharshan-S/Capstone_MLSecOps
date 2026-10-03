@@ -18,7 +18,7 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     // Surfaced in the console for debugging; the UI handles presentation.
-    console.error('[MLSecOps] render error', error, info)
+    console.error('[SentinelML] render error', error, info)
   }
 
   handleRetry = () => {

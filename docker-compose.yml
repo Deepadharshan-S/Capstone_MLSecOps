@@ -41,13 +41,8 @@ services:
   # ==========================================================
 
   minio:
-<<<<<<< Updated upstream
-    image: minio/minio:latest
-    container_name: sentinelml-minio
-=======
     image: ghcr.io/coollabsio/minio:latest
     container_name: mlsecops-minio
->>>>>>> Stashed changes
     restart: unless-stopped
 
     environment:
@@ -224,15 +219,10 @@ services:
   # ==========================================================
 
   createbuckets:
-<<<<<<< Updated upstream
-    image: minio/mc:latest
-    container_name: sentinelml-minio-createbuckets
-=======
     # Reuses the MinIO image: it already ships /usr/bin/mc, and the
     # ghcr.io/minio mc images are not pullable without a registry login.
     image: ghcr.io/coollabsio/minio:latest
     container_name: mlsecops-minio-createbuckets
->>>>>>> Stashed changes
     depends_on:
       minio:
         condition: service_healthy

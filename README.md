@@ -1,6 +1,4 @@
-<<<<<<< Updated upstream
 # SentinelML
-=======
 # 🚀 AI-Powered Real-Time Threat Detection & Response System
 
 A production-grade MLSecOps platform that combines threat intelligence, explainable AI, and automated remediation to secure modern applications in real time.
@@ -228,4 +226,3 @@ Detects never-before-seen attacks using anomaly detection
 2. Incoming traffic is compared against learned patterns
 3. High deviation triggers anomaly alert
 4. Human analyst reviews with
->>>>>>> Stashed changes
