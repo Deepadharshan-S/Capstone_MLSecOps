@@ -263,6 +263,10 @@ class TrainingJobService:
                 self.rayjob_service.cleanup_job_resources(job.job_id)
 
         self.repository.save_all(active_jobs)
+        try:
+            self.rayjob_service.sweep_orphaned_job_resources()
+        except Exception as sweep_err:
+            logger.debug(f"Resource sweep note: {sweep_err}")
 
     def record_training_job(
         self,

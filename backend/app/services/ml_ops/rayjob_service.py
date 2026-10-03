@@ -179,10 +179,20 @@ class RayJobService:
 
     def cleanup_job_resources(self, job_id: str, namespace: str = "default") -> None:
         """
-        Explicitly cleans up ConfigMap and NetworkPolicy associated with a completed RayJob.
-        Acts as a proactive cleanup alongside Kubernetes ownerReferences garbage collection.
+        Comprehensively cleans up all Kubernetes and local resources associated with a completed RayJob:
+        - ConfigMap (rayjob-code-{job_id} and labeled collection)
+        - NetworkPolicy (rayjob-netpol-{job_id})
+        - RayJob custom resource
+        - Associated RayCluster and pods
+        - Associated services
+        - Local temporary result files
         """
+        import os
+        import tempfile
         clean_id = job_id.removeprefix("rayjob-")
+        rayjob_name = f"rayjob-{clean_id}"
+
+        # 1. Delete ConfigMap(s)
         try:
             _, core_api = self._get_apis()
             core_api.delete_namespaced_config_map(
@@ -192,6 +202,15 @@ class RayJobService:
             logger.debug(f"ConfigMap rayjob-code-{clean_id} deletion note: {cm_err}")
 
         try:
+            _, core_api = self._get_apis()
+            core_api.delete_collection_namespaced_config_map(
+                namespace=namespace, label_selector=f"ray.io/job-id={clean_id}"
+            )
+        except Exception as cm_lbl_err:
+            logger.debug(f"ConfigMap collection cleanup note ({clean_id}): {cm_lbl_err}")
+
+        # 2. Delete NetworkPolicy
+        try:
             from kubernetes import client
             net_api = client.NetworkingV1Api()
             net_api.delete_namespaced_network_policy(
@@ -199,4 +218,116 @@ class RayJobService:
             )
         except Exception as np_err:
             logger.debug(f"NetworkPolicy rayjob-netpol-{clean_id} deletion note: {np_err}")
+
+        # 3. Delete RayJob Custom Resource
+        try:
+            custom_api, _ = self._get_apis()
+            custom_api.delete_namespaced_custom_object(
+                group="ray.io",
+                version="v1",
+                namespace=namespace,
+                plural="rayjobs",
+                name=rayjob_name,
+            )
+        except Exception as rj_err:
+            logger.debug(f"RayJob {rayjob_name} deletion note: {rj_err}")
+
+        # 4. Delete RayCluster Custom Resource (if any)
+        try:
+            custom_api, _ = self._get_apis()
+            clusters = custom_api.list_namespaced_custom_object(
+                group="ray.io",
+                version="v1",
+                namespace=namespace,
+                plural="rayclusters",
+                label_selector=f"ray.io/job-id={clean_id}",
+            )
+            for item in clusters.get("items", []):
+                c_name = item.get("metadata", {}).get("name")
+                if c_name:
+                    custom_api.delete_namespaced_custom_object(
+                        group="ray.io", version="v1", namespace=namespace, plural="rayclusters", name=c_name
+                    )
+        except Exception as rc_err:
+            logger.debug(f"RayCluster cleanup note for {clean_id}: {rc_err}")
+
+        # 5. Clean up any leftover pods/services for this job
+        try:
+            _, core_api = self._get_apis()
+            core_api.delete_collection_namespaced_pod(
+                namespace=namespace, label_selector=f"ray.io/job-id={clean_id}"
+            )
+        except Exception as pod_err:
+            logger.debug(f"Pod cleanup note for {clean_id}: {pod_err}")
+
+        try:
+            _, core_api = self._get_apis()
+            svcs = core_api.list_namespaced_service(
+                namespace=namespace, label_selector=f"ray.io/job-id={clean_id}"
+            )
+            for s in svcs.items:
+                core_api.delete_namespaced_service(name=s.metadata.name, namespace=namespace)
+        except Exception as svc_err:
+            logger.debug(f"Service cleanup note for {clean_id}: {svc_err}")
+
+        # 6. Clean up temporary local files
+        try:
+            for sub in ["sentinelml_results", "ray_results"]:
+                f_path = os.path.join(tempfile.gettempdir(), sub, f"{clean_id}.json")
+                if os.path.exists(f_path):
+                    os.remove(f_path)
+        except Exception as tmp_err:
+            logger.debug(f"Temp file cleanup note for {clean_id}: {tmp_err}")
+
+    def sweep_orphaned_job_resources(self, namespace: str = "default") -> dict:
+        """
+        Sweeps and garbage-collects completed RayJobs, orphaned ConfigMaps,
+        and NetworkPolicies from past training jobs.
+        """
+        cleaned_jobs = []
+        cleaned_cms = []
+
+        try:
+            custom_api, core_api = self._get_apis()
+
+            # 1. Sweep completed/failed RayJobs
+            rayjobs = custom_api.list_namespaced_custom_object(
+                group="ray.io", version="v1", namespace=namespace, plural="rayjobs"
+            ).get("items", [])
+
+            for rj in rayjobs:
+                name = rj.get("metadata", {}).get("name", "")
+                st = rj.get("status", {})
+                job_status = (st.get("jobStatus") or "").upper()
+                dep_status = (st.get("jobDeploymentStatus") or "").upper()
+
+                if job_status in ("SUCCEEDED", "FAILED", "STOPPED") or dep_status in ("COMPLETE", "FAILED"):
+                    job_id = rj.get("metadata", {}).get("labels", {}).get("ray.io/job-id") or name.removeprefix("rayjob-")
+                    self.cleanup_job_resources(job_id, namespace=namespace)
+                    cleaned_jobs.append(name)
+
+            # 2. Sweep orphaned ConfigMaps
+            cms = core_api.list_namespaced_config_map(namespace=namespace).items
+            active_rayjobs = {
+                rj.get("metadata", {}).get("name", "").removeprefix("rayjob-")
+                for rj in custom_api.list_namespaced_custom_object(
+                    group="ray.io", version="v1", namespace=namespace, plural="rayjobs"
+                ).get("items", [])
+            }
+
+            for cm in cms:
+                cm_name = cm.metadata.name
+                if cm_name.startswith("rayjob-code-"):
+                    cm_job_id = cm_name.removeprefix("rayjob-code-")
+                    if cm_job_id not in active_rayjobs:
+                        try:
+                            core_api.delete_namespaced_config_map(name=cm_name, namespace=namespace)
+                            cleaned_cms.append(cm_name)
+                        except Exception as del_cm_err:
+                            logger.debug(f"Orphan ConfigMap {cm_name} delete note: {del_cm_err}")
+
+        except Exception as sweep_err:
+            logger.debug(f"Resource sweep note: {sweep_err}")
+
+        return {"cleaned_jobs": cleaned_jobs, "cleaned_configmaps": cleaned_cms}
 

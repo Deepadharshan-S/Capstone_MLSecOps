@@ -167,6 +167,10 @@ class JobService:
                                 log_svc.archive_pod_logs(clean_id)
                             except Exception as log_arch_err:
                                 logger.debug(f"Failed to archive pod logs for {clean_id}: {log_arch_err}")
+                            try:
+                                ray_svc.cleanup_job_resources(clean_id)
+                            except Exception as clean_err:
+                                logger.debug(f"Failed to clean up k8s resources for job {clean_id}: {clean_err}")
                         try:
                             db.commit()
                             db.refresh(job)
@@ -192,6 +196,11 @@ class JobService:
                 job.duration_seconds = round((job.completed_at - job.started_at).total_seconds(), 2)
             elif res_data.get("training_duration_seconds"):
                 job.duration_seconds = float(res_data["training_duration_seconds"])
+            try:
+                from app.services.ml_ops.rayjob_service import RayJobService
+                RayJobService().cleanup_job_resources(clean_id)
+            except Exception as clean_err:
+                logger.debug(f"Failed to clean up k8s resources for job {clean_id}: {clean_err}")
             try:
                 db.commit()
                 db.refresh(job)
@@ -311,7 +320,13 @@ class JobService:
                 query = query.filter(TrainingJob.created_by_id == user)
 
         jobs = query.order_by(TrainingJob.created_at.desc()).limit(limit).all()
-        return [self._build_job_response(db, j, include_logs=False) for j in jobs]
+        res = [self._build_job_response(db, j, include_logs=False) for j in jobs]
+        try:
+            from app.services.ml_ops.rayjob_service import RayJobService
+            RayJobService().sweep_orphaned_job_resources()
+        except Exception:
+            pass
+        return res
 
     def create_job(
         self,
