@@ -458,27 +458,7 @@ def get_job_status(
     """
     Get the status and results of a training job.
     """
-    job = job_svc.get_job(db, job_id)
-    return JobStatusResponse(
-        job_id=job.job_id,
-        status=job.status,
-        progress=job.progress,
-        model_name=job.model_name,
-        model_type=job.model_type,
-        dataset_id=job.dataset_id,
-        accuracy=job.accuracy,
-        precision_score=job.precision_score,
-        recall_score=job.recall_score,
-        f1_score=job.f1_score,
-        training_duration=job.training_duration,
-        confusion_matrix=job.confusion_matrix,
-        feature_importance=job.feature_importance,
-        roc_curve=job.roc_curve,
-        history=job.history,
-        error_message=job.error_message,
-        started_at=job.started_at,
-        completed_at=job.completed_at,
-    )
+    return job_svc.get_job(db, job_id, user=user)
 
 
 @router.get("/jobs", response_model=list[JobStatusResponse])
@@ -491,27 +471,5 @@ def list_user_jobs(
     """
     List recent training jobs for the current user.
     """
-    jobs = job_svc.get_user_jobs(db, user.id, limit=limit)
-    return [
-        JobStatusResponse(
-            job_id=j.job_id,
-            status=j.status,
-            progress=j.progress,
-            model_name=j.model_name,
-            model_type=j.model_type,
-            dataset_id=j.dataset_id,
-            accuracy=j.accuracy,
-            precision_score=j.precision_score,
-            recall_score=j.recall_score,
-            f1_score=j.f1_score,
-            training_duration=j.training_duration,
-            confusion_matrix=j.confusion_matrix,
-            feature_importance=j.feature_importance,
-            roc_curve=j.roc_curve,
-            history=j.history,
-            error_message=j.error_message,
-            started_at=j.started_at,
-            completed_at=j.completed_at,
-        )
-        for j in jobs
-    ]
+    return job_svc.get_user_jobs(db, user, limit=limit)
+

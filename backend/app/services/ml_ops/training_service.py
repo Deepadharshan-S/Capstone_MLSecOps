@@ -171,7 +171,7 @@ class ModelTrainingService:
             )
 
         entrypoint_cmd = (
-            f"python /app/user_code/ray_wrapper.py --dataset_id {dataset_id} --ref {ref} "
+            f"python /app/user_code/ray_wrapper.py --dataset_id '{dataset_id}' --ref '{ref}' "
             f"--epochs {epochs} --hyperparameters '{json.dumps(hyperparameters)}' "
             f"--code_file /app/user_code/user_code.py --output_model_name '{output_model_name}' "
             f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}' "
@@ -375,7 +375,7 @@ class ModelTrainingService:
         )
 
         entrypoint_cmd = (
-            f"python /app/user_code/ray_wrapper.py --dataset_id {dataset_id} --ref {ref} "
+            f"python /app/user_code/ray_wrapper.py --dataset_id '{dataset_id}' --ref '{ref}' "
             f"--pipeline_mode --target_column '{target_column}' --model_type '{model_type}' "
             f"--hyperparameters '{json.dumps(hyperparameters)}' --output_model_name '{output_model_name}' "
             f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}' "

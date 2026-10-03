@@ -158,3 +158,4 @@ class JobStatusResponse(BaseModel):
     error_message: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    logs: Optional[list[dict]] = None
