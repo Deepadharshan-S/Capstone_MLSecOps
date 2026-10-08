@@ -5,7 +5,7 @@ import logging
 import tempfile
 from uuid import UUID
 from datetime import datetime, timezone
-from typing import Optional, Union, List, Any
+from typing import Optional, Union
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -15,22 +15,33 @@ from app.schemas.ml_ops.training import JobStatusResponse
 
 logger = logging.getLogger("job_service")
 
+_IN_MEMORY_JOB_CACHE: dict[str, dict] = {}
+
 
 def _load_results_file(job_id: str) -> dict:
-    """Checks temporary result directories for runtime job metrics."""
+    """Checks memory and temporary result directories for runtime job metrics."""
+    if job_id in _IN_MEMORY_JOB_CACHE:
+        return _IN_MEMORY_JOB_CACHE[job_id]
+
     for dir_name in ("sentinelml_results", "mlsecops-training-results"):
         path = os.path.join(tempfile.gettempdir(), dir_name, f"{job_id}.json")
         if os.path.exists(path):
             try:
                 with open(path, "r") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    if data:
+                        _IN_MEMORY_JOB_CACHE[job_id] = data
+                    return data
             except Exception as e:
                 logger.debug(f"Failed to load results file {path}: {e}")
     return {}
 
 
 def _save_results_file(job_id: str, metrics: dict) -> None:
-    """Persists metrics to disk for subsequent UI queries."""
+    """Persists metrics to memory and disk for subsequent UI queries."""
+    if metrics:
+        _IN_MEMORY_JOB_CACHE[job_id] = metrics
+
     for dir_name in ("sentinelml_results", "mlsecops-training-results"):
         results_dir = os.path.join(tempfile.gettempdir(), dir_name)
         try:
@@ -42,7 +53,7 @@ def _save_results_file(job_id: str, metrics: dict) -> None:
             logger.debug(f"Failed to save results file to {dir_name}: {e}")
 
 
-def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str) -> dict:
+def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str, include_artifacts: bool = True) -> dict:
     """Queries MLflow directly for logged run metrics and evaluation artifacts."""
     try:
         import mlflow
@@ -74,19 +85,24 @@ def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str) -> dict:
             "training_duration_seconds": m.get("training_duration_seconds"),
         }
 
-        # Download evaluation artifacts if available
-        for artifact_file, key in [
-            ("confusion_matrix.json", "confusion_matrix"),
-            ("feature_importance.json", "feature_importance"),
-            ("roc_curve.json", "roc_curve"),
-            ("history.json", "history"),
-        ]:
-            try:
-                p = client.download_artifacts(run.info.run_id, f"evaluation/{artifact_file}")
-                with open(p, "r") as af:
-                    res[key] = json.load(af)
-            except Exception:
-                pass
+        # Download evaluation artifacts if requested and available
+        if include_artifacts:
+            for artifact_file, key in [
+                ("confusion_matrix.json", "confusion_matrix"),
+                ("feature_importance.json", "feature_importance"),
+                ("roc_curve.json", "roc_curve"),
+                ("history.json", "history"),
+            ]:
+                try:
+                    p = client.download_artifacts(run.info.run_id, f"evaluation/{artifact_file}")
+                    with open(p, "r") as af:
+                        res[key] = json.load(af)
+                except Exception:
+                    pass
+
+        # Cache valid metrics to avoid future round-trips
+        if res.get("accuracy") is not None or res.get("status") == "completed":
+            _save_results_file(job_id, res)
 
         return res
     except Exception as e:
@@ -138,6 +154,7 @@ class JobService:
         db: Session,
         job: TrainingJob,
         include_logs: bool = False,
+        include_artifacts: bool = False,
     ) -> JobStatusResponse:
         clean_id = job.job_id.removeprefix("rayjob-")
         raw_status = (job.status or "PENDING").upper()
@@ -180,10 +197,10 @@ class JobService:
             except Exception as k8s_err:
                 logger.debug(f"Kubernetes rayjob check skipped: {k8s_err}")
 
-        # 2. Check local results file or MLflow if still PENDING/RUNNING
+        # 2. Check local results file or MLflow
         res_data = _load_results_file(clean_id)
         if not res_data:
-            res_data = _fetch_mlflow_metrics(job.experiment_name, clean_id)
+            res_data = _fetch_mlflow_metrics(job.experiment_name, clean_id, include_artifacts=include_artifacts)
 
         if raw_status in ("PENDING", "RUNNING") and (
             res_data.get("status") in ("completed", "failed")
@@ -299,7 +316,7 @@ class JobService:
                 detail="Access denied to job.",
             )
 
-        return self._build_job_response(db, job, include_logs=True)
+        return self._build_job_response(db, job, include_logs=True, include_artifacts=True)
 
     def get_user_jobs(
         self,
@@ -320,13 +337,7 @@ class JobService:
                 query = query.filter(TrainingJob.created_by_id == user)
 
         jobs = query.order_by(TrainingJob.created_at.desc()).limit(limit).all()
-        res = [self._build_job_response(db, j, include_logs=False) for j in jobs]
-        try:
-            from app.services.ml_ops.rayjob_service import RayJobService
-            RayJobService().sweep_orphaned_job_resources()
-        except Exception:
-            pass
-        return res
+        return [self._build_job_response(db, j, include_logs=False, include_artifacts=False) for j in jobs]
 
     def create_job(
         self,

@@ -8,7 +8,7 @@
 //   never touches it directly, it just calls /auth/refresh and the browser
 //   attaches the cookie automatically (credentials: 'include').
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 let accessToken = null
 let refreshPromise = null // de-dupes concurrent refresh calls
@@ -30,7 +30,7 @@ export class ApiError extends Error {
 
 // Fail fast instead of hanging forever (e.g. backend down, DB hang,
 // wrong port). Without this, AppShell stays on "Loading…" indefinitely.
-const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS) || 8000
+const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS) || 20000
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController()
