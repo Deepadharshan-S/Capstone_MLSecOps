@@ -153,6 +153,17 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_security_settings(self) -> "Settings":
+        if self.ENVIRONMENT.lower() in ("production", "prod") and self.ALLOW_LOCAL_RAY_FALLBACK:
+            import logging
+            logging.getLogger("config").warning(
+                "SECURITY WARNING: ALLOW_LOCAL_RAY_FALLBACK is enabled in production! "
+                "Local fallback executes untrusted user training code directly on the host machine "
+                "outside Kubernetes container and network sandboxing."
+            )
+        return self
+
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),
         extra="ignore",

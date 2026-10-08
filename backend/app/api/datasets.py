@@ -11,7 +11,8 @@ from fastapi import (
     Query,
 )
 from fastapi.responses import StreamingResponse
-import io
+import re
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 
 from app.core.rate_limiter import RateLimiter
@@ -103,7 +104,7 @@ def register_dataset(
             metadata=None,
             username=user.username,
         )
-    except HTTPException as e:
+    except HTTPException:
         try:
             data_service.delete_dataset(db, name, username=user.username)
         except Exception:
@@ -184,12 +185,16 @@ def download_file(
     """
     Downloads/retrieves a chunked file stream from a reference (branch/commit/tag).
     """
-    filename = path.split("/")[-1]
+    raw_filename = path.split("/")[-1] or "downloaded_file"
+    filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', raw_filename)
+    encoded_filename = quote(filename)
     chunk_stream = data_service.stream_file(db, dataset_name, file_path=path, ref_id=ref)
     return StreamingResponse(
         chunk_stream,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
+        },
     )
 
 

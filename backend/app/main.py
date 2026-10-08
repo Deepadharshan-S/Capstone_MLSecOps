@@ -59,6 +59,17 @@ async def lifespan(app: FastAPI):
     instrument_sqlalchemy_engine(engine)
     instrument_httpx()
 
+    # 2. Security validation: Audit execution sandboxing configuration
+    if settings.ALLOW_LOCAL_RAY_FALLBACK:
+        if settings.ENVIRONMENT.lower() in ("production", "prod"):
+            logger.warning(
+                "CRITICAL SECURITY WARNING: ALLOW_LOCAL_RAY_FALLBACK is enabled in production! "
+                "Local fallback executes untrusted user training code directly on the host machine "
+                "outside Kubernetes container and network sandboxing."
+            )
+        else:
+            logger.info("Notice: ALLOW_LOCAL_RAY_FALLBACK is enabled for development/testing.")
+
     # 2. Start automated token cleanup background task if enabled
     cleanup_task = None
     if settings.TOKEN_CLEANUP_ENABLED:

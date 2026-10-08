@@ -185,7 +185,10 @@ services:
   # ==========================================================
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.15.1
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    image: sentinelml-mlflow:v3.15.1
     container_name: sentinelml-mlflow
     restart: unless-stopped
     depends_on:
@@ -202,7 +205,6 @@ services:
       - MLFLOW_S3_IGNORE_TLS=true
     entrypoint: >
       /bin/sh -c "
-      pip install --no-cache-dir psycopg2-binary boto3 cryptography &&
       mlflow server
       --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
       --default-artifact-root s3://mlflow
