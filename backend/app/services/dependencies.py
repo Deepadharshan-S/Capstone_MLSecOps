@@ -2,7 +2,6 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.repositories import (
-    BaseRepository,
     UserRepository,
     DatasetRepository,
     RefreshTokenRepository,

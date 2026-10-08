@@ -9,7 +9,6 @@ from app.core.roles import Role, ROLE_PERMISSIONS
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User
-from app.models.blacklisted_token import BlacklistedToken
 from app.repositories import UserRepository, BlacklistedTokenRepository
 
 # Define the OAuth2 security scheme with all available permissions/scopes

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from app.models.training_job import TrainingJob
@@ -12,6 +13,8 @@ from app.core.telemetry import (
     record_training_job_completed,
     record_training_duration,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TrainingJobService:

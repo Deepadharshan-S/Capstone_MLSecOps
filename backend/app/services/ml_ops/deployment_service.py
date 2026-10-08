@@ -289,11 +289,7 @@ class ModelDeploymentService:
         """
         Retrieves model deployments tracked in PostgreSQL,
         reconciling them with live Kubernetes RayService status using a single batch query.
-        Also scans legacy MLflow model version tags for backwards compatibility.
         """
-        _, MlflowClient = load_mlflow()
-
-        mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         deployments = []
 
         # 1. Fetch live RayService statuses in a single bulk call
@@ -528,7 +524,7 @@ class ModelDeploymentService:
                 replica_health["details"] = {
                     "application_statuses": status_obj.get("applicationStatuses", {}),
                 }
-            except Exception as e:
+            except Exception:
                 k8s_status = "Not Found" if dep_status == "stopped" else "Initializing"
                 service_status = "Stopped" if dep_status == "stopped" else "Not Found"
                 replica_health["head_pod_status"] = "Stopped" if dep_status == "stopped" else "Not Found"

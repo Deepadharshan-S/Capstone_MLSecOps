@@ -36,3 +36,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.22",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]

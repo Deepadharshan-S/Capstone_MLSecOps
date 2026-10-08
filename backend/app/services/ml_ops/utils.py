@@ -3,7 +3,6 @@ import json
 import logging
 import subprocess
 import threading
-import shutil
 import tempfile
 from app.core.config import settings
 from app.core.logging_config import log_audit_event
