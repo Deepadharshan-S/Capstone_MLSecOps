@@ -1,239 +1,218 @@
-# SentinelML — Comprehensive Security Audit Report
+# SentinelML — Fresh Security & Threat Model Audit Report
 
-**Date:** October 2, 2026  
-**Auditor:** SentinelML Automated Security & Architecture Review System  
-**Repository Branch:** `develop` (commit `e4f0ac9`) vs `main` (commit `f2e1c4e`)  
-**Audit Scope:** Full codebase (Backend, Frontend, Infrastructure, Database, Observability)  
-**Execution Mode:** Read-Only Audit (Zero Production Modifications)
+**Audit Date:** October 3, 2026  
+**Auditor:** SentinelML Independent Security & Architecture Review System  
+**Repository Branch:** `continuous_training`  
+**Commit Hash:** `c8f73e61da8526104ff4490fb0ab1f762a40a684`  
+**Execution Context:** Fresh, Independent Codebase Audit (Zero Preconceptions, Read-Only Code Execution)  
 
 ---
 
 ## 1. Threat Model & Trust Boundaries
 
-### 1.1 Assets Under Protection
-1. **Model Artifacts & Weights:** MLflow registry artifacts, serialized model packages (`.pkl`, `.joblib`, `.onnx`), and RayService serving replicas.
-2. **Datasets & Version History:** Sensitive customer or enterprise training datasets stored across lakeFS repositories and MinIO S3 buckets.
-3. **Identity & Session Credentials:** User account passwords (bcrypt), JWT private secrets, refresh tokens in PostgreSQL, and audit log trails.
-4. **Infrastructure & Cluster Secrets:** Kubernetes cluster service account tokens, PostgreSQL master credentials, MinIO access keys, and lakeFS encryption secrets.
-5. **Observability & Operational Traces:** Distributed trace spans, metrics series, inference payload telemetry, and system audit logs.
+### 1.1 Protected Assets
+1. **User Identity & Auth Sessions:** Passwords (bcrypt), JWT access tokens, persistent refresh tokens, user audit logs.
+2. **Datasets & Version History:** Versioned repositories in lakeFS and underlying object blobs in MinIO S3 (`lakefs` bucket).
+3. **Model Weights & Metadata:** Trained model artifacts, parameters, metrics, and registered models in MLflow S3 (`mlflow` bucket) and PostgreSQL.
+4. **Cluster & Platform Infrastructure:** Kubernetes API access, MinIO administrative root credentials, database connection strings.
+5. **Runtime Telemetry & Privacy:** OTel traces, inference request metrics, system logs in Loki.
 
 ### 1.2 Trust Boundaries
 
 ```
-[ Untrusted Internet / Browser Clients ]
-                    │
-                    │ HTTPS / HTTP + JWT Bearer / Refresh Cookie
-                    ▼
-═══════════════════[ TRUST BOUNDARY 1: API Gateway (FastAPI) ]═══════════════════
-                    │
-                    ├── Authenticates identity & validates JWT claims / RBAC scopes
-                    ├── Enforces rate limiting & security headers
-                    │
-                    ├──> [ PostgreSQL ] (Auth State, User DB, Token Whitelist/Blacklist)
-                    ├──> [ lakeFS ] (Dataset Versioning)
-                    └──> [ MinIO S3 ] (Object Storage)
-                    │
-═══════════════════[ TRUST BOUNDARY 2: Kubernetes Orchestration ]════════════════
-                    │
-                    ├── CustomObjectsApi submits RayJob CRD manifests
-                    ├── CustomObjectsApi / CoreV1Api deploys & scales RayService
-                    │
-═══════════════════[ TRUST BOUNDARY 3: Workload Isolation (Ray Pods) ]════════════
-                    │
-                    ├── RayJob Pod: Executes untrusted/dynamic training code (isolated namespace)
-                    └── RayService Pod: Executes trained model inference workers (isolated namespace)
-                    │
-═══════════════════[ TRUST BOUNDARY 4: Observability Pipeline ]═════════════════
-                    │
-                    └── OTel Collector ──> Prometheus / Tempo / Loki / Grafana
+[ Untrusted Client / Browser ]
+             │
+             │ HTTPS / HTTP + Authorization Bearer JWT / Refresh Cookie
+             ▼
+═════════════[ TRUST BOUNDARY 1: FastAPI API Gateway ]═════════════
+             │
+             ├── Validates JWT signatures, expiration, and blacklists
+             ├── Enforces scope-based RBAC (`datasets:upload`, `models:train`, etc.)
+             ├── Enforces rate limiting (SlowAPI) and account lockouts (5 failed attempts)
+             │
+             ├──> [ PostgreSQL ] (Auth state, users, deployments, training jobs)
+             ├──> [ lakeFS ] (Dataset repository management)
+             └──> [ MinIO S3 ] (Object storage)
+             │
+═════════════[ TRUST BOUNDARY 2: Kubernetes Orchestration ]═════════
+             │
+             ├── CustomObjectsApi submits RayJob CRD manifests
+             ├── CustomObjectsApi / CoreV1Api manages RayService CRDs
+             ├── PortForwardManager creates dynamic loopback tunnels (127.0.0.1)
+             │
+═════════════[ TRUST BOUNDARY 3: Workload Pods (RayJob & RayService) ]
+             │
+             ├── RayJob Pod: Executes user training code in container
+             │   ├── Pod SecurityContext: runAsNonRoot: true, drop ALL caps
+             │   └── automountServiceAccountToken: false (no K8s API access)
+             └── RayService Pod: Executes model serving via Ray Serve
+                 └── Accessible via loopback-forwarded proxy for inference
+             │
+═════════════[ TRUST BOUNDARY 4: Observability Pipeline ]══════════
+             │
+             └── OTel Collector (4317/4318) ──> Prometheus, Tempo, Loki, Grafana
 ```
 
 ---
 
-## 2. Authentication & Session Security Audit
+## 2. Authentication & Authorization Security Audit
 
 ### 2.1 Password Hashing & Policies
-- **Implementation:** Passlib with Bcrypt (`bcrypt__rounds = 12`).
-- **Complexity Policy:** Enforced via `app.services.auth.password_policy.py`:
-  - Minimum 12 characters, uppercase, lowercase, numeric digit, and special character required.
-  - Prevents common dictionary passwords.
+- **Implementation:** Passlib with Bcrypt (`backend/app/core/security.py`).
+- **Complexity Enforcement:** Minimum 8 characters, requiring at least one uppercase letter, one lowercase letter, one numeric digit, and one special character.
+- **Account Lockout:** Tracked via `failed_login_attempts` in PostgreSQL; reaching 5 consecutive failures triggers a 15-minute temporary lockout (`user.locked_until`).
 
-### 2.2 Token Architecture & Refresh Token Rotation (RTR)
-- **Access Tokens:** Short-lived JWTs (`ACCESS_TOKEN_EXPIRE_MINUTES: 30`) signed via HMAC-SHA256 (`HS256`).
-- **Refresh Tokens:** High-entropy cryptographic secrets stored hashed in PostgreSQL with strict Refresh Token Rotation (RTR).
-- **Automatic Reuse Detection:** If an invalidated or already-rotated refresh token is submitted, the system flags token theft, revokes all child tokens, and evicts the compromised session.
-- **Automated Token Cleanup:** Background lifecycle task in FastAPI sweeps expired blacklisted tokens and refresh tokens periodically.
+### 2.2 Token Lifecycle & Session Management
+- **Access Tokens:** Signed via HMAC-SHA256 (`HS256`) with a 15-minute expiration (`ACCESS_TOKEN_EXPIRE_MINUTES = 15`).
+- **Refresh Tokens:** High-entropy cryptographically random UUIDs stored with hashed lookups in PostgreSQL with a 7-day expiration.
+- **Reuse Detection & Rotation:** Every refresh operation revokes the old token, issues a new token pair, and marks the previous token. If a previously consumed token is replayed, the entire session family is instantly revoked to prevent hijack attacks.
+- **Automated Pruning:** `token_cleanup_loop` periodically purges expired refresh and blacklisted tokens asynchronously in `asyncio.to_thread`.
 
-### 2.3 Local Development Cookie Security Conflict
-- In `backend/app/api/auth.py` (lines 72–74):
+### 2.3 Access Control & RBAC Matrix
+
+| Endpoint Group | Required Role / Scope | Policy Enforcement | Audit Logging |
+| :--- | :--- | :--- | :--- |
+| `/api/auth/register`, `/login` | Public (Rate Limited) | IP & Username Rate Limiting | User & IP logged |
+| `/api/users/me` | `authenticated` | Valid active access token | Token verified |
+| `/api/users/`, `/audit-logs` | `users:manage` (`admin`) | Scope verified via `Security()` | Administrative |
+| `/api/users/{id}/role` | `users:manage` (`admin`) | Self-role modification blocked | Admin logged |
+| `/api/datasets` (list/get) | `datasets:view` | Scope check + dataset active status | View logged |
+| `/api/datasets` (upload/commit)| `datasets:upload` | Scope check + owner/admin check | Upload logged |
+| `/api/datasets/{name}` (DELETE)| `datasets:delete` | Scope check + owner/admin check | Deletion logged |
+| `/api/models/train` | `models:train` | Scope check + sandbox submission | Job submitted |
+| `/api/models/deploy` | `models:deploy` | Scope check + manifest validation | Deploy logged |
+| `/api/deployments/manage` | `deployments:manage` | Scope check + cluster state update| State logged |
+| `/api/models/{id}/predict` | `models:view` | Scope check; HTTP forward to Ray | Trace recorded |
+
+---
+
+## 3. Fresh Security Findings
+
+### Finding ID: SEC-AUDIT-001
+- **Title:** MLflow Service Executes Unpinned Package Installation at Container Startup
+- **Severity:** MEDIUM
+- **Category:** SUPPLY_CHAIN
+- **Location:** `docker-compose.yml:204-206`
+- **Status:** **REMEDIATED**
+- **Evidence:** Previously, `docker-compose.yml` ran `pip install --no-cache-dir psycopg2-binary boto3 cryptography &&` on startup.
+- **Remediation Implemented:** Created a dedicated `Dockerfile.mlflow` pre-installing version-pinned dependencies (`psycopg2-binary==2.9.9`, `boto3==1.35.36`, `cryptography==43.0.1`). Updated `docker-compose.yml` to build `sentinelml-mlflow:v3.15.1` directly and eliminated runtime package installation from the container entrypoint.
+- **Impact:** Upstream supply-chain tampering and runtime network failure during container startup are eliminated.
+- **Confidence:** CONFIRMED (Verified build and config)
+
+---
+
+### Finding ID: SEC-AUDIT-002
+- **Title:** Fallback to Over-Privileged Platform Credentials for Training Job Pods
+- **Severity:** HIGH
+- **Category:** DATA_SECURITY / KUBERNETES_SECURITY
+- **Location:** `backend/app/services/ml_ops/utils.py:38-43` & `backend/app/templates/rayjob_template.yaml:139-142`
+- **Status:** OPEN (Pending dedicated training token enforcement)
+- **Evidence:**
   ```python
-  response.set_cookie(
-      key="refresh_token",
-      value=token_dict["refresh_token"],
-      httponly=True,
-      secure=True,       # Hardcoded secure flag!
-      samesite="lax",
-      max_age=7 * 24 * 3600,
-      path="/api/auth",
-  )
+  # backend/app/services/ml_ops/utils.py:38-43
+  creds = {
+      ...
+      "lakefs_access_key_id": settings.LAKEFS_TRAINING_ACCESS_KEY_ID or settings.LAKEFS_ACCESS_KEY_ID,
+      "lakefs_secret_access_key": settings.LAKEFS_TRAINING_SECRET_ACCESS_KEY or settings.LAKEFS_SECRET_ACCESS_KEY,
+  }
   ```
-- *Finding:* On local development over plain HTTP (`http://localhost`), modern browsers reject `secure=True` cookies outright. On `develop`, a conflict was created attempting to add `COOKIE_SECURE: bool = False` into `config.py`, which remained unmerged and broke configuration parsing.
-
----
-
-## 3. Authorization & RBAC Audit
-
-### 3.1 Role-Based Access Control Matrix
-
-| Role | Datasets View | Datasets Upload | Datasets Delete | Models View | Models Train | Models Deploy | Deployments Manage | Users Manage |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Admin** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| **Data Scientist** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
-| **ML Engineer** | Yes | No | No | Yes | Yes | Yes | Yes | No |
-| **Viewer** | No (Frontend hides) | No | No | Yes | No | No | No | No |
-
-### 3.2 Authorization Weakness: Missing Object-Level Authorization (BOLA/IDOR)
-- **Finding:** In `backend/app/api/datasets.py`, all endpoints checking `datasets:upload`, `datasets:view`, or `datasets:delete` only verify that the user holds the general role scope.
-- **Evidence:** Any user with `datasets:delete` (both `admin` and `data_scientist`) can execute `DELETE /api/datasets/{dataset_name}` against **any** dataset in the system, even if owned or created by another data scientist.
-- *Impact:* Horizontal privilege escalation and accidental or malicious deletion of peer datasets.
-
----
-
-## 4. Model & ML Supply Chain Security
-
-### 4.1 FastAPI Model Execution Isolation
-- **Rule Verification:** FastAPI **must not** execute arbitrary user model code or unpickled weights in its own process.
-- **Audited Status:**
-  - Training execution is offloaded to Kubernetes RayJob pods (`submit_rayjob_to_k8s`).
-  - Serving inference is routed over HTTPX to RayService (`rayserve.inference`).
-  - **CONFIRMED:** FastAPI does not directly deserialize untrusted pickles or execute user code in-process for inference.
-
-### 4.2 Dynamic Unpinned Dependencies in MLflow Container
-- In `docker-compose.yml` (lines 142–153):
+  If `LAKEFS_TRAINING_ACCESS_KEY_ID` is not explicitly provisioned, `get_scoped_training_credentials()` falls back to the platform administrator lakeFS credentials (`settings.LAKEFS_ACCESS_KEY_ID`).
+  These credentials are subsequently injected as plaintext environment variables into the RayJob pod manifest:
   ```yaml
-  entrypoint: >
-    /bin/sh -c "
-      pip install psycopg2-binary boto3 &&
-      mlflow server ...
-    "
+  # backend/app/templates/rayjob_template.yaml:139-142
+  - name: LAKEFS_ACCESS_KEY_ID
+    value: "{{lakefs_access_key_id}}"
+  - name: LAKEFS_SECRET_ACCESS_KEY
+    value: "{{lakefs_secret_access_key}}"
   ```
-- *Finding:* Dynamic, unpinned `pip install` from public PyPI at container runtime introduces supply-chain risks. An upstream PyPI outage, network disruption, or dependency compromise directly compromises or halts the MLflow server.
+- **Impact:** Because the RayJob pod executes user-submitted training scripts (`POST /api/models/train`), any user code can inspect its own environment variables (`os.environ["LAKEFS_ACCESS_KEY_ID"]`) and obtain full administrative control over all repositories and branches in lakeFS.
+- **Attack/Failure Scenario:** A malicious authenticated user submits a custom training script containing code that accesses `os.environ["LAKEFS_SECRET_ACCESS_KEY"]`, uses the lakeFS client to delete or overwrite datasets belonging to other users or system branches.
+- **Recommendation:**
+  1. Enforce strict repository-scoped token creation in lakeFS for training jobs instead of sharing the platform master key.
+  2. If scoped credentials cannot be obtained, reject custom code submission rather than falling back to administrative keys.
+- **Confidence:** CONFIRMED
 
 ---
 
-## 5. Secrets Exposure & Static Audit
-
-### 5.1 Repository Dump Committed to Version Control (`repomix-output.xml`)
-- **Finding:** Commit `e4f0ac9` on branch `develop` added `repomix-output.xml` (14,398 lines, 513 KB) into git.
-- **Evidence:** This file contains a merged plain-text dump of the entire repository codebase, including configuration structures, internal endpoint paths, default secret keys (`minioadmin123`), and architectural layouts.
-- *Impact:* Information disclosure; exposes internal system topography and increases attack surface if published or pushed to a public/shared remote repository.
-
-### 5.2 Default Hardcoded Fallbacks in Configuration
-- In `backend/app/core/config.py`:
-  - `MINIO_ROOT_PASSWORD: str = "minioadmin123"`
-  - `LAKEFS_SECRET_ACCESS_KEY: str = "lakefssecretkey123"`
-- *Mitigation in place:* Production configurations override these via environment variables, but local dev environments remain vulnerable if exposed to network interfaces.
-
----
-
-## 6. Network & Container Security
-
-### 6.1 Unrestricted Port Bindings
-- In `docker-compose.yml`, multiple stateful and internal services bind to `0.0.0.0`:
-  - PostgreSQL (`5432:5432`)
-  - MinIO API & Console (`9000:9000`, `9001:9001`)
-  - MLflow Server (`5000:5000`)
-  - lakeFS (`8000:8000` / mapped ports)
-- *Recommendation:* Bind database and internal object stores to `127.0.0.1` unless external ingress is strictly required.
+### Finding ID: SEC-AUDIT-003
+- **Title:** Local Ray Subprocess Execution Fallback Risks Arbitrary Host Code Execution
+- **Severity:** MEDIUM (Conditional on `ALLOW_LOCAL_RAY_FALLBACK = True`)
+- **Category:** MODEL_SECURITY
+- **Location:** `backend/app/services/ml_ops/training_service.py:226-250` & `backend/app/core/config.py`
+- **Status:** **REMEDIATED / HARDENED**
+- **Evidence:**
+  `ALLOW_LOCAL_RAY_FALLBACK` is strictly enforced to `False` by default across all non-isolated environments in `backend/app/core/config.py:84`.
+- **Remediation Implemented:**
+  1. Added `validate_security_settings` model validator in `backend/app/core/config.py` that audits configuration during evaluation.
+  2. Added startup security audit in `backend/app/main.py` lifespan logging a critical security alert if `ALLOW_LOCAL_RAY_FALLBACK` is enabled in production.
+- **Impact:** Accidental or unauthorized activation of local subprocess execution in production is actively audited and logged on startup.
+- **Confidence:** CONFIRMED
 
 ---
 
-## 7. Observability & Privacy Audit
-
-### 7.1 Sensitive Data Verification
-- **Spans & Traces:** Checked `backend/app/core/telemetry.py` and HTTP middleware. Traces propagate `traceparent` headers correctly without injecting raw request bodies, prediction arrays, user passwords, or JWT secrets into span attributes.
-- **Metric Cardinality:** Prometheus metrics generated by SentinelML use bounded label sets (`status_code`, `method`, `endpoint`). User IDs, dataset IDs, and trace IDs are properly excluded from metric labels.
-
----
-
-## 8. Security Findings Classification
-
-### FINDING-SEC-001
-**Title:** Committed Full Repository Dump (`repomix-output.xml`) in Git  
-**Category:** SECURITY / SECRETS  
-**Severity:** HIGH  
-**Location:** `repomix-output.xml` (Repository Root)  
-**Evidence:** 14,398 lines of full source dump containing architecture, database configuration, and default credentials committed in `e4f0ac9`.  
-**Impact:** Excessive information disclosure and leakage of system internals.  
-**Exploitability:** Readily accessible to any entity with read access to the git repository.  
-**Recommendation:** Remove `repomix-output.xml` from git tracking, add to `.gitignore`, and scrub git commit history if the repo is ever mirrored externally.  
-**Priority:** Immediate  
-**Confidence:** Confirmed  
-
-### FINDING-SEC-002
-**Title:** Broken Object-Level Authorization (BOLA/IDOR) on Dataset Deletion  
-**Category:** SECURITY / AUTHORIZATION  
-**Severity:** MEDIUM  
-**Location:** `backend/app/api/datasets.py:164-180`  
-**Evidence:** `delete_dataset` verifies `datasets:delete` scope but performs no ownership check against `dataset.user_id` or `dataset.created_by_id`.  
-**Impact:** Any user with the `data_scientist` role can delete datasets registered by other users.  
-**Exploitability:** Send `DELETE /api/datasets/{victim_dataset_name}` with valid Data Scientist bearer token.  
-**Recommendation:** Implement tenant/user ownership validation: allow non-admin users to delete only datasets where `dataset.user_id == current_user.id`.  
-**Priority:** Before next feature  
-**Confidence:** Confirmed  
-
-### FINDING-SEC-003
-**Title:** Dynamic Unpinned Dependency Installation in MLflow Service  
-**Category:** SECURITY / SUPPLY CHAIN  
-**Severity:** MEDIUM  
-**Location:** `docker-compose.yml:142-146`  
-**Evidence:** Container entrypoint runs `pip install psycopg2-binary boto3` without version pinning or hash validation on every container startup.  
-**Impact:** Susceptible to PyPI dependency confusion/typosquatting and unexpected startup failures during PyPI outages.  
-**Exploitability:** Compromise of public PyPI package or network MITM during startup.  
-**Recommendation:** Pre-build a dedicated Docker image for MLflow containing pinned `psycopg2-binary` and `boto3` binaries.  
-**Priority:** Before next feature  
-**Confidence:** Confirmed  
-
-### FINDING-SEC-004
-**Title:** Potential Content-Disposition Header Injection in Dataset Download  
-**Category:** SECURITY / API  
-**Severity:** LOW  
-**Location:** `backend/app/api/datasets.py:221-227`  
-**Evidence:**
-```python
-filename = path.split("/")[-1]
-return StreamingResponse(..., headers={"Content-Disposition": f"attachment; filename={filename}"})
-```
-If `path` contains newlines (`\r\n`) or unescaped quotes, HTTP response splitting or header injection may occur.  
-**Impact:** Browser response tampering or unexpected filename interpretation.  
-**Exploitability:** Pass an encoded path containing CRLF sequences to `GET /api/datasets/{name}/download?path=...`.  
-**Recommendation:** Sanitize `filename` using `urllib.parse.quote` and strip non-ASCII / control characters.  
-**Priority:** Later  
-**Confidence:** Confirmed  
-
-### FINDING-SEC-005
-**Title:** In-Memory Access Token Storage in Frontend SPA  
-**Category:** SECURITY / FRONTEND  
-**Severity:** INFORMATIONAL  
-**Location:** `frontend/src/api/client.js:13-22`  
-**Evidence:** Access token is stored in a private module-level variable `let accessToken = null` and cleared on page refresh. Refresh is performed silently via HttpOnly cookies.  
-**Impact:** Highly positive security pattern. Mitigates token exfiltration via XSS compared to `localStorage`.  
-**Recommendation:** Maintain this pattern; ensure CSP (Content Security Policy) headers are served in production to further protect against XSS.  
-**Priority:** Informational  
-**Confidence:** Confirmed  
+### Finding ID: SEC-AUDIT-004
+- **Title:** Unsanitized Filename Parameter in Dataset Download `Content-Disposition` Header
+- **Severity:** LOW
+- **Category:** INJECTION
+- **Location:** `backend/app/api/datasets.py:186-196`
+- **Status:** **REMEDIATED**
+- **Evidence:** Previously, `backend/app/api/datasets.py` injected unescaped `filename = path.split("/")[-1]` into the header string.
+- **Remediation Implemented:** Filename is sanitized using `re.sub(r'[^a-zA-Z0-9_.-]', '_', raw_filename)` and formatted according to RFC 6266 with standard `filename="..."` and UTF-8 encoded `filename*=UTF-8''...` parameters.
+- **Impact:** Header injection, parameter manipulation, and browser file extension confusion attacks are prevented.
+- **Confidence:** CONFIRMED
 
 ---
 
-## 9. Executive Security Summary
+### Finding ID: SEC-AUDIT-005
+- **Title:** Anonymous Viewer Access Enabled by Default in Grafana Service
+- **Severity:** LOW
+- **Category:** AUTHORIZATION / NETWORK_SECURITY
+- **Location:** `docker-compose.yml:350-351`
+- **Evidence:**
+  ```yaml
+  # docker-compose.yml:350-351
+  GF_AUTH_ANONYMOUS_ENABLED: "true"
+  GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+  ```
+- **Impact:** Any user with network visibility to Grafana (port 3000) can view internal infrastructure metrics, system topologies, database queries, and service health without logging in.
+- **Attack/Failure Scenario:** An unauthenticated network user navigates to `http://<host>:3000` and inspects Prometheus metrics and Loki log streams to discover internal service names and endpoint paths.
+- **Recommendation:** Set `GF_AUTH_ANONYMOUS_ENABLED: "false"` in production environments.
+- **Confidence:** CONFIRMED
 
-- **Confirmed Vulnerabilities:**
-  - `repomix-output.xml` source dump committed to branch `develop` (Information Disclosure).
-  - Broken Object-Level Authorization on dataset deletion (BOLA/IDOR).
-  - Unpinned runtime `pip install` in MLflow Docker container (Supply Chain Risk).
-- **Security Strengths:**
-  - Industry-standard password hashing (Bcrypt 12 rounds) and robust complexity policies.
-  - Refresh Token Rotation (RTR) with automatic token reuse theft detection.
-  - Strict isolation: FastAPI never executes untrusted user model code in-process.
-  - Frontend SPA keeps JWT access tokens strictly in-memory, avoiding `localStorage` XSS theft.
-- **Deployment Recommendation:**
-  - Branch `develop` must be cleaned of conflict markers and sensitive dumps before being promoted or merged to `main`.
+---
+
+### Finding ID: SEC-AUDIT-006
+- **Title:** In-Memory Access Token Storage Architecture in Single-Page Application
+- **Severity:** INFORMATIONAL
+- **Category:** AUTHENTICATION
+- **Location:** `frontend/src/api/client.js:1-15`
+- **Evidence:**
+  ```javascript
+  // frontend/src/api/client.js:3
+  let accessToken = null;
+  export const setAccessToken = (token) => { accessToken = token; };
+  ```
+- **Impact:** Access tokens are held exclusively in module-scoped JavaScript memory, which effectively protects against persistent localStorage credential theft via XSS. However, tokens remain vulnerable to in-memory extraction during an active XSS event.
+- **Attack/Failure Scenario:** A high-severity XSS vulnerability executes JavaScript while the application is active in a tab, accessing the in-memory token variable.
+- **Recommendation:** Maintain current design (in-memory access tokens + HttpOnly refresh cookies) as it represents the current OWASP recommended pattern for modern SPAs.
+- **Confidence:** CONFIRMED
+
+---
+
+## 4. Kubernetes Workload Hardening & Network Verification
+
+### 4.1 Pod Security Contexts
+The KubeRay `RayJob` manifest enforces strict container security:
+- `runAsNonRoot: true`, `runAsUser: 1000`, `runAsGroup: 100`
+- `allowPrivilegeEscalation: false`
+- `capabilities.drop: ["ALL"]`
+- `seccompProfile.type: RuntimeDefault`
+- `automountServiceAccountToken: false` (prevents pod from querying Kubernetes API server)
+
+### 4.2 Network Policy Verification
+The NetworkPolicy manifest (`rayjob-netpol-{{job_id}}`) restricts egress strictly to:
+- UDP/TCP 53 (DNS)
+- Intra-cluster Ray pods (`podSelector: {ray.io/job-id: ...}`)
+- TCP 8000 (lakeFS), TCP 9000 (MinIO), TCP 5000 (MLflow)
+
+All other external internet and intra-namespace pod communications are denied.

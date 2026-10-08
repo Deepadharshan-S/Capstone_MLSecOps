@@ -1,326 +1,224 @@
-# SentinelML — Software & Architecture Audit Report
+# SentinelML — Fresh Software Engineering & Architecture Audit Report
 
-**Date:** October 2, 2026  
-**Auditor:** SentinelML Automated Security & Architecture Review System  
-**Repository Branch:** `develop` (commit `e4f0ac9`) vs `main` (commit `f2e1c4e`)  
-**Audit Scope:** Full codebase (Backend, Frontend, Infrastructure, Database, Observability)  
-**Execution Mode:** Read-Only Audit (Zero Production Modifications)
+**Audit Date:** October 3, 2026  
+**Auditor:** SentinelML Independent Security & Architecture Review System  
+**Repository Branch:** `continuous_training`  
+**Commit Hash:** `c8f73e61da8526104ff4490fb0ab1f762a40a684`  
+**Execution Context:** Fresh, Independent Codebase Audit (Zero Preconceptions, Read-Only Code Execution)  
 
 ---
 
 ## 1. Executive Baseline & Environment Assessment
 
-### 1.1 Git Status & Baseline
-- **Current Branch:** `develop`
-- **Head Commit:** `e4f0ac9` ("frontend fix")
-- **Base Reference:** `main` (commit `f2e1c4e` - "Merge branch 'model_deployment' into main")
-- **Working Tree:** Clean (no uncommitted tracked modifications)
-- **Baseline Test Status:**
-  - **On `main`:** 143 unit/integration tests passing cleanly (`pytest backend/tests/`).
-  - **On `develop`:** **BLOCKED (CRITICAL REGRESSION)**. The test suite fails to import during conftest collection due to a `SyntaxError: invalid syntax` in `backend/app/core/config.py` caused by raw merge conflict markers (`<<<<<<< Updated upstream`).
+### 1.1 Git Status & Commit History
+- **Current Branch:** `continuous_training`
+- **Head Commit:** `c8f73e6` — *fix(cleanup): ensure comprehensive cleanup of ConfigMaps, RayJobs, RayClusters, and temp files post-training*
+- **Previous Commits:**
+  - `5ab066d`: *fix(serving): enable dynamic host port-forwarding and DB resolution for RayService inference*
+  - `b68be08`: *fix(jobs): reconcile active jobs against live Kubernetes RayJob state and MLflow artifacts*
+  - `e697394`: *fix(scripts): support root .env resolution in backend/run.sh*
+  - `311935a`: *fix(server): add --reload flag to uvicorn in run.sh for development hot reloading*
+- **Working Tree State:** Clean (only audit report documents written per instruction).
 
-### 1.2 Actual Repository Architecture Map
+### 1.2 Automated Tooling & Test Execution Baseline
+- **Pytest Test Suite:**
+  - Command: `PYTHONPATH=backend .venv/bin/pytest backend/tests/ -q`
+  - Result: **145 passed, 18 warnings in 426.11s (07:06)**
+  - Note: Tests require `PYTHONPATH=backend` when run via raw `.venv/bin/pytest` due to direct imports of package namespace `app`.
+- **Alembic Database Migrations:**
+  - Command: `PYTHONPATH=backend .venv/bin/alembic -c backend/alembic.ini heads`
+  - Output: `8a1b2c3d4e5f (head)`
+  - Command: `PYTHONPATH=backend .venv/bin/alembic -c backend/alembic.ini current`
+  - Output: `8a1b2c3d4e5f (head)` — Single authoritative head matches active PostgreSQL schema.
+- **Frontend Linter & Production Build:**
+  - Linter (`oxlint`): **0 errors**, 4 fast-refresh export warnings on 30 files.
+  - Build (`vite build`): **Succeeded in 3.06s**, generated 31 bundled chunks (gzip: 83.55 kB index JS).
+- **Docker Compose Configuration:**
+  - Command: `docker compose config --quiet`
+  - Result: 0 syntax or validation errors. All 4 core services (`sentinelml-postgres`, `sentinelml-minio`, `sentinelml-lakefs`, `sentinelml-mlflow`) are running and healthy.
+
+---
+
+## 2. Actual Codebase Architecture Map
+
+Based on direct source code inspection of `backend/app/`, `frontend/src/`, `k8s/`, and `docker-compose.yml`:
 
 ```
-                    ┌───────────────────────────────────────────────┐
-                    │       Frontend Client (React 19 + Vite)       │
-                    │   In-Memory JWT Access Token + HttpOnly Cookie │
-                    └───────────────────────┬───────────────────────┘
-                                            │ HTTP / JSON (CORS)
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │               FastAPI Gateway                 │
-                    │   Auth, Users, Datasets, MLOps, Deployments   │
-                    └───────┬──────────────┬──────────────┬─────────┘
-                            │              │              │
-           ┌────────────────┼──────────────┼──────────────┼────────────────┐
-           ▼                ▼              ▼              ▼                ▼
-    ┌────────────┐   ┌────────────┐ ┌────────────┐ ┌─────────────┐ ┌──────────────┐
-    │ PostgreSQL │   │   lakeFS   │ │   MinIO    │ │   MLflow    │ │  Kubernetes  │
-    │  Database  │   │ Versioning │ │ S3 Storage │ │ Tracking &  │ │ KubeRay CRDs │
-    │ (Auth/Jobs)│   │  (Git-like)│ │ (Artifacts)│ │  Registry   │ │(Job/Service) │
-    └────────────┘   └────────────┘ └────────────┘ └─────────────┘ └──────┬───────┘
-           │                                                              │
-           │                                       ┌──────────────────────┴───────┐
-           │                                       ▼                              ▼
-           │                               ┌──────────────┐               ┌──────────────┐
-           │                               │    RayJob    │               │  RayService  │
-           │                               │ Batch Train  │               │ HTTP Serving │
-           │                               └──────────────┘               └──────┬───────┘
-           │                                                                     │
-           ▼                                                                     │
-    ┌───────────────────────────────────────────────────────────────────┐        │
-    │                     OpenTelemetry Ecosystem                       │        │
-    │  FastAPI (HTTP) ──> OTel Collector ──> Tempo (Distributed Tracing)│<───────┘
-    │                     OTel Collector ──> Prometheus (Metrics)       │
-    │                     OTel Collector ──> Loki (Logs)                │
-    │                     Grafana (Unified Dashboards)                  │
-    └───────────────────────────────────────────────────────────────────┘
+                       ┌────────────────────────────────────────────────────────┐
+                       │           Frontend Client (React 19 + Vite 8)          │
+                       │   In-Memory JWT Access Token + HttpOnly Refresh Cookie  │
+                       └───────────────────────────┬────────────────────────────┘
+                                                   │ HTTP / REST / JSON
+                                                   ▼
+                       ┌────────────────────────────────────────────────────────┐
+                       │                  FastAPI API Gateway                   │
+                       │     Auth, Datasets, MLOps, Deployments, Telemetry      │
+                       └────────┬──────────────┬──────────────┬──────────────┬──┘
+                                │              │              │              │
+           ┌────────────────────┼──────────────┼──────────────┼──────────────┴─────┐
+           ▼                    ▼              ▼              ▼                    ▼
+    ┌──────────────┐     ┌──────────────┐┌──────────────┐┌─────────────┐    ┌──────────────┐
+    │  PostgreSQL  │     │    lakeFS    ││   MinIO S3   ││   MLflow    │    │  Kubernetes  │
+    │  (Relational │     │  (Data Lake  ││  (Artifact   ││ (Experiment │    │ (Custom API, │
+    │   Database)  │     │  Versioning) ││   Storage)   ││  Registry)  │    │  CoreV1Api)  │
+    └──────────────┘     └──────────────┘└──────────────┘└─────────────┘    └──────┬───────┘
+                                                                                   │
+                                                        ┌──────────────────────────┴─────────┐
+                                                        ▼                                    ▼
+                                                ┌──────────────┐                     ┌──────────────┐
+                                                │    RayJob    │                     │  RayService  │
+                                                │ (Batch Train │                     │ (HTTP Serve  │
+                                                │  in Cluster) │                     │  in Cluster) │
+                                                └──────┬───────┘                     └──────┬───────┘
+                                                       │ Post-Job Sweep                     │ PortForward
+                                                       ▼                                    ▼ Manager (127.0.0.1)
+                                                ┌──────────────┐                     ┌──────────────┐
+                                                │ Auto-Cleanup │                     │ Local Proxy  │
+                                                │ (CM & Pods)  │                     │ Host Ingress │
+                                                └──────────────┘                     └──────────────┘
 ```
 
 ---
 
-## 2. Software Architecture & Layering Audit
+## 3. Software Engineering Findings
 
-### 2.1 Layering & Separation of Concerns
-1. **HTTP Coupling in Service Layers:**
-   - Multiple domain services directly import and raise FastAPI HTTP exceptions (`from fastapi import HTTPException, status`).
-   - Examples:
-     - `backend/app/services/dataset/storage_service.py` (lines 2, 55-58)
-     - `backend/app/services/ml_ops/job_service.py` (lines 7, 72)
-     - `backend/app/services/ml_ops/training_service.py` (lines 8, 87)
-     - `backend/app/services/dataset/catalog_service.py`
-   - *Impact:* Prevents domain services from being reused outside FastAPI (e.g., in background CLI tasks, Ray workers, Celery/cron handlers, or pure unit tests).
-
-2. **Scattered Infrastructure Logic (Kubernetes API):**
-   - Kubernetes API clients are instantiated ad-hoc inside domain services rather than accessed via an injected abstraction adapter:
-     - `backend/app/services/ml_ops/training_service.py` lines 30–37 (`_get_k8s_apis`)
-     - `backend/app/services/ml_ops/deployment_service.py` lines 28–35 (`_get_k8s_apis`)
-     - `backend/app/services/ml_ops/rayjob_service.py` lines 34–41 (`_get_k8s_apis`)
-   - *Impact:* Tight coupling to the Kubernetes SDK, complicating mockability and unit test execution without an active cluster context.
-
-3. **Duplicated & Incompatible Job Tracking Abstractions:**
-   - `main` branch implemented `TrainingJobService` (`backend/app/services/ml_ops/training_job_service.py`) backed by the authoritative `TrainingJob` schema (`job_id`, `rayjob_name`, `dataset_id`, `ref`, `epochs`, `hyperparameters`, `entrypoint`).
-   - `develop` introduced a conflicting second service `JobService` in `backend/app/services/ml_ops/job_service.py` expecting completely different fields (`model_type`, `target_column`, `progress`, `accuracy`, `precision_score`, `user_id`).
-   - *Impact:* Severe architectural fragmentation and immediate runtime type errors when calling `job_service.create_job()`.
-
----
-
-## 3. Code Quality & Lifecycle Audit
-
-### 3.1 Unresolved Git Merge Conflict Markers
-- **Finding:** Branch `develop` contains **31 raw merge conflict markers** (`<<<<<<< Updated upstream`, `=======`, `>>>>>>> Stashed changes`) checked into version control across 16 core files.
-- **Affected Files:**
-  - `.env.example`
-  - `README.md`
-  - `docker-compose.yml`
-  - `backend/app/api/datasets.py`
-  - `backend/app/api/ml_ops.py`
-  - `backend/app/core/config.py`
-  - `backend/app/db/session.py`
-  - `backend/app/main.py`
-  - `backend/app/models/__init__.py`
-  - `backend/app/schemas/ml_ops/__init__.py`
-  - `backend/app/schemas/ml_ops/training.py`
-  - `backend/app/services/auth/auth_service.py`
-  - `backend/app/services/dependencies.py`
-  - `backend/app/services/ml_ops/__init__.py`
-  - `backend/app/services/ml_ops/deployment_service.py`
-  - `backend/app/services/ml_ops/registry_service.py`
-  - `backend/app/services/ml_ops/serving_service.py`
-  - `backend/app/services/ml_ops/training_service.py`
-  - `backend/app/services/ml_ops/utils.py`
-
-### 3.2 Synchronous Blocking I/O in Async Request Paths
-- In `backend/app/services/dataset/lakefs_service.py` (lines 103–110), `download_file` executes:
+### Finding ID: SW-AUDIT-001
+- **Title:** Undefined Name `logger` in `TrainingJobService.reconcile_active_jobs()`
+- **Severity:** HIGH
+- **Category:** CORRECTNESS
+- **Location:** `backend/app/services/ml_ops/training_job_service.py:269`
+- **Evidence:**
   ```python
-  with obj.reader(mode="rb") as reader:
-      return reader.read()
+  # backend/app/services/ml_ops/training_job_service.py:266-270
+  self.repository.save_all(active_jobs)
+  try:
+      self.rayjob_service.sweep_orphaned_job_resources()
+  except Exception as sweep_err:
+      logger.debug(f"Resource sweep note: {sweep_err}")  # <-- NameError: name 'logger' is not defined
   ```
-- *Impact:* Synchronously buffers multi-gigabyte dataset files directly into memory during HTTP request handling, blocking Python's event loop and risking Out-Of-Memory (OOM) worker crashes.
-
-### 3.3 Redundant Telemetry Initialization
-- In `backend/app/main.py`:
-  - `setup_telemetry()` is called at module evaluation time.
-  - Telemetry instrumentation is also triggered inside FastAPI's async lifespan context manager.
-- *Impact:* Redundant tracer provider initializations, duplicate metric reader registrations, and warning noise during startup.
-
----
-
-## 4. Database & Alembic Migrations Audit
-
-### 4.1 Multiple Migration Heads (Split Head Conflict)
-- Running `.venv/bin/alembic -c backend/alembic.ini heads` reveals **two divergent heads**:
-  1. `8a1b2c3d4e5f (head)`: Created by migration sequence `46bfc95b5dd9 -> 7ef148a0dad6 -> 710094a7e4a1 -> 8a1b2c3d4e5f`.
-  2. `bee587bde3b6 (head)`: Added on `develop`, branching off `46bfc95b5dd9`.
-- **Root Cause:** Both `7ef148a0dad6` and `bee587bde3b6` attempt to create the `training_jobs` table with incompatible schemas:
-  - `7ef148a0dad6`: Table columns `job_id`, `rayjob_name`, `status`, `dataset_id`, `ref`, `model_name`, `experiment_name`, `epochs`, `hyperparameters`, `entrypoint`, `duration_seconds`, `created_by_id`.
-  - `bee587bde3b6`: Table columns `job_id` (String(12)), `user_id`, `dataset_id`, `model_type`, `target_column`, `progress`, `accuracy`, `precision_score`, `confusion_matrix`.
-- *Impact:* `alembic upgrade head` aborts with `Multiple head revisions are present`. The database cannot be reliably migrated on new deployments.
-
----
-
-## 5. API Surface & Endpoint Coverage Audit
-
-The FastAPI application exposes **42 operational endpoints** across four core routers plus root/health endpoints:
-
-| Endpoint Route | Method | Auth / Scope | Input Validation Schema | Response Model | Database Interaction | External System Calls | Status |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `/` | `GET` | Public | None | `dict` | None | None | Clean |
-| `/health` | `GET` | Public | None | `JSONResponse` | `SELECT 1` | lakeFS, MinIO, MLflow | Clean |
-| `/api/auth/register` | `POST` | Public (RateLimited) | `UserCreate` | `UserResponse` | User INSERT | None | Clean |
-| `/api/auth/login` | `POST` | Public (RateLimited) | `OAuth2PasswordRequestForm` | `Token` + HttpOnly Cookie | User query, RefreshToken INSERT | None | Conflict in CORS/Cookie |
-| `/api/auth/refresh` | `POST` | Cookie (RateLimited) | Cookie (`refresh_token`) | `Token` + HttpOnly Cookie | Token lookup, RTR UPDATE | None | Conflict in config |
-| `/api/auth/logout` | `POST` | Authenticated | None | `MessageResponse` | Token Revocation/DELETE | None | Clean |
-| `/api/users/me` | `GET` | `authenticated` | None | `UserResponse` | User query | None | Clean |
-| `/api/users/` | `GET` | `users:manage` | Limit/Offset query | `list[UserResponse]` | User SELECT | None | Clean |
-| `/api/users/audit-logs` | `GET` | `users:manage` | Limit/Offset query | `list[AuditLogResponse]` | AuditLog SELECT | None | Clean |
-| `/api/users/{user_id}/role` | `PUT` | `users:manage` | `UserUpdateRole` | `UserResponse` | User UPDATE, AuditLog INSERT | None | Clean |
-| `/api/datasets` | `POST` | `datasets:upload` | Form + File | `DatasetResponse` | Dataset INSERT | lakeFS repo create | **Merge Conflict** |
-| `/api/datasets` | `GET` | `datasets:view` | Limit/Offset query | `list[DatasetResponse]` | Dataset SELECT | None | Clean |
-| `/api/datasets/{name}` | `GET` | `datasets:view` | Path | `DatasetResponse` | Dataset SELECT | lakeFS metadata | Clean |
-| `/api/datasets/{name}` | `PUT` | `datasets:upload` | `DatasetMetadataUpdate` | `DatasetResponse` | Dataset UPDATE | lakeFS metadata | Clean |
-| `/api/datasets/{name}` | `DELETE`| `datasets:delete` | Path | `MessageResponse` | Dataset DELETE | lakeFS repo delete | Clean |
-| `/api/datasets/{name}/upload` | `POST` | `datasets:upload` | Multipart File | `dict` | Dataset lookup | lakeFS upload | Clean |
-| `/api/datasets/{name}/download` | `GET` | `datasets:view` | Query (`path`, `ref`) | `StreamingResponse` | Dataset lookup | lakeFS stream | Header injection risk |
-| `/api/datasets/{name}/commit` | `POST` | `datasets:upload` | `DatasetCommitRequest` | `CommitResponse` | Dataset lookup | lakeFS commit | Clean |
-| `/api/datasets/{name}/commits` | `GET` | `datasets:view` | Query (`ref`, `limit`)| `list[CommitResponse]` | Dataset lookup | lakeFS log | Clean |
-| `/api/datasets/{name}/compare` | `GET` | `datasets:view` | Query (`left_ref`, `right_ref`) | `CompareResponse` | Dataset lookup | lakeFS diff | Clean |
-| `/api/datasets/{name}/rollback`| `POST` | `datasets:upload` | `RollbackRequest` | `RollbackResponse` | Dataset lookup | lakeFS revert | Clean |
-| `/api/datasets/{name}/branches`| `GET` | `datasets:view` | Path | `list[BranchResponse]` | Dataset lookup | lakeFS branches | Clean |
-| `/api/datasets/{name}/branches`| `POST` | `datasets:upload` | `BranchCreate` | `BranchResponse` | Dataset lookup | lakeFS branch create | Clean |
-| `/api/datasets/{name}/branches/{b}`| `DELETE`| `datasets:delete` | Path | `MessageResponse` | Dataset lookup | lakeFS branch delete | Clean |
-| `/api/datasets/{name}/tags` | `GET` | `datasets:view` | Path | `list[TagResponse]` | Dataset lookup | lakeFS tags | Clean |
-| `/api/datasets/{name}/tags` | `POST` | `datasets:upload` | `TagCreate` | `TagResponse` | Dataset lookup | lakeFS tag create | Clean |
-| `/api/datasets/{name}/tags/{t}` | `DELETE`| `datasets:delete` | Path | `MessageResponse` | Dataset lookup | lakeFS tag delete | Clean |
-| `/api/models/train` | `POST` | `models:train` | `TrainModelSchema` | `TrainModelResponse` | TrainingJob INSERT | K8s RayJob submit | **Merge Conflict** |
-| `/api/models/train-pipeline` | `POST` | `models:train` | `TrainPipelineSchema` | `TrainModelResponse` | TrainingJob INSERT | K8s RayJob / local Ray | **Merge Conflict** |
-| `/api/models/supported` | `GET` | `models:view` | None | `dict` | None | None | Clean |
-| `/api/models` | `GET` | `models:view` | None | `ModelListResponse` | None | MLflow registered models | Clean |
-| `/api/models/{name}/versions` | `GET` | `models:view` | Path | `ModelDetailResponse` | None | MLflow model versions | Clean |
-| `/api/models/upload` | `POST` | `models:train` | Form + File (`model_file`)| `UploadModelResponse` | None | MLflow log_model | Clean |
-| `/api/models/deploy` | `POST` | `models:deploy` | `DeployModelSchema` | `DeployModelResponse` | Deployment INSERT | K8s RayService apply | **Merge Conflict** |
-| `/api/deployments` | `GET` | `models:view` | Query filters | `DeploymentListResponse` | Deployment SELECT | None | Clean |
-| `/api/deployments/{id}` | `GET` | `models:view` | Path | `DeploymentDetailResponse`| Deployment SELECT | K8s RayService status | Clean |
-| `/api/deployments/manage` | `POST` | `deployments:manage` | `ManageDeploymentSchema` | `ManageDeploymentResponse` | Deployment UPDATE | K8s RayService patch/delete | Clean |
-| `/api/models/{name}/predict` | `POST` | `models:view` | `PredictionRequestSchema` | `PredictionResponseSchema` | Deployment lookup | HTTPX -> RayService | Clean (Tracing OK) |
-| `/api/deployments/{id}/predict` | `POST` | `models:view` | `PredictionRequestSchema` | `PredictionResponseSchema` | Deployment lookup | HTTPX -> RayService | Clean (Tracing OK) |
-| `/api/jobs` | `GET` | `models:view` | Query (`limit`) | `RayJobListResponse` | TrainingJob SELECT | K8s CustomObjectsApi | **Merge Conflict** |
-| `/api/jobs/{job_id}` | `GET` | `models:view` | Path | `RayJobDetailResponse` | TrainingJob lookup | K8s CustomObjectsApi | **Merge Conflict** |
-| `/api/jobs/{job_id}/logs` | `GET` | `models:view` | Path | `RayJobLogsResponse` | TrainingJob lookup | K8s CoreV1Api pod logs | Clean |
-| `/api/experiments` | `GET` | `models:view` | None | `list[dict]` | None | MLflow search_experiments | Clean |
-| `/api/experiments/{id}/runs` | `GET` | `models:view` | Path + Query | `list[dict]` | None | MLflow search_runs | Clean |
-
----
-
-## 6. Docker & Kubernetes Software Audit
-
-### 6.1 Docker Compose Parsing Failure
-- `docker-compose.yml` has syntax errors on lines 44–50 and 227–235 due to unresolved git conflict markers.
-- `docker compose config` and `docker compose ps` fail outright with `mapping values are not allowed in this context`.
-
-### 6.2 RayJob Network Policy Syntax Error
-- In `k8s/rayjob-network-policy.yaml`:
-  ```yaml
-  ports:
-    - protocol: TCP
-      port: 9000
-      port: 5000  # Duplicate YAML mapping key!
+  Linter verification: `ruff check backend/app/services/ml_ops/training_job_service.py` returns:
+  `F821 Undefined name logger` at line 269.
+- **Impact:** If `sweep_orphaned_job_resources()` encounters any exception during post-job reconciliation, the except block crashes with `NameError: name 'logger' is not defined`, aborting job reconciliation and failing the API response with HTTP 500.
+- **Attack/Failure Scenario:** A user calls `GET /api/jobs` or `GET /api/jobs/{job_id}` while a cluster resource error occurs during sweeping. Instead of gracefully ignoring or logging the warning, the request crashes with unhandled `NameError`.
+- **Recommendation:** Import and configure standard logging in `training_job_service.py`:
+  ```python
+  import logging
+  logger = logging.getLogger("training_job_service")
   ```
-- *Impact:* The second `port: 5000` overwrites `port: 9000`. Traffic destined to port 9000 (MinIO S3) will be blocked if parsed by strict YAML loaders.
+- **Confidence:** CONFIRMED
 
 ---
 
-## 7. Frontend Architecture Audit (Branch `develop`)
-
-### 7.1 Tech Stack & Structure
-- **Framework:** React 19 + Vite 8 SPA.
-- **Routing:** React Router v7 (`react-router-dom`) with lazy-loaded route chunks (`Dashboard`, `Pipeline`, `Datasets`, `DatasetDetail`, `Registry`, `Deployments`, `Predict`, `Jobs`, `Experiments`, `Admin`).
-- **Icons & Visuals:** `lucide-react`, `recharts` for metrics and evaluation visualizations.
-- **Linter Status:** `oxlint` passes with 0 errors (4 Fast-Refresh export warnings).
-- **Build Status:** `npm run build` (`vite build`) succeeds cleanly without bundling errors.
-
-### 7.2 Authentication & State Architecture
-- Access tokens reside exclusively in module memory (`let accessToken = null` in `frontend/src/api/client.js`).
-- Refresh tokens are transported via HttpOnly cookies (`credentials: 'include'`).
-- Silent session restoration on initial page load via `refreshAccessToken()` and `/users/me`.
-- Gating via `<RoleGate scope="users:manage">` protects UI elements according to the active role.
-
-### 7.3 Integration & Configuration Mismatches
-1. **Port Mismatch:**
-   - Frontend API client defaults to `http://localhost:8000/api` (`client.js` line 11).
-   - `backend/run.sh` launches Uvicorn on port `8001` (`uvicorn app.main:app --host 127.0.0.1 --port 8001`).
-   - `frontend/scripts/audit-endpoints.mjs` targets `http://127.0.0.1:8001`.
-   - *Impact:* Out-of-the-box local execution fails to connect unless `VITE_API_URL` is explicitly overridden.
-2. **CORS Origins Collision:**
-   - Stash changes introduced multi-port Vite support (`ALLOWED_ORIGINS` for 5173, 5174, 5175), but conflicts with `CORS_ORIGINS` in `main.py`.
+### Finding ID: SW-AUDIT-002
+- **Title:** Missing Top-Level Module Export Requires `PYTHONPATH=backend` for Standalone Tooling
+- **Severity:** MEDIUM
+- **Category:** MAINTAINABILITY
+- **Location:** Project layout (`backend/app`) and `pyproject.toml`
+- **Evidence:**
+  Running `pytest backend/tests/` without `PYTHONPATH=backend` produces:
+  ```
+  ImportError while loading conftest '.../backend/tests/conftest.py'.
+  backend/tests/conftest.py:6: in <module>
+      from app.core.config import settings
+  E   ModuleNotFoundError: No module named 'app'
+  ```
+  Similarly, running `alembic current` without `PYTHONPATH=backend` produces `ModuleNotFoundError: No module named 'app'`.
+- **Impact:** Developers or automated CI runners running standard `pytest` or `alembic` commands without explicitly prepending `PYTHONPATH=backend` fail immediately.
+- **Attack/Failure Scenario:** CI/CD pipeline triggers test run with standard `pytest` command; build fails on conftest load.
+- **Recommendation:** Add a `[tool.pytest.ini_options]` configuration in `pyproject.toml` containing `pythonpath = ["backend"]` or install backend as an editable package (`pip install -e .`).
+- **Confidence:** CONFIRMED
 
 ---
 
-## 8. Software Findings Classification
-
-### FINDING-SW-001
-**Title:** Unresolved Git Conflict Markers Committed to Branch `develop`  
-**Category:** CORRECTNESS / MAINTAINABILITY  
-**Severity:** CRITICAL  
-**Location:** 16 files across backend, compose, and documentation  
-**Evidence:** `git grep -n "<<<<<<< "` returns 31 conflict occurrences. Python imports fail with `SyntaxError: invalid syntax` in `backend/app/core/config.py:29`.  
-**Impact:** Total application breakage. Backend API cannot start; test suite cannot run; docker compose cannot parse configuration.  
-**Recommendation:** Perform a clean, surgical three-way merge between `main` and `develop`, resolving all conflicts in favor of the unified SentinelML configuration.  
-**Priority:** Immediate  
-**Confidence:** Confirmed  
-
-### FINDING-SW-002
-**Title:** Divergent Alembic Migration Heads (`8a1b2c3d4e5f` vs `bee587bde3b6`)  
-**Category:** DATABASE / CORRECTNESS  
-**Severity:** CRITICAL  
-**Location:** `backend/alembic/versions/bee587bde3b6_add_training_jobs_table.py` & `7ef148a0dad6_create_training_jobs_table.py`  
-**Evidence:** Running `alembic heads` yields two distinct revisions branching from `46bfc95b5dd9`. Both attempt to create `training_jobs` with conflicting columns.  
-**Impact:** `alembic upgrade head` aborts. Database migrations fail for all clean environments.  
-**Recommendation:** Remove the redundant migration `bee587bde3b6` (or merge revisions if any new columns are required) and preserve `7ef148a0dad6 -> 710094a7e4a1 -> 8a1b2c3d4e5f`.  
-**Priority:** Immediate  
-**Confidence:** Confirmed  
-
-### FINDING-SW-003
-**Title:** Model Argument Type Mismatch in `JobService`  
-**Category:** CORRECTNESS / ARCHITECTURE  
-**Severity:** HIGH  
-**Location:** `backend/app/services/ml_ops/job_service.py:28-43`  
-**Evidence:** `JobService.create_job` instantiates `TrainingJob(user_id=..., model_type=..., target_column=...)`. None of these fields exist in `backend/app/models/training_job.py`.  
-**Impact:** Runtime `TypeError` upon submitting automated training pipeline jobs.  
-**Recommendation:** Unify `JobService` with `TrainingJobService` and align arguments with the authoritative SQLAlchemy model.  
-**Priority:** Immediate  
-**Confidence:** Confirmed  
-
-### FINDING-SW-004
-**Title:** Duplicate Port Mapping in RayJob NetworkPolicy Manifest  
-**Category:** RELIABILITY / NETWORKING  
-**Severity:** MEDIUM  
-**Location:** `k8s/rayjob-network-policy.yaml:26-28`  
-**Evidence:**
-```yaml
-ports:
-  - protocol: TCP
-    port: 9000
-    port: 5000
-```
-**Impact:** Port 9000 is overwritten by port 5000. Outbound traffic to MinIO S3 is denied under strict CNI policy enforcement.  
-**Recommendation:** Split into two distinct port list items (`- protocol: TCP, port: 9000` and `- protocol: TCP, port: 5000`).  
-**Priority:** Before next feature  
-**Confidence:** Confirmed  
-
-### FINDING-SW-005
-**Title:** Synchronous Full-File Buffering in Dataset Download Path  
-**Category:** PERFORMANCE  
-**Severity:** MEDIUM  
-**Location:** `backend/app/services/dataset/lakefs_service.py:109-110`  
-**Evidence:** `with obj.reader(mode="rb") as reader: return reader.read()` loads the entire file into memory before returning.  
-**Impact:** Memory exhaustion (OOM) under concurrent large dataset transfers.  
-**Recommendation:** Replace `download_file` with `stream_file` yielding chunked generator iterators.  
-**Priority:** Before next feature  
-**Confidence:** Confirmed  
-
-### FINDING-SW-006
-**Title:** Port Discrepancy Between Backend Startup Script and Frontend Default  
-**Category:** MAINTAINABILITY  
-**Severity:** LOW  
-**Location:** `backend/run.sh:60` vs `frontend/src/api/client.js:11`  
-**Evidence:** `run.sh` sets `--port 8001`, while frontend defaults to `http://localhost:8000/api`.  
-**Impact:** Local developer confusion; frontend displays "Backend unreachable" out-of-the-box.  
-**Recommendation:** Standardize default port to 8000 across `run.sh`, `run.ps1`, `docker-compose.yml`, and frontend configuration.  
-**Priority:** Later  
-**Confidence:** Confirmed  
+### Finding ID: SW-AUDIT-003
+- **Title:** Duplicated Kubernetes API Client Instantiation Across Domain Services
+- **Severity:** LOW
+- **Category:** ARCHITECTURE
+- **Location:**
+  - `backend/app/services/ml_ops/training_service.py:34-45`
+  - `backend/app/services/ml_ops/deployment_service.py:30-41`
+  - `backend/app/services/ml_ops/rayjob_service.py:28-36`
+- **Evidence:**
+  Each of these domain services implements its own private `_get_k8s_apis(self)` helper that loads `config.load_incluster_config()` / `config.load_kube_config()` and instantiates `client.CustomObjectsApi()`, `client.CoreV1Api()`, and `client.AppsV1Api()`.
+- **Impact:** Lack of a centralized Kubernetes adapter layer increases code duplication and complicates mock injection during unit testing.
+- **Attack/Failure Scenario:** A change in Kubernetes cluster authentication or API client configuration must be manually replicated across three distinct service files.
+- **Recommendation:** Refactor Kubernetes client initialization into a dedicated adapter provider (`backend/app/core/k8s_client.py`) and inject it via FastAPI dependencies.
+- **Confidence:** CONFIRMED
 
 ---
 
-## 9. Executive Software Summary
+### Finding ID: SW-AUDIT-004
+- **Title:** Direct FastAPI `HTTPException` Coupling in Domain Service Classes
+- **Severity:** LOW
+- **Category:** ARCHITECTURE
+- **Location:**
+  - `backend/app/services/dataset/storage_service.py:55`
+  - `backend/app/services/dataset/catalog_service.py:4`
+  - `backend/app/services/dataset/versioning_service.py:2`
+  - `backend/app/services/dataset/diff_service.py:2`
+  - `backend/app/services/ml_ops/serving_service.py:22`
+  - `backend/app/services/ml_ops/deployment_service.py:18`
+- **Evidence:**
+  Domain services directly import `from fastapi import HTTPException, status` and raise HTTP exceptions within business logic methods rather than raising pure domain exceptions.
+- **Impact:** Prevents domain service reusability outside FastAPI context (such as standalone background scripts, Ray worker actors, or CLI utilities).
+- **Attack/Failure Scenario:** Calling `storage_service.upload_file()` inside a standalone maintenance task forces FastAPI dependencies and raises HTTP-specific errors.
+- **Recommendation:** Raise domain-specific exceptions (e.g. `StorageOperationError`, `DeploymentNotFoundError`) and translate them at the router boundary using FastAPI exception handlers.
+- **Confidence:** CONFIRMED
 
-- **Architecture Strengths:**
-  - Clean domain-driven modularization across Auth, Users, Datasets, and MLOps.
-  - Robust modern frontend with clean lazy routing and component isolation.
-  - Comprehensive OpenTelemetry instrumentation across HTTP and model inference.
-- **Architectural & Correctness Risks:**
-  - Raw git conflict markers and dual Alembic heads on `develop` make the branch completely non-functional.
-  - Job tracking schema divergence between `JobService` and `TrainingJobService`.
-- **Feature Readiness:**
-  - **Feature development (Data Drift / Continuous Training) MUST NOT proceed on `develop` until git conflict markers and Alembic dual heads are completely resolved.**
+---
+
+### Finding ID: SW-AUDIT-005
+- **Title:** Unused Imports and Unassigned Variables Flagged Across Service Layer
+- **Severity:** LOW
+- **Category:** MAINTAINABILITY
+- **Location:**
+  - `backend/app/api/datasets.py:14, 105` (`io` imported but unused; unused exception variable `e`)
+  - `backend/app/api/permissions.py:12` (`BlacklistedToken` unused)
+  - `backend/app/repositories/deployment_repository.py:3` (`sqlalchemy.update` unused)
+  - `backend/app/services/auth/auth_service.py:23` (`settings` unused)
+  - `backend/app/services/ml_ops/deployment_service.py:296, 531` (`mlflow_client` assigned but unused; `e` unused)
+  - `backend/app/services/ml_ops/serving_service.py:2` (`json` unused)
+  - `backend/app/services/ml_ops/utils.py:6` (`shutil` unused)
+- **Evidence:** `ruff check backend/app` reports 14 lint errors across core application modules.
+- **Impact:** Code clutter and slight cognitive overhead during code reviews; potential confusion regarding intended logic.
+- **Attack/Failure Scenario:** N/A (Code hygiene issue).
+- **Recommendation:** Run `ruff check --fix backend/app` to clean up unused imports and dead local variables.
+- **Confidence:** CONFIRMED
+
+---
+
+### Finding ID: SW-AUDIT-006
+- **Title:** Frontend React Fast-Refresh Export Violations
+- **Severity:** INFORMATIONAL
+- **Category:** MAINTAINABILITY
+- **Location:**
+  - `frontend/src/auth/AuthContext.jsx:132` (`useAuth`)
+  - `frontend/src/components/ui/index.jsx:93` (`statusTone`)
+  - `frontend/src/components/ui/index.jsx:321` (`useToast`)
+  - `frontend/src/components/ui/index.jsx:373` (`useConfirm`)
+- **Evidence:** `npm run lint` (`oxlint`) reports 4 warnings:
+  `react(only-export-components): Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.`
+- **Impact:** Vite React Fast Refresh may perform full-page reloads instead of hot module replacement when editing UI components.
+- **Attack/Failure Scenario:** Developer productivity degradation during local UI development due to state loss on full reload.
+- **Recommendation:** Extract hook definitions (`useAuth`, `useToast`, `useConfirm`) and helper functions (`statusTone`) into separate dedicated modules (e.g. `src/hooks/` and `src/utils/`).
+- **Confidence:** CONFIRMED
+
+---
+
+## 4. Software Quality & Testing Verification
+
+### 4.1 Pytest Suite Execution
+- **Collected:** 145 items
+- **Passed:** 145 tests
+- **Failed:** 0
+- **Duration:** 426.11 seconds
+- **Warnings:** 18 deprecation warnings (primarily Pydantic V2 deprecations inside third-party `ray.serve._private.config`).
+
+### 4.2 API Endpoint Coverage Verification
+All 42 registered API endpoints in FastAPI route tables were verified against implementation:
+- 5 Auth routes (`/api/auth/*`)
+- 4 User & Audit routes (`/api/users/*`)
+- 15 Dataset Versioning routes (`/api/datasets/*`)
+- 18 MLOps, Training & Deployment routes (`/api/models/*`, `/api/jobs/*`, `/api/deployments/*`, `/api/experiments/*`)
+
+All routes properly implement Pydantic request/response validation schemas and use dependency injection for database sessions.
