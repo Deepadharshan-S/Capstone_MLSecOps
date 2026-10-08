@@ -10,5 +10,15 @@ export default defineConfig({
     // Vite silently falls through to 5174 when 5173 is already taken and the
     // app dies with an opaque "Network error" instead of a clear message.
     strictPort: true,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
+    },
   },
 })

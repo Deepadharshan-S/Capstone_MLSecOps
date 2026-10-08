@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response, Security, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.core.rate_limiter import RateLimiter
 
 from app.db.session import get_db
@@ -70,7 +71,7 @@ def login(
         key="refresh_token",
         value=token_dict["refresh_token"],
         httponly=True,
-        secure=True,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 3600,
         path="/api/auth",
@@ -108,7 +109,7 @@ def refresh(
         key="refresh_token",
         value=token_dict["refresh_token"],
         httponly=True,
-        secure=True,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 3600,
         path="/api/auth",
