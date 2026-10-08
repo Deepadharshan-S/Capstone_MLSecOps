@@ -5,7 +5,7 @@ import {
 } from '../api/endpoints.js'
 import { useFetch, useDebounced } from '../hooks/useFetch.js'
 import {
-  AVAILABLE_ALGORITHMS, toRepoName, formatAccuracy, fmtUnixDate,
+  AVAILABLE_ALGORITHMS, toRepoName, formatAccuracy, formatRatio, fmtUnixDate,
 } from '../lib/models.js'
 import {
   PageHeader, Panel, Button, Field, TextInput, TextArea, Badge,
@@ -1000,9 +1000,9 @@ export default function Pipeline() {
                 <div className="metrics-grid">
                   {[
                     ['Accuracy', formatAccuracy(results.accuracy)],
-                    ['Precision', results.precision_score != null ? results.precision_score.toFixed(3) : '—'],
-                    ['Recall', results.recall_score != null ? results.recall_score.toFixed(3) : '—'],
-                    ['F1 Score', results.f1_score != null ? results.f1_score.toFixed(3) : '—'],
+                    ['Precision', results.precision_score != null ? formatRatio(results.precision_score) : '—'],
+                    ['Recall', results.recall_score != null ? formatRatio(results.recall_score) : '—'],
+                    ['F1 Score', results.f1_score != null ? formatRatio(results.f1_score) : '—'],
                     ['Duration', results.training_duration != null ? `${Number(results.training_duration).toFixed(1)}s` : '—'],
                     ['Status', results.status || 'completed'],
                   ].map(([l, v]) => (

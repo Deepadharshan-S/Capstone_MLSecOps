@@ -55,14 +55,18 @@ function ConfusionMatrix({ cm }) {
   if (!m) return null
   const [[tn, fp], [fn, tp]] = m
   const total = (tn + fp + fn + tp) || 1
-  const cell = (v, cls) => (
-    <div className={`cm-cell ${cls}`}>
-      {v}
-      <div style={{ fontSize: 10, fontWeight: 400, opacity: .7, marginTop: 2 }}>
-        {((v / total) * 100).toFixed(1)}%
+  const cell = (v, cls) => {
+    const pct = (v / total) * 100
+    const pctStr = v > 0 && pct < 0.05 ? '<0.1%' : `${pct.toFixed(1)}%`
+    return (
+      <div className={`cm-cell ${cls}`}>
+        {v}
+        <div style={{ fontSize: 10, fontWeight: 400, opacity: .7, marginTop: 2 }}>
+          {pctStr}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
   return (
     <div className="cm-grid">
       <div />

@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { mlOpsApi } from '../api/endpoints.js'
 import { useFetch, useDebounced } from '../hooks/useFetch.js'
-import { formatAccuracy, resolveModelPreset } from '../lib/models.js'
+import { formatAccuracy, formatRatio, resolveModelPreset } from '../lib/models.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
   PageHeader, Panel, Button, DataTable, Modal, Field, TextInput,
@@ -134,11 +134,11 @@ export default function Registry() {
               },
               {
                 key: 'precision', width: 110, header: 'Precision',
-                render: (m) => <span className="tnum">{m.precision ? Number(m.precision).toFixed(3) : '—'}</span>,
+                render: (m) => <span className="tnum">{formatRatio(m.precision)}</span>,
               },
               {
                 key: 'recall', width: 100, header: 'Recall',
-                render: (m) => <span className="tnum">{m.recall ? Number(m.recall).toFixed(3) : '—'}</span>,
+                render: (m) => <span className="tnum">{formatRatio(m.recall)}</span>,
               },
               {
                 key: 'accuracy', width: 120, sortKey: 'accuracy', header: 'Accuracy',
@@ -146,7 +146,7 @@ export default function Registry() {
               },
               {
                 key: 'f1_score', width: 100, header: 'F1',
-                render: (m) => <span className="tnum">{m.f1_score != null ? Number(m.f1_score).toFixed(3) : '—'}</span>,
+                render: (m) => <span className="tnum">{formatRatio(m.f1_score)}</span>,
               },
               {
                 key: 'created_at', width: 170, header: 'Registered',
@@ -231,7 +231,7 @@ function ModelDrawer({ model, versions, onClose, canDeploy, onDeploy, onGoExperi
             </div>
             <div className="metric-tile">
               <div className="metric-tile-lbl">F1 Score</div>
-              <div className="metric-tile-val">{model.f1_score != null ? Number(model.f1_score).toFixed(3) : '—'}</div>
+              <div className="metric-tile-val">{formatRatio(model.f1_score)}</div>
             </div>
             <div className="metric-tile t-success">
               <div className="metric-tile-lbl">Versions</div>
@@ -270,8 +270,8 @@ function ModelDrawer({ model, versions, onClose, canDeploy, onDeploy, onGoExperi
                     key: 'metrics', header: 'Metrics',
                     render: (v) => (
                       <span className="mono text-xs">
-                        acc {v.metrics?.accuracy != null ? Number(v.metrics.accuracy).toFixed(3) : '—'} ·
-                        f1 {v.metrics?.f1_score != null ? Number(v.metrics.f1_score).toFixed(3) : '—'}
+                        acc {formatAccuracy(v.metrics?.accuracy)} ·
+                        f1 {formatRatio(v.metrics?.f1_score)}
                       </span>
                     ),
                   },

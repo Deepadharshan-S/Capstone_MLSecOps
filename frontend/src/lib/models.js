@@ -50,9 +50,41 @@ export function toRepoName(name) {
   return s
 }
 
-export function formatAccuracy(val) {
-  if (!val || val === 0) return '—'
-  return val <= 1 ? `${(val * 100).toFixed(1)}%` : `${val.toFixed(1)}%`
+export function formatAccuracy(val, decimals = 2) {
+  if (val == null || val === '') return '—'
+  const num = Number(val)
+  if (isNaN(num) || num === 0) return '—'
+  const pct = num <= 1 ? num * 100 : num
+  if (pct >= 99.9999) return '100.0%'
+  if (pct > 0 && pct < 100) {
+    let d = decimals
+    let formatted = pct.toFixed(d)
+    while (Number(formatted) >= 100 && d < 4) {
+      d += 1
+      formatted = pct.toFixed(d)
+    }
+    if (Number(formatted) >= 100) return '99.99%'
+    return `${formatted}%`
+  }
+  return `${pct.toFixed(decimals)}%`
+}
+
+export function formatRatio(val, decimals = 4) {
+  if (val == null || val === '') return '—'
+  const num = Number(val)
+  if (isNaN(num)) return '—'
+  if (num >= 0.999999) return '1.000'
+  if (num > 0 && num < 1) {
+    let d = Math.max(decimals, 3)
+    let formatted = num.toFixed(d)
+    while (Number(formatted) >= 1 && d < 5) {
+      d += 1
+      formatted = num.toFixed(d)
+    }
+    if (Number(formatted) >= 1) return '0.9999'
+    return formatted
+  }
+  return num.toFixed(decimals)
 }
 
 /**
