@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     TOKEN_CLEANUP_INTERVAL_SECONDS: int = 3600
     TOKEN_CLEANUP_ENABLED: bool = True
 
+    # Threat Hunting & Detection Engine Background Task
+    DETECTION_ENGINE_INTERVAL_SECONDS: int = 30
+    DETECTION_ENGINE_ENABLED: bool = True
+
     # OpenTelemetry Observability Configuration
     OTEL_ENABLED: bool = False
     OTEL_SERVICE_NAME: str = "sentinelml-backend"

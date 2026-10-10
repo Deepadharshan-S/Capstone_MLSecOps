@@ -11,9 +11,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.mlflow_loader import warm_mlflow
 from app.db.session import get_db, engine
-from app.api import auth, users, ml_ops
+from app.api import auth, users, ml_ops, datasets, threat_hunting
 from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
-from app.api import datasets
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dependencies import (
     get_version_control_service,
@@ -78,10 +77,41 @@ async def lifespan(app: FastAPI):
             name="sentinelml_token_cleanup",
         )
         logger.info("Started automated token cleanup background task.")
+
+    # 3. Seed threat detection rules and start detection worker loop
+    detection_task = None
+    if settings.DETECTION_ENGINE_ENABLED:
+        from app.services.threat_hunting.worker import detection_worker_loop
+        from app.services.threat_hunting.rule_service import rule_service
+        from app.db.session import SessionLocal
+
+        try:
+            with SessionLocal() as db_session:
+                rule_service.seed_default_rules(db_session)
+        except Exception as seed_err:
+            logger.warning(f"Could not seed default threat hunting rules: {seed_err}")
+
+        detection_task = asyncio.create_task(
+            detection_worker_loop(),
+            name="sentinelml_threat_detection_worker",
+        )
+        logger.info("Started threat detection worker background task.")
+
     try:
         yield
     finally:
-        # 3. Stop background tasks
+        # 4. Stop background tasks
+        if detection_task is not None:
+            logger.info("Stopping threat detection worker background task...")
+            detection_task.cancel()
+            try:
+                await detection_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Error while stopping threat detection worker: {e}")
+            logger.info("Threat detection worker background task stopped.")
+
         if cleanup_task is not None:
             logger.info("Stopping automated token cleanup background task...")
             cleanup_task.cancel()
@@ -93,7 +123,7 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Error while stopping token cleanup task: {e}")
             logger.info("Automated token cleanup background task stopped.")
 
-        # 4. Gracefully shutdown OpenTelemetry (flush pending spans and metrics)
+        # 5. Gracefully shutdown OpenTelemetry (flush pending spans and metrics)
         shutdown_telemetry()
 
 
@@ -187,6 +217,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(ml_ops.router, prefix="/api")
 app.include_router(datasets.router, prefix="/api")
+app.include_router(threat_hunting.router, prefix="/api")
 
 
 @app.get("/")

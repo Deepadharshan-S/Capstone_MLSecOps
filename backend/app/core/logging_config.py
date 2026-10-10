@@ -89,6 +89,21 @@ def log_audit_event(
         # Non-fatal notice: Do not fail primary business transaction if audit log DB insertion fails
         print(f"Notice: Could not persist AuditLog to PostgreSQL ({db_err}).")
 
+    # Ingest security event into Threat Hunting module if security-relevant
+    try:
+        from app.services.threat_hunting.event_service import event_service
+
+        event_service.ingest_from_audit(
+            action=action,
+            username=username,
+            ip_address=ip_address,
+            details=details,
+            db=db,
+            request_id=req_id,
+        )
+    except Exception as th_err:
+        logger.debug(f"Notice: Threat hunting event ingestion skipped ({th_err}).")
+
 
 def get_all_audit_logs(
     db: Optional[Session] = None,

@@ -25,6 +25,13 @@ class Permission(str, Enum):
     # User and role administration
     USERS_MANAGE = "users:manage"
 
+    # Threat hunting & alert management
+    ALERTS_VIEW = "alerts:view"
+    ALERTS_MANAGE = "alerts:manage"
+    RULES_MANAGE = "rules:manage"
+    HUNTS_EXECUTE = "hunts:execute"
+    EVENTS_VIEW = "events:view"
+
 
 # Map each role to a set of allowed permissions
 ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
@@ -37,6 +44,8 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
         Permission.MODELS_VIEW,
         Permission.MODELS_DEPLOY,
         Permission.DEPLOYMENTS_MANAGE,
+        Permission.ALERTS_VIEW,
+        Permission.EVENTS_VIEW,
     },
     Role.ML_ENGINEER: {
         Permission.DATASETS_VIEW,
@@ -44,9 +53,12 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
         Permission.MODELS_VIEW,
         Permission.MODELS_DEPLOY,
         Permission.DEPLOYMENTS_MANAGE,
+        Permission.ALERTS_VIEW,
+        Permission.EVENTS_VIEW,
     },
     Role.VIEWER: {
         Permission.MODELS_VIEW,
+        Permission.ALERTS_VIEW,
     },
 }
 

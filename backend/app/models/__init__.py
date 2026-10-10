@@ -6,4 +6,27 @@ from app.models.dataset import Dataset
 from app.models.training_job import TrainingJob
 from app.models.deployment import Deployment
 
-__all__ = ["User", "RefreshToken", "AuditLog", "BlacklistedToken", "Dataset", "TrainingJob", "Deployment"]
+from app.models.threat_hunting import (
+    SecurityEvent,
+    DetectionRule,
+    Alert,
+    AlertEvent,
+    AlertHistory,
+    HuntJob,
+)
+
+__all__ = [
+    "User",
+    "RefreshToken",
+    "AuditLog",
+    "BlacklistedToken",
+    "Dataset",
+    "TrainingJob",
+    "Deployment",
+    "SecurityEvent",
+    "DetectionRule",
+    "Alert",
+    "AlertEvent",
+    "AlertHistory",
+    "HuntJob",
+]

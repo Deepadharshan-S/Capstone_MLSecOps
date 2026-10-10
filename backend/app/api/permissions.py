@@ -23,6 +23,11 @@ oauth2_scheme = OAuth2PasswordBearer(
         "models:deploy": "Deploy trained models to target environments",
         "deployments:manage": "Manage running model deployments (restart, rollback, stop)",
         "users:manage": "Manage user accounts, roles, and view security audit logs",
+        "alerts:view": "View security alerts and threat detections",
+        "alerts:manage": "Triage, assign, and resolve security alerts",
+        "rules:manage": "Create, modify, test, and disable detection rules",
+        "hunts:execute": "Launch and monitor historical threat hunts",
+        "events:view": "Inspect raw and normalized security events",
     },
 )
 
