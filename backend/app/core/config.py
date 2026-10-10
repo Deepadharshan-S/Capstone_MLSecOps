@@ -30,10 +30,32 @@ class Settings(BaseSettings):
     TOKEN_CLEANUP_INTERVAL_SECONDS: int = 3600
     TOKEN_CLEANUP_ENABLED: bool = True
 
-    # CORS config
+    # OpenTelemetry Observability Configuration
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "sentinelml-backend"
+    OTEL_SERVICE_VERSION: Optional[str] = None
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4318"
+    OTEL_INTERNAL_ENDPOINT: Optional[str] = None
+    OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS: int = 5
+    OTEL_TRACES_SAMPLER: str = "always_on"
+    OTEL_TRACES_SAMPLER_ARG: float = 1.0
+    OTEL_METRICS_EXPORT_INTERVAL_MS: int = 15000
+    OTEL_EXCLUDED_URLS: str = "health"
+
+    COOKIE_SECURE: bool = False
+
+    ALLOWED_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174,"
+        "http://localhost:5175,http://127.0.0.1:5175"
+    )
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
     ]
 
     # lakeFS config
@@ -60,6 +82,8 @@ class Settings(BaseSettings):
 
     # Training Execution & Sandboxing
     ALLOW_LOCAL_RAY_FALLBACK: bool = False
+    MAX_CONCURRENT_RAYJOBS: int = 2
+    RAYJOB_CONCURRENCY_TIMEOUT_SECONDS: float = 300.0
 
     # Optional dedicated scoped training credentials (if not set, MinIO STS assume_role is used)
     MINIO_TRAINING_ACCESS_KEY_ID: Optional[str] = None
@@ -128,6 +152,17 @@ class Settings(BaseSettings):
         elif self.DATABASE_URL.startswith("postgresql://"):
             self.DATABASE_URL = self.DATABASE_URL.replace(
                 "postgresql://", "postgresql+psycopg://", 1
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_security_settings(self) -> "Settings":
+        if self.ENVIRONMENT.lower() in ("production", "prod") and self.ALLOW_LOCAL_RAY_FALLBACK:
+            import logging
+            logging.getLogger("config").warning(
+                "SECURITY WARNING: ALLOW_LOCAL_RAY_FALLBACK is enabled in production! "
+                "Local fallback executes untrusted user training code directly on the host machine "
+                "outside Kubernetes container and network sandboxing."
             )
         return self
 

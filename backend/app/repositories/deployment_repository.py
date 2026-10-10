@@ -1,6 +1,6 @@
 from typing import Optional, Sequence
 from sqlalchemy.orm import Session
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, delete
 
 from app.models.deployment import Deployment
 

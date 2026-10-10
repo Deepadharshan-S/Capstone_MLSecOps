@@ -1,0 +1,7 @@
+FROM ghcr.io/mlflow/mlflow:v3.15.1
+
+# Pre-install pinned dependencies required for PostgreSQL backend store and MinIO/S3 artifact store
+RUN pip install --no-cache-dir \
+    psycopg2-binary==2.9.9 \
+    boto3==1.35.36 \
+    cryptography==43.0.1

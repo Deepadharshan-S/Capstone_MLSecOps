@@ -11,7 +11,8 @@ from fastapi import (
     Query,
 )
 from fastapi.responses import StreamingResponse
-import io
+import re
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 
 from app.core.rate_limiter import RateLimiter
@@ -34,6 +35,7 @@ from app.schemas.dataset import (
     BranchResponse,
     CreateTagRequest,
     TagResponse,
+    FileEntryResponse,
 )
 from app.services.dependencies import get_data_service
 from app.services.dataset import DataService
@@ -58,13 +60,6 @@ def register_dataset(
     """
     Registers a new dataset (creates database record and lakeFS repository) and uploads the dataset file via streaming.
     """
-    db_dataset = data_service.register_dataset(
-        db=db,
-        dataset_name=name,
-        description=description,
-        user_id=user.id,
-        username=user.username,
-    )
 
     file_path = file.filename
     if not file_path:
@@ -73,14 +68,48 @@ def register_dataset(
             detail="Uploaded file must have a valid filename.",
         )
 
-    data_service.upload_file(
-        db=db,
-        dataset_name=name,
-        file_path=file_path,
-        content=file.file,
-        branch_name=db_dataset.default_branch,
-        username=user.username,
-    )
+    try:
+        db_dataset = data_service.register_dataset(
+            db=db,
+            dataset_name=name,
+            description=description,
+            user_id=user.id,
+            username=user.username,
+        )
+    except HTTPException as e:
+        if e.status_code == 500 and "lakeFS" in str(e.detail):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"{e.detail} Is the lakeFS container running (docker compose up lakefs), "
+                    "and are LAKEFS_ENDPOINT / LAKEFS_ACCESS_KEY_ID / LAKEFS_SECRET_ACCESS_KEY set?"
+                ),
+            )
+        raise
+
+    try:
+        data_service.upload_file(
+            db=db,
+            dataset_name=name,
+            file_path=file_path,
+            content=file.file,
+            branch_name=db_dataset.default_branch,
+            username=user.username,
+        )
+        data_service.commit_changes(
+            db=db,
+            dataset_name=name,
+            branch_name=db_dataset.default_branch,
+            message=f"Upload {file_path}",
+            metadata=None,
+            username=user.username,
+        )
+    except HTTPException:
+        try:
+            data_service.delete_dataset(db, name, username=user.username)
+        except Exception:
+            pass
+        raise
 
     return db_dataset
 
@@ -156,12 +185,16 @@ def download_file(
     """
     Downloads/retrieves a chunked file stream from a reference (branch/commit/tag).
     """
-    filename = path.split("/")[-1]
+    raw_filename = path.split("/")[-1] or "downloaded_file"
+    filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', raw_filename)
+    encoded_filename = quote(filename)
     chunk_stream = data_service.stream_file(db, dataset_name, file_path=path, ref_id=ref)
     return StreamingResponse(
         chunk_stream,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
+        },
     )
 
 
@@ -272,6 +305,21 @@ def update_dataset_metadata(
 
 
 # --- Branch Management Endpoints ---
+
+
+@router.get("/{dataset_name}/files", response_model=list[FileEntryResponse])
+def list_files(
+    dataset_name: str,
+    ref: Optional[str] = "main",
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:view"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Lists objects stored under a ref (branch, tag or commit id).
+    Powers the Files-tab preview picker — no path typing required.
+    """
+    return data_service.list_files(db, dataset_name, ref_id=ref or "main")
 
 
 @router.get("/{dataset_name}/branches", response_model=list[BranchResponse])

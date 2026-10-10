@@ -7,6 +7,26 @@ from app.services.interfaces import VersionControlService
 from app.services.dataset.utils import get_dataset_or_404
 
 
+def _is_not_found_error(e: Exception) -> bool:
+    """Best-effort check for lakeFS "object does not exist" failures.
+
+    The lakefs wrapper surfaces these as lakefs_sdk ApiException (with a
+    404 status) or similarly-shaped errors depending on the SDK version;
+    anything else (storage unreachable, auth, …) must NOT be reported as
+    "not found".
+    """
+    status = getattr(e, "status", None)
+    if status is None:
+        status = getattr(getattr(e, "response", None), "status_code", None)
+    try:
+        if status is not None and int(status) == 404:
+            return True
+    except (TypeError, ValueError):
+        pass
+    msg = str(e).lower()
+    return "notfound" in msg.replace(" ", "").replace("-", "") or "does not exist" in msg
+
+
 class DatasetStorageService:
     """
     Manages direct dataset object transport (binary uploads and downloads)
@@ -65,9 +85,17 @@ class DatasetStorageService:
         try:
             return self.version_control_service.download_file(sanitized_repo_name, ref_id, file_path)
         except Exception as e:
+            # Only a genuinely missing object is a 404 — storage/auth
+            # failures must surface as 5xx with the real detail, otherwise
+            # every outage looks like "Not Found".
+            if _is_not_found_error(e):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"File '{file_path}' not found at reference '{ref_id}'.",
+                )
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"File '{file_path}' not found at reference '{ref_id}': {str(e)}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not read '{file_path}' at reference '{ref_id}': {str(e)[:300]}",
             )
 
     def stream_file(
@@ -80,8 +108,13 @@ class DatasetStorageService:
                 sanitized_repo_name, ref_id, file_path, chunk_size=chunk_size
             )
         except Exception as e:
+            if _is_not_found_error(e):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"File '{file_path}' not found at reference '{ref_id}'.",
+                )
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"File '{file_path}' not found at reference '{ref_id}': {str(e)}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not read '{file_path}' at reference '{ref_id}': {str(e)[:300]}",
             )
 

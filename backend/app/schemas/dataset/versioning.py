@@ -45,3 +45,8 @@ class CreateTagRequest(BaseModel):
 class TagResponse(BaseModel):
     name: str
     commit_id: Optional[str] = None
+
+
+class FileEntryResponse(BaseModel):
+    path: str
+    size_bytes: Optional[int] = None

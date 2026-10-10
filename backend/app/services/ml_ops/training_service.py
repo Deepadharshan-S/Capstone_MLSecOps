@@ -12,6 +12,10 @@ from app.models.user import User
 from app.models.training_job import TrainingJob
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
+from app.core.telemetry import (
+    trace_ml_operation,
+    record_training_job_submitted,
+)
 from app.services.ml_ops.utils import (
     get_scoped_training_credentials,
     render_rayjob_manifest,
@@ -119,6 +123,37 @@ class ModelTrainingService:
         and running a local Ray runner background process fallback.
         Persists the initial PENDING job record in PostgreSQL.
         """
+        with trace_ml_operation("training.submit", attributes={"training.framework": "custom"}):
+            try:
+                res = self._execute_model_training(
+                    dataset_id=dataset_id,
+                    ref=ref,
+                    epochs=epochs,
+                    hyperparameters=hyperparameters,
+                    code=code,
+                    user=user,
+                    experiment_name=experiment_name,
+                    model_name=model_name,
+                    db=db,
+                )
+                record_training_job_submitted(framework="custom", result="success")
+                return res
+            except Exception:
+                record_training_job_submitted(framework="custom", result="error")
+                raise
+
+    def _execute_model_training(
+        self,
+        dataset_id: str,
+        ref: str,
+        epochs: int,
+        hyperparameters: dict,
+        code: str,
+        user: User,
+        experiment_name: Optional[str] = None,
+        model_name: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> dict:
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
@@ -136,7 +171,7 @@ class ModelTrainingService:
             )
 
         entrypoint_cmd = (
-            f"python /app/user_code/ray_wrapper.py --dataset_id {dataset_id} --ref {ref} "
+            f"python /app/user_code/ray_wrapper.py --dataset_id '{dataset_id}' --ref '{ref}' "
             f"--epochs {epochs} --hyperparameters '{json.dumps(hyperparameters)}' "
             f"--code_file /app/user_code/user_code.py --output_model_name '{output_model_name}' "
             f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}' "
@@ -199,7 +234,12 @@ class ModelTrainingService:
                 )
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Training cluster is unavailable and local fallback execution is disabled for security.",
+                    detail=(
+                        "Training cluster is unavailable and local fallback execution is disabled for security. "
+                        "Check: kubectl config current-context points at your cluster, "
+                        "KubeRay operator is installed (kubectl get crd rayjobs.ray.io), "
+                        "and image mlsecops-ray:latest is built/loaded."
+                    ),
                 )
 
             temp_job_dir = tempfile.mkdtemp(prefix=f"rayjob-{job_id}-")
@@ -271,21 +311,62 @@ class ModelTrainingService:
         experiment_name: Optional[str] = None,
         model_name: Optional[str] = None,
         db: Optional[Session] = None,
+        job_svc=None,
     ) -> dict:
         """
         Submits an automated pipeline training job either via Kubernetes RayJob CRD
         or local fallback process.
         Persists the initial PENDING job record in PostgreSQL.
         """
+        with trace_ml_operation("training.submit", attributes={"training.framework": "pipeline"}):
+            try:
+                res = self._execute_pipeline_training(
+                    dataset_id=dataset_id,
+                    ref=ref,
+                    target_column=target_column,
+                    model_type=model_type,
+                    hyperparameters=hyperparameters,
+                    user=user,
+                    experiment_name=experiment_name,
+                    model_name=model_name,
+                    db=db,
+                )
+                record_training_job_submitted(framework="pipeline", result="success")
+                return res
+            except Exception:
+                record_training_job_submitted(framework="pipeline", result="error")
+                raise
+
+    def _execute_pipeline_training(
+        self,
+        dataset_id: str,
+        ref: str,
+        target_column: str,
+        model_type: str,
+        hyperparameters: dict,
+        user: User,
+        experiment_name: Optional[str] = None,
+        model_name: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> dict:
         if user.role == "viewer":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Role 'viewer' is not authorized to train models.",
             )
 
+        # Fail fast with 404 instead of creating an orphan "training" job
+        # that can never complete when the dataset was never uploaded
+        # (e.g. POST /datasets returned 500 because lakeFS is down).
+        if db is not None:
+            from app.services.dataset.utils import get_dataset_or_404
+
+            get_dataset_or_404(db, dataset_id)
+
         job_id = uuid.uuid4().hex[:12]
         experiment_name = experiment_name or f"dataset-{dataset_id}-experiment"
         output_model_name = model_name.strip() if (model_name and model_name.strip()) else f"{dataset_id}-model"
+
         log_audit_event(
             "model_training_initiated",
             user.username,
@@ -294,7 +375,7 @@ class ModelTrainingService:
         )
 
         entrypoint_cmd = (
-            f"python /app/user_code/ray_wrapper.py --dataset_id {dataset_id} --ref {ref} "
+            f"python /app/user_code/ray_wrapper.py --dataset_id '{dataset_id}' --ref '{ref}' "
             f"--pipeline_mode --target_column '{target_column}' --model_type '{model_type}' "
             f"--hyperparameters '{json.dumps(hyperparameters)}' --output_model_name '{output_model_name}' "
             f"--job_dir /tmp/rayjob-{job_id} --experiment_name '{experiment_name}' "
@@ -356,9 +437,33 @@ class ModelTrainingService:
                     None,
                     f"Kubernetes cluster offline and local fallback execution is disabled for security (Job: {job_id}).",
                 )
+                # Don't leave an orphan "training" row behind — polling
+                # GET /jobs/{id} would otherwise hang on it forever.
+                if db is not None:
+                    try:
+                        from app.repositories import TrainingJobRepository
+                        from datetime import timezone
+                        repo = TrainingJobRepository(db)
+                        tj = repo.get_by_job_id(job_id)
+                        if tj:
+                            tj.status = "FAILED"
+                            tj.error_message = (
+                                "Kubernetes cluster unreachable and local fallback is disabled for security. "
+                                "Check: kubectl config current-context, KubeRay operator "
+                                "(kubectl get crd rayjobs.ray.io), and image mlsecops-ray:latest."
+                            )
+                            tj.completed_at = datetime.now(timezone.utc)
+                            repo.save(tj)
+                    except Exception:
+                        pass
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Training cluster is unavailable and local fallback execution is disabled for security.",
+                    detail=(
+                        "Training cluster is unavailable and local fallback execution is disabled for security. "
+                        "Check: kubectl config current-context points at your cluster, "
+                        "KubeRay operator is installed (kubectl get crd rayjobs.ray.io), "
+                        "and image mlsecops-ray:latest is built/loaded."
+                    ),
                 )
 
             temp_job_dir = tempfile.mkdtemp(prefix=f"rayjob-{job_id}-")

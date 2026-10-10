@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
+from app.core.telemetry import (
+    trace_ml_operation,
+    record_deployment_operation,
+)
+from app.core.mlflow_loader import load_mlflow
 from app.services.ml_ops.utils import get_scoped_training_credentials, to_k8s_endpoint
 from app.services.dataset.utils import get_repo_name
 from fastapi import HTTPException, status
@@ -45,7 +50,32 @@ class ModelDeploymentService:
         Deploys a registered MLflow model to a live Kubernetes RayService CRD using the Kubernetes SDK.
         Updates model version stages, aliases, and deployment metadata tags directly in MLflow.
         """
-        from mlflow.tracking import MlflowClient
+        with trace_ml_operation("deployment.create", attributes={"deployment.environment": environment.lower()}):
+            try:
+                res = self._execute_model_deploy(
+                    model_id=model_id,
+                    environment=environment,
+                    user=user,
+                    version=version,
+                    replicas=replicas,
+                    db=db,
+                )
+                record_deployment_operation(operation="create", result="success")
+                return res
+            except Exception:
+                record_deployment_operation(operation="create", result="error")
+                raise
+
+    def _execute_model_deploy(
+        self,
+        model_id: str,
+        environment: str,
+        user: User,
+        version: Optional[str] = "latest",
+        replicas: Optional[int] = 1,
+        db: Optional[Session] = None,
+    ) -> dict:
+        _, MlflowClient = load_mlflow()
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         deployment_id = uuid.uuid4().hex[:12]
@@ -147,6 +177,11 @@ class ModelDeploymentService:
                     or to_k8s_endpoint(settings.MLFLOW_TRACKING_URI),
                     "{{mlflow_s3_endpoint_url}}": settings.MINIO_INTERNAL_ENDPOINT
                     or to_k8s_endpoint(settings.MINIO_ENDPOINT),
+                    "{{otel_enabled}}": "true" if getattr(settings, "OTEL_ENABLED", False) else "false",
+                    "{{otel_service_name}}": "sentinelml-rayservice",
+                    "{{otel_exporter_otlp_endpoint}}": getattr(settings, "OTEL_INTERNAL_ENDPOINT", None)
+                    or to_k8s_endpoint(getattr(settings, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")),
+                    "{{otel_traces_sampler}}": getattr(settings, "OTEL_TRACES_SAMPLER", "always_on"),
                 }
                 rendered_yaml = template_content
                 for placeholder, val in replacements.items():
@@ -254,11 +289,7 @@ class ModelDeploymentService:
         """
         Retrieves model deployments tracked in PostgreSQL,
         reconciling them with live Kubernetes RayService status using a single batch query.
-        Also scans legacy MLflow model version tags for backwards compatibility.
         """
-        from mlflow.tracking import MlflowClient
-
-        mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         deployments = []
 
         # 1. Fetch live RayService statuses in a single bulk call
@@ -493,7 +524,7 @@ class ModelDeploymentService:
                 replica_health["details"] = {
                     "application_statuses": status_obj.get("applicationStatuses", {}),
                 }
-            except Exception as e:
+            except Exception:
                 k8s_status = "Not Found" if dep_status == "stopped" else "Initializing"
                 service_status = "Stopped" if dep_status == "stopped" else "Not Found"
                 replica_health["head_pod_status"] = "Stopped" if dep_status == "stopped" else "Not Found"
@@ -528,7 +559,29 @@ class ModelDeploymentService:
         Executes lifecycle actions (restart, stop, rollback) on a model deployment.
         Updates PostgreSQL deployment status, MLflow tags, and deletes/restarts Kubernetes RayService resources using native SDK.
         """
-        from mlflow.tracking import MlflowClient
+        span_name = "deployment.delete" if action.lower() == "stop" else "deployment.update"
+        with trace_ml_operation(span_name, attributes={"deployment.action": action.lower()}):
+            try:
+                res = self._execute_deployment_management(
+                    deployment_id=deployment_id,
+                    action=action,
+                    user=user,
+                    db=db,
+                )
+                record_deployment_operation(operation=action.lower(), result="success")
+                return res
+            except Exception:
+                record_deployment_operation(operation=action.lower(), result="error")
+                raise
+
+    def _execute_deployment_management(
+        self,
+        deployment_id: str,
+        action: str,
+        user: User,
+        db: Optional[Session] = None,
+    ) -> dict:
+        _, MlflowClient = load_mlflow()
 
         mlflow_client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
         rayservice_name = None
@@ -655,6 +708,47 @@ class ModelDeploymentService:
                         logger.debug(f"Restart pod deletion note ({target}): {restart_pod_err}")
             except Exception as k8s_restart_err:
                 logger.warning(f"Error during K8s pod restart for deployment {deployment_id}: {k8s_restart_err}")
+
+        elif action.lower() == "rollback":
+            # Re-point the environment alias to the previous model version
+            # and mark the rolled-back version stopped.
+            if not matched_items:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Deployment '{deployment_id}' not found in MLflow registry.",
+                )
+            m_name, m_ver, _, _ = matched_items[0]
+            try:
+                all_versions = mlflow_client.search_model_versions(
+                    f"name = '{m_name}'", order_by=["version_number DESC"]
+                )
+                nums = sorted({int(v.version) for v in all_versions})
+                prev = str([n for n in nums if n < int(m_ver)][-1])
+            except (IndexError, ValueError) as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No previous version to roll back to for model '{m_name}'.",
+                ) from e
+            try:
+                env = None
+                try:
+                    cur = mlflow_client.get_model_version(m_name, str(m_ver))
+                    env = (cur.tags or {}).get("deployment.environment", "staging")
+                except Exception:
+                    env = "staging"
+                alias = "production" if (env or "staging").lower() == "production" else "staging"
+                mlflow_client.set_registered_model_alias(name=m_name, alias=alias, version=prev)
+                mlflow_client.set_model_version_tag(m_name, str(m_ver), "deployment.status", "stopped")
+                mlflow_client.set_model_version_tag(
+                    m_name, prev, "deployment.status", "running"
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Rollback failed: {str(e)}",
+                ) from e
 
         log_audit_event(
             "deployment_management",

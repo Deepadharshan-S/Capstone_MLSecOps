@@ -775,3 +775,106 @@ def test_training_log_service_routing():
     assert res3["source"] == "unavailable"
     assert "Pod evicted" in res3["logs"]
 
+
+# 4. Tests for GET /api/jobs and GET /api/jobs/{job_id} (UI Endpoints)
+
+
+def test_get_jobs_list_endpoint(user_tokens, test_users, cleanup_test_jobs):
+    """Verifies that GET /api/jobs successfully lists jobs for both admin and standard users."""
+    ds = test_users["ds_user"]
+    admin = test_users["admin_user"]
+
+    cleanup_test_jobs.extend(["test-ui-job-1", "test-ui-job-2"])
+
+    with SessionLocal() as db:
+        j1 = TrainingJob(
+            job_id="test-ui-job-1",
+            rayjob_name="rayjob-test-ui-job-1",
+            status="SUCCEEDED",
+            dataset_id="test-dataset",
+            created_by_id=ds.id,
+            created_by_username=ds.username,
+            model_name="test-model-1",
+            entrypoint="python ray_wrapper.py --model_type 'random_forest'",
+        )
+        j2 = TrainingJob(
+            job_id="test-ui-job-2",
+            rayjob_name="rayjob-test-ui-job-2",
+            status="PENDING",
+            dataset_id="test-dataset-2",
+            created_by_id=admin.id,
+            created_by_username=admin.username,
+            model_name="test-model-2",
+            entrypoint="python ray_wrapper.py --model_type 'xgboost'",
+        )
+        db.add(j1)
+        db.add(j2)
+        db.commit()
+
+    # Admin sees all jobs
+    resp_admin = client.get(
+        "/api/jobs?limit=100",
+        headers={"Authorization": f"Bearer {user_tokens['admin_user']}"},
+    )
+    assert resp_admin.status_code == 200
+    jobs_admin = resp_admin.json()
+    job_ids_admin = [j["job_id"] for j in jobs_admin]
+    assert "test-ui-job-1" in job_ids_admin
+    assert "test-ui-job-2" in job_ids_admin
+
+    # Data scientist sees their own jobs
+    resp_ds = client.get(
+        "/api/jobs?limit=100",
+        headers={"Authorization": f"Bearer {user_tokens['ds_user']}"},
+    )
+    assert resp_ds.status_code == 200
+    jobs_ds = resp_ds.json()
+    job_ids_ds = [j["job_id"] for j in jobs_ds]
+    assert "test-ui-job-1" in job_ids_ds
+    assert "test-ui-job-2" not in job_ids_ds
+
+    # Verify response structure on test-ui-job-1
+    job1_data = next(j for j in jobs_admin if j["job_id"] == "test-ui-job-1")
+    assert job1_data["status"] == "completed"
+    assert job1_data["progress"] == 100
+    assert job1_data["model_type"] == "random_forest"
+
+
+def test_get_jobs_detail_endpoint(user_tokens, test_users, cleanup_test_jobs):
+    """Verifies that GET /api/jobs/{job_id} retrieves job details with logs and status."""
+    ds = test_users["ds_user"]
+    cleanup_test_jobs.append("test-ui-job-detail")
+
+    with SessionLocal() as db:
+        j = TrainingJob(
+            job_id="test-ui-job-detail",
+            rayjob_name="rayjob-test-ui-job-detail",
+            status="RUNNING",
+            dataset_id="test-dataset",
+            created_by_id=ds.id,
+            created_by_username=ds.username,
+            model_name="test-detail-model",
+            entrypoint="python ray_wrapper.py --model_type 'logistic_regression'",
+        )
+        db.add(j)
+        db.commit()
+
+    resp = client.get(
+        "/api/jobs/test-ui-job-detail",
+        headers={"Authorization": f"Bearer {user_tokens['ds_user']}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["job_id"] == "test-ui-job-detail"
+    assert data["status"] == "training"
+    assert data["progress"] == 50
+    assert data["model_type"] == "logistic_regression"
+
+    # Not found test
+    resp_nf = client.get(
+        "/api/jobs/nonexistent-ui-job",
+        headers={"Authorization": f"Bearer {user_tokens['ds_user']}"},
+    )
+    assert resp_nf.status_code == 404
+
+
