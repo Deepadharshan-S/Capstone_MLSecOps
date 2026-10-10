@@ -219,6 +219,15 @@ class RayJobService:
         except Exception as np_err:
             logger.debug(f"NetworkPolicy rayjob-netpol-{clean_id} deletion note: {np_err}")
 
+        try:
+            from kubernetes import client
+            net_api = client.NetworkingV1Api()
+            net_api.delete_collection_namespaced_network_policy(
+                namespace=namespace, label_selector=f"ray.io/job-id={clean_id}"
+            )
+        except Exception as np_lbl_err:
+            logger.debug(f"NetworkPolicy collection cleanup note ({clean_id}): {np_lbl_err}")
+
         # 3. Delete RayJob Custom Resource
         try:
             custom_api, _ = self._get_apis()
@@ -281,11 +290,12 @@ class RayJobService:
 
     def sweep_orphaned_job_resources(self, namespace: str = "default") -> dict:
         """
-        Sweeps and garbage-collects completed RayJobs, orphaned ConfigMaps,
-        and NetworkPolicies from past training jobs.
+        Sweeps and garbage-collects completed/failed RayJobs, orphaned ConfigMaps,
+        NetworkPolicies, and RayClusters from past training jobs and deployments.
         """
         cleaned_jobs = []
         cleaned_cms = []
+        cleaned_nps = []
 
         try:
             custom_api, core_api = self._get_apis()
@@ -295,26 +305,38 @@ class RayJobService:
                 group="ray.io", version="v1", namespace=namespace, plural="rayjobs"
             ).get("items", [])
 
+            active_rayjobs = set()
             for rj in rayjobs:
                 name = rj.get("metadata", {}).get("name", "")
                 st = rj.get("status", {})
                 job_status = (st.get("jobStatus") or "").upper()
                 dep_status = (st.get("jobDeploymentStatus") or "").upper()
+                job_id = rj.get("metadata", {}).get("labels", {}).get("ray.io/job-id") or name.removeprefix("rayjob-")
 
                 if job_status in ("SUCCEEDED", "FAILED", "STOPPED") or dep_status in ("COMPLETE", "FAILED"):
-                    job_id = rj.get("metadata", {}).get("labels", {}).get("ray.io/job-id") or name.removeprefix("rayjob-")
                     self.cleanup_job_resources(job_id, namespace=namespace)
                     cleaned_jobs.append(name)
+                else:
+                    active_rayjobs.add(job_id)
 
-            # 2. Sweep orphaned ConfigMaps
-            cms = core_api.list_namespaced_config_map(namespace=namespace).items
-            active_rayjobs = {
-                rj.get("metadata", {}).get("name", "").removeprefix("rayjob-")
-                for rj in custom_api.list_namespaced_custom_object(
-                    group="ray.io", version="v1", namespace=namespace, plural="rayjobs"
+            # 2. Identify active RayServices (to avoid deleting active service ConfigMaps)
+            active_rayservices = set()
+            try:
+                rayservices = custom_api.list_namespaced_custom_object(
+                    group="ray.io", version="v1", namespace=namespace, plural="rayservices"
                 ).get("items", [])
-            }
+                for rs in rayservices:
+                    rs_name = rs.get("metadata", {}).get("name", "")
+                    rs_id = (
+                        rs.get("metadata", {}).get("labels", {}).get("sentinelml.service-id")
+                        or rs_name.removeprefix("rayservice-")
+                    )
+                    active_rayservices.add(rs_id)
+            except Exception as rs_err:
+                logger.debug(f"RayService listing note: {rs_err}")
 
+            # 3. Sweep orphaned ConfigMaps
+            cms = core_api.list_namespaced_config_map(namespace=namespace).items
             for cm in cms:
                 cm_name = cm.metadata.name
                 if cm_name.startswith("rayjob-code-"):
@@ -325,9 +347,57 @@ class RayJobService:
                             cleaned_cms.append(cm_name)
                         except Exception as del_cm_err:
                             logger.debug(f"Orphan ConfigMap {cm_name} delete note: {del_cm_err}")
+                elif cm_name.startswith("rayservice-code-"):
+                    cm_svc_id = cm_name.removeprefix("rayservice-code-")
+                    if cm_svc_id not in active_rayservices:
+                        try:
+                            core_api.delete_namespaced_config_map(name=cm_name, namespace=namespace)
+                            cleaned_cms.append(cm_name)
+                        except Exception as del_cm_err:
+                            logger.debug(f"Orphan RayService ConfigMap {cm_name} delete note: {del_cm_err}")
+
+            # 4. Sweep orphaned NetworkPolicies
+            try:
+                from kubernetes import client
+                net_api = client.NetworkingV1Api()
+                nps = net_api.list_namespaced_network_policy(namespace=namespace).items
+                for np in nps:
+                    np_name = np.metadata.name
+                    if np_name.startswith("rayjob-netpol-"):
+                        np_job_id = np_name.removeprefix("rayjob-netpol-")
+                        if np_job_id not in active_rayjobs:
+                            try:
+                                net_api.delete_namespaced_network_policy(name=np_name, namespace=namespace)
+                                cleaned_nps.append(np_name)
+                            except Exception as del_np_err:
+                                logger.debug(f"Orphan NetworkPolicy {np_name} delete note: {del_np_err}")
+            except Exception as net_sweep_err:
+                logger.debug(f"NetworkPolicy sweep note: {net_sweep_err}")
+
+            # 5. Sweep orphaned RayClusters
+            try:
+                clusters = custom_api.list_namespaced_custom_object(
+                    group="ray.io", version="v1", namespace=namespace, plural="rayclusters"
+                ).get("items", [])
+                for c in clusters:
+                    c_name = c.get("metadata", {}).get("name", "")
+                    c_job_id = c.get("metadata", {}).get("labels", {}).get("ray.io/job-id")
+                    if c_job_id and c_job_id not in active_rayjobs:
+                        try:
+                            custom_api.delete_namespaced_custom_object(
+                                group="ray.io", version="v1", namespace=namespace, plural="rayclusters", name=c_name
+                            )
+                        except Exception as del_rc_err:
+                            logger.debug(f"Orphan RayCluster {c_name} delete note: {del_rc_err}")
+            except Exception as rc_sweep_err:
+                logger.debug(f"RayCluster sweep note: {rc_sweep_err}")
 
         except Exception as sweep_err:
             logger.debug(f"Resource sweep note: {sweep_err}")
 
-        return {"cleaned_jobs": cleaned_jobs, "cleaned_configmaps": cleaned_cms}
+        return {
+            "cleaned_jobs": cleaned_jobs,
+            "cleaned_configmaps": cleaned_cms,
+            "cleaned_networkpolicies": cleaned_nps,
+        }
 

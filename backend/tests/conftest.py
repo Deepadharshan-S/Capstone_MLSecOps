@@ -1,3 +1,4 @@
+import os
 import pytest
 import lakefs
 import boto3
@@ -5,6 +6,22 @@ from botocore.client import Config
 
 from app.core.config import settings
 from app.services.dataset import data_service
+
+# Ensure during running tests at most 2 RayJobs can run concurrently to prevent node OOMKilled crashes
+os.environ.setdefault("MAX_CONCURRENT_RAYJOBS", "2")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def enforce_rayjob_test_concurrency():
+    """Ensures RayJob concurrency limit is capped at 2 during tests."""
+    prev = os.environ.get("MAX_CONCURRENT_RAYJOBS")
+    os.environ["MAX_CONCURRENT_RAYJOBS"] = "2"
+    yield
+    if prev is not None:
+        os.environ["MAX_CONCURRENT_RAYJOBS"] = prev
+    else:
+        os.environ.pop("MAX_CONCURRENT_RAYJOBS", None)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_after_tests():
@@ -178,10 +195,13 @@ def cleanup_after_tests():
             )
             for item in jobs.get("items", []):
                 name = item.get("metadata", {}).get("name", "")
-                if name.startswith("rayjob-test-") or "test" in name:
-                    custom_api.delete_namespaced_custom_object(
-                        group="ray.io", version="v1", namespace="default", plural="rayjobs", name=name
-                    )
+                if name.startswith("rayjob-test-") or name.startswith("rayjob-") or "test" in name:
+                    try:
+                        custom_api.delete_namespaced_custom_object(
+                            group="ray.io", version="v1", namespace="default", plural="rayjobs", name=name
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -190,8 +210,11 @@ def cleanup_after_tests():
             cms = core_api.list_namespaced_config_map(namespace="default")
             for cm in cms.items:
                 name = cm.metadata.name
-                if (name.startswith("rayjob-code-") or name.startswith("rayservice-code-")) and "test" in name:
-                    core_api.delete_namespaced_config_map(name=name, namespace="default")
+                if name.startswith("rayjob-code-") or name.startswith("rayservice-code-"):
+                    try:
+                        core_api.delete_namespaced_config_map(name=name, namespace="default")
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -200,8 +223,11 @@ def cleanup_after_tests():
             nps = net_api.list_namespaced_network_policy(namespace="default")
             for np in nps.items:
                 name = np.metadata.name
-                if name.startswith("rayjob-netpol-") and "test" in name:
-                    net_api.delete_namespaced_network_policy(name=name, namespace="default")
+                if name.startswith("rayjob-netpol-"):
+                    try:
+                        net_api.delete_namespaced_network_policy(name=name, namespace="default")
+                    except Exception:
+                        pass
         except Exception:
             pass
 

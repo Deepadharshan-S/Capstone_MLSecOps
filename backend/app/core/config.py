@@ -82,6 +82,8 @@ class Settings(BaseSettings):
 
     # Training Execution & Sandboxing
     ALLOW_LOCAL_RAY_FALLBACK: bool = False
+    MAX_CONCURRENT_RAYJOBS: int = 2
+    RAYJOB_CONCURRENCY_TIMEOUT_SECONDS: float = 300.0
 
     # Optional dedicated scoped training credentials (if not set, MinIO STS assume_role is used)
     MINIO_TRAINING_ACCESS_KEY_ID: Optional[str] = None

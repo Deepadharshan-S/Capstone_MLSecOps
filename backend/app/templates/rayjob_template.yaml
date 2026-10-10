@@ -41,10 +41,11 @@ data:
         archive()
   entrypoint.sh: |
     #!/bin/bash
+    set -eo pipefail
     LOG_FILE="/tmp/training_{{job_id}}.log"
     cleanup_and_upload_logs() {
       EXIT_CODE=$?
-      echo "Archiving training execution logs to MinIO (Exit code: $EXIT_CODE)..."
+      echo "Archiving training execution logs to MinIO (Exit code: $EXIT_CODE)..." | tee -a "$LOG_FILE"
       python3 /app/user_code/archive_logs.py || true
       exit $EXIT_CODE
     }

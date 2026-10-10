@@ -4,6 +4,7 @@ import logging
 import subprocess
 import threading
 import tempfile
+from typing import Optional
 from app.core.config import settings
 from app.core.logging_config import log_audit_event
 
@@ -169,6 +170,124 @@ def render_rayjob_manifest(
     return rendered_yaml
 
 
+_rayjob_submission_lock = threading.Lock()
+
+
+def get_active_rayjobs_count(custom_api, core_api, namespace: str = "default") -> int:
+    """
+    Counts active RayJobs and active Ray head pods in Kubernetes.
+    Returns the maximum of active RayJob CRDs and active head pods.
+    """
+    active_jobs = 0
+    try:
+        jobs = custom_api.list_namespaced_custom_object(
+            group="ray.io",
+            version="v1",
+            namespace=namespace,
+            plural="rayjobs",
+        ).get("items", [])
+        for item in jobs:
+            st = item.get("status", {})
+            j_st = (st.get("jobStatus") or "").upper()
+            d_st = (st.get("jobDeploymentStatus") or "").upper()
+            if not j_st and not d_st:
+                active_jobs += 1
+            elif j_st in ("SUCCEEDED", "FAILED", "STOPPED") or d_st in ("COMPLETE", "FAILED"):
+                continue
+            else:
+                active_jobs += 1
+    except Exception as e:
+        logger.debug(f"Could not list rayjobs for capacity check: {e}")
+
+    active_pods = 0
+    try:
+        pods = core_api.list_namespaced_pod(
+            namespace=namespace,
+            label_selector="ray.io/node-type=head",
+        ).items
+        for p in pods:
+            phase = getattr(getattr(p, "status", None), "phase", None)
+            if phase in ("Pending", "Running") or (getattr(p, "metadata", None) and p.metadata.deletion_timestamp is not None):
+                active_pods += 1
+    except Exception as e:
+        logger.debug(f"Could not list pods for capacity check: {e}")
+
+    return max(active_jobs, active_pods)
+
+
+def wait_for_rayjob_capacity(
+    custom_api,
+    core_api,
+    namespace: str = "default",
+    max_concurrent: Optional[int] = None,
+    timeout_seconds: Optional[float] = None,
+    poll_interval: float = 2.0,
+) -> bool:
+    """
+    Waits until the number of active RayJobs/pods in the cluster is below max_concurrent.
+    Automatically sweeps completed/failed jobs to free slots.
+    Returns True when capacity is available, or False if timed out.
+    """
+    import time
+    from app.services.ml_ops.rayjob_service import RayJobService
+
+    if max_concurrent is None:
+        try:
+            max_concurrent = int(os.getenv("MAX_CONCURRENT_RAYJOBS", str(getattr(settings, "MAX_CONCURRENT_RAYJOBS", 2))))
+        except (ValueError, TypeError):
+            max_concurrent = 2
+
+    if max_concurrent <= 0:
+        return True
+
+    if timeout_seconds is None:
+        try:
+            timeout_seconds = float(
+                os.getenv(
+                    "RAYJOB_CONCURRENCY_TIMEOUT",
+                    str(getattr(settings, "RAYJOB_CONCURRENCY_TIMEOUT_SECONDS", 300.0)),
+                )
+            )
+        except (ValueError, TypeError):
+            timeout_seconds = 300.0
+
+    ray_svc = RayJobService(custom_api=custom_api, core_api=core_api)
+
+    # Initial sweep to clean any already completed jobs
+    try:
+        ray_svc.sweep_orphaned_job_resources(namespace=namespace)
+    except Exception as sweep_err:
+        logger.debug(f"Pre-check sweep note: {sweep_err}")
+
+    start_time = time.time()
+    active_count = get_active_rayjobs_count(custom_api, core_api, namespace)
+
+    if active_count >= max_concurrent:
+        logger.info(
+            f"RayJob concurrency limit reached ({active_count}/{max_concurrent} active). "
+            f"Waiting for available cluster capacity (timeout: {timeout_seconds}s)..."
+        )
+
+    while active_count >= max_concurrent:
+        if time.time() - start_time > timeout_seconds:
+            logger.warning(
+                f"Timed out after {timeout_seconds}s waiting for RayJob capacity "
+                f"({active_count}/{max_concurrent} active). Proceeding with submission."
+            )
+            return False
+
+        time.sleep(poll_interval)
+
+        try:
+            ray_svc.sweep_orphaned_job_resources(namespace=namespace)
+        except Exception:
+            pass
+
+        active_count = get_active_rayjobs_count(custom_api, core_api, namespace)
+
+    return True
+
+
 def submit_rayjob_to_k8s(
     rendered_yaml: str,
     job_id: str,
@@ -177,6 +296,7 @@ def submit_rayjob_to_k8s(
 ) -> bool:
     """
     Submits a RayJob CRD manifest directly to the Kubernetes cluster using the official Kubernetes SDK.
+    Enforces maximum concurrent RayJobs (default <= 2) to protect node memory from OOMKilled crashes.
     Attaches ownerReferences so ConfigMap and NetworkPolicy are automatically garbage-collected
     when the RayJob is deleted.
     Returns True if submission succeeded, False if cluster is unreachable.
@@ -213,71 +333,78 @@ def submit_rayjob_to_k8s(
         if not rayjob_doc:
             raise ValueError("No RayJob manifest found in rendered YAML.")
 
-        # 1. Submit RayJob CRD
         rayjob_name = rayjob_doc.get("metadata", {}).get("name", f"rayjob-{job_id}")
         namespace = rayjob_doc.get("metadata", {}).get("namespace", "default")
 
-        rayjob_res = custom_api.create_namespaced_custom_object(
-            group="ray.io",
-            version="v1",
-            namespace=namespace,
-            plural="rayjobs",
-            body=rayjob_doc,
-        )
-        rayjob_uid = rayjob_res.get("metadata", {}).get("uid")
-
-        # 2. Attach ownerReferences for automatic cascading cleanup
-        owner_refs = []
-        if rayjob_uid:
-            owner_refs = [
-                {
-                    "apiVersion": "ray.io/v1",
-                    "kind": "RayJob",
-                    "name": rayjob_name,
-                    "uid": rayjob_uid,
-                    "blockOwnerDeletion": True,
-                    "controller": True,
-                }
-            ]
-
-        # 3. Submit ConfigMap
-        if configmap_doc:
-            if owner_refs:
-                if "metadata" not in configmap_doc:
-                    configmap_doc["metadata"] = {}
-                configmap_doc["metadata"]["ownerReferences"] = owner_refs
-            cm_name = configmap_doc.get("metadata", {}).get("name")
+        with _rayjob_submission_lock:
+            # 0. Enforce RayJob concurrency limit (at most 2 concurrent RayJobs during tests / by default)
             try:
-                core_api.create_namespaced_config_map(namespace=namespace, body=configmap_doc)
-            except client.exceptions.ApiException as api_err:
-                if api_err.status == 409 and cm_name:
-                    core_api.replace_namespaced_config_map(name=cm_name, namespace=namespace, body=configmap_doc)
-                else:
-                    raise
+                wait_for_rayjob_capacity(custom_api, core_api, namespace=namespace)
+            except Exception as cap_err:
+                logger.debug(f"Capacity check note: {cap_err}")
 
-        # 4. Submit NetworkPolicy
-        if netpol_doc:
-            if owner_refs:
-                if "metadata" not in netpol_doc:
-                    netpol_doc["metadata"] = {}
-                netpol_doc["metadata"]["ownerReferences"] = owner_refs
-            np_name = netpol_doc.get("metadata", {}).get("name")
-            try:
-                net_api.create_namespaced_network_policy(namespace=namespace, body=netpol_doc)
-            except client.exceptions.ApiException as api_err:
-                if api_err.status == 409 and np_name:
-                    net_api.replace_namespaced_network_policy(name=np_name, namespace=namespace, body=netpol_doc)
-                else:
-                    raise
+            # 1. Submit RayJob CRD
+            rayjob_res = custom_api.create_namespaced_custom_object(
+                group="ray.io",
+                version="v1",
+                namespace=namespace,
+                plural="rayjobs",
+                body=rayjob_doc,
+            )
+            rayjob_uid = rayjob_res.get("metadata", {}).get("uid")
 
-        desc = f" for {mode_description}" if mode_description else ""
-        log_audit_event(
-            "model_training_k8s_submit",
-            username,
-            None,
-            f"Submitted RayJob CRD to Kubernetes cluster{desc}: {rayjob_name}",
-        )
-        return True
+            # 2. Attach ownerReferences for automatic cascading cleanup
+            owner_refs = []
+            if rayjob_uid:
+                owner_refs = [
+                    {
+                        "apiVersion": "ray.io/v1",
+                        "kind": "RayJob",
+                        "name": rayjob_name,
+                        "uid": rayjob_uid,
+                        "blockOwnerDeletion": True,
+                        "controller": True,
+                    }
+                ]
+
+            # 3. Submit ConfigMap
+            if configmap_doc:
+                if owner_refs:
+                    if "metadata" not in configmap_doc:
+                        configmap_doc["metadata"] = {}
+                    configmap_doc["metadata"]["ownerReferences"] = owner_refs
+                cm_name = configmap_doc.get("metadata", {}).get("name")
+                try:
+                    core_api.create_namespaced_config_map(namespace=namespace, body=configmap_doc)
+                except client.exceptions.ApiException as api_err:
+                    if api_err.status == 409 and cm_name:
+                        core_api.replace_namespaced_config_map(name=cm_name, namespace=namespace, body=configmap_doc)
+                    else:
+                        raise
+
+            # 4. Submit NetworkPolicy
+            if netpol_doc:
+                if owner_refs:
+                    if "metadata" not in netpol_doc:
+                        netpol_doc["metadata"] = {}
+                    netpol_doc["metadata"]["ownerReferences"] = owner_refs
+                np_name = netpol_doc.get("metadata", {}).get("name")
+                try:
+                    net_api.create_namespaced_network_policy(namespace=namespace, body=netpol_doc)
+                except client.exceptions.ApiException as api_err:
+                    if api_err.status == 409 and np_name:
+                        net_api.replace_namespaced_network_policy(name=np_name, namespace=namespace, body=netpol_doc)
+                    else:
+                        raise
+
+            desc = f" for {mode_description}" if mode_description else ""
+            log_audit_event(
+                "model_training_k8s_submit",
+                username,
+                None,
+                f"Submitted RayJob CRD to Kubernetes cluster{desc}: {rayjob_name}",
+            )
+            return True
     except Exception as e:
         log_audit_event(
             "model_training_submit_warning",
