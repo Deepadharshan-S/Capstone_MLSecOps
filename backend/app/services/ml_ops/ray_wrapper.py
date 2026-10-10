@@ -671,7 +671,7 @@ def main():
     # 4. Register model and metadata in MLflow
     print("Registering model, parameters, metrics, and tags in MLflow...")
     try:
-        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
         print(f"Setting MLflow tracking URI to: {tracking_uri}")
         mlflow.set_tracking_uri(tracking_uri)
         exp_name = args.experiment_name if args.experiment_name else f"dataset-{args.dataset_id}-experiment"

@@ -149,11 +149,6 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
-# Instrument FastAPI application, SQLAlchemy engine, and HTTPX with OpenTelemetry (safe no-ops when disabled)
-instrument_fastapi_app(app)
-instrument_sqlalchemy_engine(engine)
-instrument_httpx()
-
 
 @app.exception_handler(IntegrityError)
 def integrity_error_handler(request: Request, exc: IntegrityError):
@@ -266,4 +261,10 @@ def health(
             "mlflow": mlflow_status,
         },
     )
+
+
+# Instrument FastAPI application, SQLAlchemy engine, and HTTPX with OpenTelemetry (safe no-ops when disabled)
+instrument_fastapi_app(app)
+instrument_sqlalchemy_engine(engine)
+instrument_httpx()
 
