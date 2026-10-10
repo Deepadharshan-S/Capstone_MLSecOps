@@ -150,6 +150,7 @@ class JobStatusResponse(BaseModel):
     precision_score: Optional[float] = None
     recall_score: Optional[float] = None
     f1_score: Optional[float] = None
+    roc_auc: Optional[float] = None
     training_duration: Optional[float] = None
     confusion_matrix: Optional[dict] = None
     feature_importance: Optional[list] = None

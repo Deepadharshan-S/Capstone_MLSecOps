@@ -75,18 +75,27 @@ def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str, include_a
         if not runs:
             return {}
         run = runs[0]
+        run_status = (run.info.status or "").upper()
+        if run_status == "FINISHED":
+            computed_status = "completed"
+        elif run_status in ("FAILED", "KILLED"):
+            computed_status = "failed"
+        else:
+            computed_status = "training"
+
         m = run.data.metrics or {}
         res = {
-            "status": "completed",
+            "status": computed_status,
             "accuracy": m.get("accuracy") if "accuracy" in m else m.get("champion_accuracy"),
             "precision": m.get("precision") if "precision" in m else m.get("champion_precision"),
             "recall": m.get("recall") if "recall" in m else m.get("champion_recall"),
             "f1_score": m.get("f1_score") if "f1_score" in m else m.get("champion_f1_score"),
+            "roc_auc": m.get("roc_auc") if "roc_auc" in m else m.get("champion_roc_auc"),
             "training_duration_seconds": m.get("training_duration_seconds"),
         }
 
         # Download evaluation artifacts if requested and available
-        if include_artifacts:
+        if include_artifacts and computed_status == "completed":
             for artifact_file, key in [
                 ("confusion_matrix.json", "confusion_matrix"),
                 ("feature_importance.json", "feature_importance"),
@@ -100,9 +109,12 @@ def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str, include_a
                 except Exception:
                     pass
 
-        # Cache valid metrics to avoid future round-trips
-        if res.get("accuracy") is not None or res.get("status") == "completed":
-            _save_results_file(job_id, res)
+        # Cache valid metrics to avoid future round-trips only when run has completed
+        if computed_status == "completed":
+            existing = _load_results_file(job_id)
+            merged = {**existing, **res} if existing else res
+            if include_artifacts or any(k in merged for k in ("feature_importance", "confusion_matrix", "roc_curve", "history")):
+                _save_results_file(job_id, merged)
 
         return res
     except Exception as e:
@@ -160,6 +172,7 @@ class JobService:
         raw_status = (job.status or "PENDING").upper()
 
         # 1. Reconcile with Kubernetes RayJob state if active
+        k8s_active = False
         if raw_status in ("PENDING", "RUNNING"):
             try:
                 from app.services.ml_ops.rayjob_service import RayJobService
@@ -169,6 +182,8 @@ class JobService:
                 if k8s_job:
                     st = k8s_job.get("status", {})
                     norm = ray_svc.normalize_status(st.get("jobStatus"), st.get("jobDeploymentStatus"))
+                    if norm in ("PENDING", "RUNNING"):
+                        k8s_active = True
                     if norm != job.status:
                         job.status = norm
                         if norm in ("SUCCEEDED", "FAILED"):
@@ -194,18 +209,24 @@ class JobService:
                             raw_status = (job.status or "PENDING").upper()
                         except Exception:
                             db.rollback()
+                    elif norm in ("SUCCEEDED", "FAILED"):
+                        try:
+                            ray_svc.cleanup_job_resources(clean_id)
+                        except Exception as clean_err:
+                            logger.debug(f"Failed to clean up k8s resources for job {clean_id}: {clean_err}")
             except Exception as k8s_err:
                 logger.debug(f"Kubernetes rayjob check skipped: {k8s_err}")
 
         # 2. Check local results file or MLflow
-        res_data = _load_results_file(clean_id)
-        if not res_data:
-            res_data = _fetch_mlflow_metrics(job.experiment_name, clean_id, include_artifacts=include_artifacts)
+        res_data = _load_results_file(clean_id) or {}
+        needs_artifacts = include_artifacts and not any(k in res_data for k in ("feature_importance", "confusion_matrix", "roc_curve", "history"))
+        if not res_data or needs_artifacts:
+            mlflow_res = _fetch_mlflow_metrics(job.experiment_name, clean_id, include_artifacts=include_artifacts)
+            if mlflow_res:
+                res_data = {**res_data, **mlflow_res}
 
-        if raw_status in ("PENDING", "RUNNING") and (
-            res_data.get("status") in ("completed", "failed")
-            or res_data.get("accuracy") is not None
-        ):
+        # Only update status from local results or MLflow if Kubernetes is not actively executing the job
+        if not k8s_active and raw_status in ("PENDING", "RUNNING") and res_data.get("status") in ("completed", "failed"):
             new_status = "FAILED" if res_data.get("status") == "failed" else "SUCCEEDED"
             job.status = new_status
             job.completed_at = datetime.now(timezone.utc)
@@ -256,6 +277,7 @@ class JobService:
         precision_score = res_data.get("precision") or res_data.get("precision_score")
         recall_score = res_data.get("recall") or res_data.get("recall_score")
         f1_score = res_data.get("f1_score")
+        roc_auc = res_data.get("roc_auc")
         training_duration = (
             res_data.get("training_duration")
             or res_data.get("training_duration_seconds")
@@ -281,6 +303,7 @@ class JobService:
             precision_score=float(precision_score) if precision_score is not None else None,
             recall_score=float(recall_score) if recall_score is not None else None,
             f1_score=float(f1_score) if f1_score is not None else None,
+            roc_auc=float(roc_auc) if roc_auc is not None else None,
             training_duration=float(training_duration) if training_duration is not None else None,
             confusion_matrix=confusion_matrix if isinstance(confusion_matrix, dict) else None,
             feature_importance=feature_importance if isinstance(feature_importance, list) else None,
@@ -324,6 +347,12 @@ class JobService:
         user: Union[User, UUID, str],
         limit: int = 20,
     ) -> list[JobStatusResponse]:
+        try:
+            from app.services.ml_ops.rayjob_service import RayJobService
+            RayJobService().sweep_orphaned_job_resources()
+        except Exception as sweep_err:
+            logger.debug(f"Resource sweep note in get_user_jobs: {sweep_err}")
+
         query = db.query(TrainingJob)
 
         if isinstance(user, User):
@@ -429,6 +458,11 @@ class JobService:
         db.commit()
         db.refresh(job)
         _save_results_file(clean_id, metrics)
+        try:
+            from app.services.ml_ops.rayjob_service import RayJobService
+            RayJobService().cleanup_job_resources(clean_id)
+        except Exception as clean_err:
+            logger.debug(f"Failed to clean up k8s resources on complete_job for {clean_id}: {clean_err}")
         return job
 
     def fail_job(
@@ -452,6 +486,11 @@ class JobService:
 
         db.commit()
         db.refresh(job)
+        try:
+            from app.services.ml_ops.rayjob_service import RayJobService
+            RayJobService().cleanup_job_resources(clean_id)
+        except Exception as clean_err:
+            logger.debug(f"Failed to clean up k8s resources on fail_job for {clean_id}: {clean_err}")
         return job
 
 

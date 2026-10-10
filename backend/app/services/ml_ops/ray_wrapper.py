@@ -140,52 +140,179 @@ def calculate_metrics(model, data_path, target_col=None) -> tuple:
         # Feature importance
         try:
             import numpy as np
-            feature_names = list(X.columns) if hasattr(X, "columns") else [f"feature_{i}" for i in range(X.shape[1])]
+            feature_names = list(X.columns) if hasattr(X, "columns") else [f"feature_{i+1}" for i in range(X.shape[1])]
             importances = None
+
             # Tree-based models
             if hasattr(model, "feature_importances_"):
                 importances = model.feature_importances_
-            # Pipeline with tree-based final estimator
+            # Pipeline with estimators
             elif hasattr(model, "steps") and isinstance(model.steps, list):
                 final_est = model.steps[-1][1]
                 if hasattr(final_est, "feature_importances_"):
                     importances = final_est.feature_importances_
                 elif hasattr(final_est, "coef_"):
-                    importances = np.abs(final_est.coef_).flatten()
+                    coef = final_est.coef_
+                    importances = np.mean(np.abs(coef), axis=0) if getattr(coef, "ndim", 1) > 1 else np.abs(coef).flatten()
+
+                # Extract transformed feature names from pipeline steps (ColumnTransformer, etc.)
+                for step_name, step_obj in model.steps[:-1]:
+                    if hasattr(step_obj, "get_feature_names_out"):
+                        try:
+                            raw_names = list(step_obj.get_feature_names_out())
+                            clean_names = [n.split("__", 1)[-1] for n in raw_names]
+                            feature_names = clean_names
+                            break
+                        except Exception:
+                            pass
             # Linear models
             elif hasattr(model, "coef_"):
-                importances = np.abs(model.coef_).flatten()
+                coef = model.coef_
+                importances = np.mean(np.abs(coef), axis=0) if getattr(coef, "ndim", 1) > 1 else np.abs(coef).flatten()
 
-            if importances is not None and len(importances) == len(feature_names):
+            # Permutation importance fallback for non-linear / non-tree estimators (KNN, SVM, Naive Bayes, MLP, user code)
+            if importances is None and X is not None and y is not None:
+                try:
+                    from sklearn.inspection import permutation_importance
+                    sample_size = min(100, len(X))
+                    X_sample = X.iloc[:sample_size] if hasattr(X, "iloc") else X[:sample_size]
+                    y_sample = y.iloc[:sample_size] if hasattr(y, "iloc") else y[:sample_size]
+                    perm = permutation_importance(model, X_sample, y_sample, n_repeats=2, random_state=42)
+                    if hasattr(perm, "importances_mean"):
+                        importances = np.maximum(0.0, perm.importances_mean)
+                except Exception as perm_err:
+                    print(f"Notice: Permutation importance calculation note: {perm_err}")
+
+            if importances is not None:
+                importances = np.array(importances, dtype=float).flatten()
+                # Ensure feature names length matches
+                if len(feature_names) != len(importances):
+                    if hasattr(X, "columns") and len(X.columns) == len(importances):
+                        feature_names = list(X.columns)
+                    else:
+                        feature_names = [f"feature_{i+1}" for i in range(len(importances))]
+
                 # Normalize and sort
                 total = float(np.sum(importances)) if np.sum(importances) > 0 else 1.0
                 normed = (importances / total).tolist()
                 pairs = sorted(zip(feature_names, normed), key=lambda x: x[1], reverse=True)
                 metrics["feature_importance"] = [
-                    {"name": name, "value": round(val, 4)}
+                    {"name": str(name), "value": round(float(val), 4)}
                     for name, val in pairs[:15]
                 ]
         except Exception as fi_err:
             print(f"Notice: Could not compute feature importance: {fi_err}")
 
-        # ROC curve (binary classification only)
+        # ROC curve & ROC AUC (binary classification only)
         try:
-            from sklearn.metrics import roc_curve
+            from sklearn.metrics import roc_curve, roc_auc_score
             import numpy as np
             unique_classes = np.unique(y)
             if len(unique_classes) == 2 and hasattr(model, "predict_proba"):
                 proba = model.predict_proba(X)[:, 1]
+                metrics["roc_auc"] = round(float(roc_auc_score(y, proba)), 4)
                 fpr, tpr, _ = roc_curve(y, proba)
-                # Subsample to ~20 points for clean chart
-                step = max(1, len(fpr) // 20)
+
+                # Sample along a uniform grid of 51 FPR values from 0.0 to 1.0
+                # using linear interpolation to guarantee monotonically increasing, accurate curve
+                # without duplicate zeros or clustered points
+                fpr_grid = np.linspace(0.0, 1.0, 51)
+                tpr_interp = np.interp(fpr_grid, fpr, tpr)
+                tpr_interp[0] = 0.0
+                tpr_interp[-1] = 1.0
+
                 metrics["roc_curve"] = [
-                    {"fpr": round(float(fpr[i]), 4), "tpr": round(float(tpr[i]), 4)}
-                    for i in range(0, len(fpr), step)
+                    {"fpr": round(float(f_val), 4), "tpr": round(float(t_val), 4)}
+                    for f_val, t_val in zip(fpr_grid, tpr_interp)
                 ]
-                if metrics["roc_curve"][-1]["fpr"] < 1.0:
-                    metrics["roc_curve"].append({"fpr": 1.0, "tpr": 1.0})
         except Exception as roc_err:
             print(f"Notice: Could not compute ROC curve: {roc_err}")
+
+        # Learning curve / training history
+        try:
+            import numpy as np
+            history = []
+
+            # 1. Custom trainer object with native history (PyTorch, Keras, etc.)
+            if hasattr(model, "history") and isinstance(model.history, (dict, list)):
+                raw_hist = model.history
+                if isinstance(raw_hist, list):
+                    history = raw_hist
+                elif isinstance(raw_hist, dict):
+                    train_vals = raw_hist.get("accuracy") or raw_hist.get("train") or raw_hist.get("loss") or []
+                    val_vals = raw_hist.get("val_accuracy") or raw_hist.get("val") or raw_hist.get("val_loss") or []
+                    n_pts = max(len(train_vals), len(val_vals))
+                    for i in range(n_pts):
+                        pt = {"epoch": i + 1}
+                        if i < len(train_vals):
+                            pt["train"] = round(float(train_vals[i]), 4)
+                        if i < len(val_vals):
+                            pt["val"] = round(float(val_vals[i]), 4)
+                        history.append(pt)
+
+            # 2. Extract final estimator if inside a Pipeline
+            final_est = model
+            if hasattr(model, "steps") and isinstance(model.steps, list) and len(model.steps) > 0:
+                final_est = model.steps[-1][1]
+
+            # 3. Iterative Neural Net (MLPClassifier / SGDClassifier with loss_curve_)
+            if not history and hasattr(final_est, "loss_curve_") and getattr(final_est, "loss_curve_", None):
+                losses = list(final_est.loss_curve_)
+                val_scores = getattr(final_est, "validation_scores_", None)
+                n_epochs = len(losses)
+                if n_epochs > 0:
+                    indices = np.linspace(0, n_epochs - 1, min(25, n_epochs), dtype=int)
+                    for idx in indices:
+                        pt = {"epoch": int(idx + 1), "train": round(float(losses[idx]), 4)}
+                        if val_scores is not None and idx < len(val_scores):
+                            pt["val"] = round(float(val_scores[idx]), 4)
+                        history.append(pt)
+
+            # 4. Iterative Boosting Ensembles (GradientBoostingClassifier with train_score_)
+            elif not history and hasattr(final_est, "train_score_") and len(getattr(final_est, "train_score_", [])) > 0:
+                tr_scores = list(final_est.train_score_)
+                n_stages = len(tr_scores)
+                if n_stages > 0:
+                    indices = np.linspace(0, n_stages - 1, min(25, n_stages), dtype=int)
+                    for idx in indices:
+                        history.append({
+                            "epoch": int(idx + 1),
+                            "train": round(float(tr_scores[idx]), 4)
+                        })
+
+            # 5. Non-iterative Models (RandomForest, LogisticRegression, DecisionTree, SVM, KNN, NaiveBayes, etc.)
+            # Standard scikit-learn learning_curve (Performance vs. Sample Size)
+            if not history and X is not None and y is not None and len(X) >= 10:
+                from sklearn.model_selection import learning_curve
+                sample_size = min(1000, len(X))
+                X_sub = X.iloc[:sample_size] if hasattr(X, "iloc") else X[:sample_size]
+                y_sub = y.iloc[:sample_size] if hasattr(y, "iloc") else y[:sample_size]
+
+                unique_classes, counts = np.unique(y_sub, return_counts=True)
+                if len(unique_classes) >= 2:
+                    min_count = int(np.min(counts))
+                    cv_splits = max(2, min(3, min_count))
+                    if min_count >= cv_splits:
+                        train_sizes, train_scores, val_scores = learning_curve(
+                            model, X_sub, y_sub,
+                            train_sizes=np.linspace(0.2, 1.0, 5),
+                            cv=cv_splits,
+                            scoring="accuracy",
+                            n_jobs=1
+                        )
+                        history = [
+                            {
+                                "epoch": f"{int(round(frac * 100))}%",
+                                "train": round(float(np.mean(tr)), 4),
+                                "val": round(float(np.mean(va)), 4),
+                            }
+                            for frac, tr, va in zip(np.linspace(0.2, 1.0, 5), train_scores, val_scores)
+                        ]
+
+            if history:
+                metrics["history"] = history
+        except Exception as hist_err:
+            print(f"Notice: Could not compute learning curve history: {hist_err}")
 
         print(f"Calculated metrics: {metrics}")
     except Exception as e:
@@ -308,6 +435,14 @@ def execute_pipeline_task(data_path, target_column, model_type, hyperparameters)
             if (isinstance(hyperparameters, dict) and m_type in hyperparameters and isinstance(hyperparameters[m_type], dict))
             else hyperparameters
         )
+        if m_type in ("mlp", "neural_network") and isinstance(m_params, dict):
+            m_params = dict(m_params)
+            m_params.setdefault("early_stopping", True)
+            if "hidden_layer_sizes" in m_params and isinstance(m_params["hidden_layer_sizes"], str):
+                try:
+                    m_params["hidden_layer_sizes"] = tuple(int(x.strip()) for x in m_params["hidden_layer_sizes"].split(",") if x.strip())
+                except Exception:
+                    pass
         try:
             model_instance = estimator_class(**m_params)
         except TypeError as te:
@@ -332,6 +467,14 @@ def execute_pipeline_task(data_path, target_column, model_type, hyperparameters)
                 if (isinstance(hyperparameters, dict) and m_type in hyperparameters and isinstance(hyperparameters[m_type], dict))
                 else hyperparameters
             )
+            if m_type in ("mlp", "neural_network") and isinstance(m_params, dict):
+                m_params = dict(m_params)
+                m_params.setdefault("early_stopping", True)
+                if "hidden_layer_sizes" in m_params and isinstance(m_params["hidden_layer_sizes"], str):
+                    try:
+                        m_params["hidden_layer_sizes"] = tuple(int(x.strip()) for x in m_params["hidden_layer_sizes"].split(",") if x.strip())
+                    except Exception:
+                        pass
             try:
                 model_instance = estimator_class(**m_params)
             except TypeError as te:
@@ -707,8 +850,15 @@ def main():
                 if champion_input is not None:
                     champ_log_kwargs["input_example"] = champion_input
 
-                mlflow.pyfunc.log_model(**champ_log_kwargs)
-                print(f"Champion model successfully registered under name '{args.output_model_name}' in MLflow.")
+                try:
+                    mlflow.pyfunc.log_model(**champ_log_kwargs)
+                    print(f"Champion model successfully registered under name '{args.output_model_name}' in MLflow.")
+                except Exception as champ_err:
+                    print(f"Notice: Initial champion model logging with registry failed: {champ_err}")
+                    champ_log_kwargs.pop("registered_model_name", None)
+                    logged_champ = mlflow.pyfunc.log_model(**champ_log_kwargs)
+                    mlflow.register_model(logged_champ.model_uri, args.output_model_name)
+                    print(f"Champion model successfully registered via fallback under name '{args.output_model_name}' in MLflow.")
 
         else:
             # =========================================================================
@@ -832,9 +982,17 @@ def main():
                 if input_example is not None:
                     log_model_kwargs["input_example"] = input_example
 
-                mlflow.pyfunc.log_model(**log_model_kwargs)
+                try:
+                    mlflow.pyfunc.log_model(**log_model_kwargs)
+                    print(f"Model successfully registered under name '{args.output_model_name}' in MLflow.")
+                except Exception as log_err:
+                    print(f"Notice: Initial model logging with registry failed: {log_err}")
+                    log_model_kwargs.pop("registered_model_name", None)
+                    logged_model = mlflow.pyfunc.log_model(**log_model_kwargs)
+                    mlflow.register_model(logged_model.model_uri, args.output_model_name)
+                    print(f"Model successfully registered via fallback under name '{args.output_model_name}' in MLflow.")
 
-            print(f"Model successfully registered under name '{args.output_model_name}' in MLflow.")
+            print(f"Registration workflow finalized for model '{args.output_model_name}' in MLflow.")
 
         # Write results to JSON file for job status polling
         try:
@@ -857,6 +1015,11 @@ def main():
 
     except Exception as e:
         print(f"Error registering model in MLflow: {str(e)}")
+        try:
+            if mlflow.active_run():
+                mlflow.end_run(status="FAILED")
+        except Exception:
+            pass
         sys.exit(1)
 
 
