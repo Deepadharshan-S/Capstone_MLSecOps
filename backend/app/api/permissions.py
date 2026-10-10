@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
 from sqlalchemy.orm import Session
 
+from app.core.logging_config import log_audit_event
 from app.core.roles import Role, ROLE_PERMISSIONS
 from app.core.security import decode_token
 from app.db.session import get_db
@@ -68,6 +69,13 @@ def get_current_user(
     if jti:
         is_blacklisted = BlacklistedTokenRepository(db).get_by_jti(jti)
         if is_blacklisted:
+            log_audit_event(
+                "token_blacklisted_used",
+                username=user_id_str,
+                ip_address=None,
+                details=f"Blacklisted access token used: jti={jti}",
+                db=db,
+            )
             raise credentials_exception
 
     try:
@@ -98,6 +106,13 @@ def get_current_user(
 
     for scope in security_scopes.scopes:
         if scope not in allowed_scopes:
+            log_audit_event(
+                "unauthorized_access",
+                username=user.username,
+                ip_address=None,
+                details=f"Permission denied: Missing required scope '{scope}'",
+                db=db,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied. Required scope: '{scope}'",

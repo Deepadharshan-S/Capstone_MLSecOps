@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.logging_config import log_audit_event
@@ -33,7 +34,7 @@ class AlertService:
     ) -> Alert:
         """
         Processes a detection result: correlates with existing active alerts or creates a new one.
-        Handles concurrent execution safely within a database transaction.
+        Handles concurrent execution safely within a database transaction and out-of-order events.
         """
         # Look for existing active alert with matching dedup_key
         existing_alert = db.execute(
@@ -46,8 +47,11 @@ class AlertService:
         ).scalar_one_or_none()
 
         if existing_alert:
-            # Correlate & update existing alert
-            existing_alert.last_seen = max(existing_alert.last_seen, detection.last_seen)
+            # Correlate & update existing alert (support out-of-order events)
+            if existing_alert.first_seen and detection.first_seen:
+                existing_alert.first_seen = min(existing_alert.first_seen, detection.first_seen)
+            if existing_alert.last_seen and detection.last_seen:
+                existing_alert.last_seen = max(existing_alert.last_seen, detection.last_seen)
             existing_alert.supporting_evidence = detection.supporting_evidence
             existing_alert.rule_version = detection.rule_version
 
@@ -69,7 +73,7 @@ class AlertService:
             db.refresh(existing_alert)
             return existing_alert
 
-        # Create brand new alert
+        # Create brand new alert inside nested subtransaction
         alert = Alert(
             title=detection.title,
             description=detection.description,
@@ -86,26 +90,47 @@ class AlertService:
             supporting_evidence=detection.supporting_evidence,
             dedup_key=detection.dedup_key,
         )
-        db.add(alert)
-        db.flush()  # populate alert.id
+        try:
+            with db.begin_nested():
+                db.add(alert)
+                db.flush()  # populate alert.id
 
-        # Associate triggering events
-        for eid in detection.event_ids:
-            db.add(AlertEvent(alert_id=alert.id, event_id=eid))
+                # Associate triggering events
+                for eid in detection.event_ids:
+                    db.add(AlertEvent(alert_id=alert.id, event_id=eid))
 
-        # Initial history record
-        db.add(
-            AlertHistory(
-                alert_id=alert.id,
-                actor_id="detection_engine",
-                previous_status=None,
-                new_status="OPEN",
-                notes=f"Alert triggered with {len(detection.event_ids)} initial events.",
-            )
-        )
+                # Initial history record
+                db.add(
+                    AlertHistory(
+                        alert_id=alert.id,
+                        actor_id="detection_engine",
+                        previous_status=None,
+                        new_status="OPEN",
+                        notes=f"Alert triggered with {len(detection.event_ids)} initial events.",
+                    )
+                )
 
-        db.commit()
-        db.refresh(alert)
+            db.commit()
+            db.refresh(alert)
+        except IntegrityError:
+            # Fallback if a concurrent sweep created the alert first
+            existing = db.execute(
+                select(Alert).where(
+                    and_(
+                        Alert.dedup_key == detection.dedup_key,
+                        Alert.status.in_(["OPEN", "INVESTIGATING"]),
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing:
+                if existing.first_seen and detection.first_seen:
+                    existing.first_seen = min(existing.first_seen, detection.first_seen)
+                if existing.last_seen and detection.last_seen:
+                    existing.last_seen = max(existing.last_seen, detection.last_seen)
+                db.commit()
+                db.refresh(existing)
+                return existing
+            raise
 
         # Audit log creation
         log_audit_event(

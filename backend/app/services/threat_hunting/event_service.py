@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -17,8 +18,26 @@ from app.services.threat_hunting.normalization import (
 logger = logging.getLogger("threat_hunting.events")
 
 AUDIT_ACTION_MAP = {
-    # Authentication & Authorization
+    # Authentication & Authorization - Failures & Lockouts
     "login_failed": {
+        "event_type": "auth.login_failed",
+        "severity": "HIGH",
+        "source": "auth_service",
+        "resource_type": "user",
+    },
+    "login_failed_incorrect_password": {
+        "event_type": "auth.login_failed",
+        "severity": "HIGH",
+        "source": "auth_service",
+        "resource_type": "user",
+    },
+    "login_failed_nonexistent_user": {
+        "event_type": "auth.login_failed",
+        "severity": "HIGH",
+        "source": "auth_service",
+        "resource_type": "user",
+    },
+    "mfa_failed": {
         "event_type": "auth.login_failed",
         "severity": "HIGH",
         "source": "auth_service",
@@ -30,7 +49,19 @@ AUDIT_ACTION_MAP = {
         "source": "auth_service",
         "resource_type": "user",
     },
+    "login_blocked_locked": {
+        "event_type": "auth.account_locked",
+        "severity": "HIGH",
+        "source": "auth_service",
+        "resource_type": "user",
+    },
     "account_locked": {
+        "event_type": "auth.account_locked",
+        "severity": "HIGH",
+        "source": "auth_service",
+        "resource_type": "user",
+    },
+    "user_lockout_triggered": {
         "event_type": "auth.account_locked",
         "severity": "HIGH",
         "source": "auth_service",
@@ -60,20 +91,38 @@ AUDIT_ACTION_MAP = {
         "source": "auth_service",
         "resource_type": "token",
     },
-    "mfa_failed": {
-        "event_type": "auth.login_failed",
+    "token_reuse_detected": {
+        "event_type": "auth.token_blacklisted_used",
         "severity": "HIGH",
         "source": "auth_service",
-        "resource_type": "user",
+        "resource_type": "token",
     },
-    # ML Infrastructure
+    # ML Infrastructure & Training
     "rayjob_submitted": {
         "event_type": "ml.rayjob_submitted",
         "severity": "LOW",
         "source": "ray_operator",
         "resource_type": "rayjob",
     },
+    "model_training_start": {
+        "event_type": "ml.rayjob_submitted",
+        "severity": "LOW",
+        "source": "ray_operator",
+        "resource_type": "rayjob",
+    },
+    "model_training_initiated": {
+        "event_type": "ml.rayjob_submitted",
+        "severity": "LOW",
+        "source": "ray_operator",
+        "resource_type": "rayjob",
+    },
     "rayjob_submission_failed": {
+        "event_type": "ml.rayjob_failed",
+        "severity": "MEDIUM",
+        "source": "ray_operator",
+        "resource_type": "rayjob",
+    },
+    "model_training_rejected": {
         "event_type": "ml.rayjob_failed",
         "severity": "MEDIUM",
         "source": "ray_operator",
@@ -92,6 +141,12 @@ AUDIT_ACTION_MAP = {
         "source": "lakefs",
         "resource_type": "branch",
     },
+    "dataset_branch_delete": {
+        "event_type": "dataset.branch_deleted",
+        "severity": "HIGH",
+        "source": "lakefs",
+        "resource_type": "branch",
+    },
     "lakefs_branch_deleted": {
         "event_type": "dataset.branch_deleted",
         "severity": "HIGH",
@@ -99,6 +154,12 @@ AUDIT_ACTION_MAP = {
         "resource_type": "branch",
     },
     "dataset_deleted": {
+        "event_type": "dataset.deleted",
+        "severity": "HIGH",
+        "source": "lakefs",
+        "resource_type": "dataset",
+    },
+    "dataset_delete": {
         "event_type": "dataset.deleted",
         "severity": "HIGH",
         "source": "lakefs",
@@ -140,12 +201,22 @@ class SecurityEventService:
             occurrence = occurrence.astimezone(timezone.utc)
 
         redacted_attrs = redact_sensitive_data(event_in.attributes or {})
+        cleaned_actor = (
+            redact_sensitive_data(event_in.actor_id)
+            if isinstance(event_in.actor_id, str)
+            else event_in.actor_id
+        )
+        cleaned_resource = (
+            redact_sensitive_data(event_in.resource_id)
+            if isinstance(event_in.resource_id, str)
+            else event_in.resource_id
+        )
 
         dedup_hash = compute_event_dedup_hash(
             source=event_in.source,
             event_type=event_in.event_type,
-            actor_id=event_in.actor_id,
-            resource_id=event_in.resource_id,
+            actor_id=cleaned_actor,
+            resource_id=cleaned_resource,
             occurrence_time=occurrence,
             attributes=redacted_attrs,
         )
@@ -160,8 +231,8 @@ class SecurityEventService:
         event = SecurityEvent(
             event_type=event_in.event_type,
             source=event_in.source,
-            actor_id=event_in.actor_id,
-            resource_id=event_in.resource_id,
+            actor_id=cleaned_actor,
+            resource_id=cleaned_resource,
             resource_type=event_in.resource_type,
             occurrence_time=occurrence,
             ingestion_time=datetime.now(timezone.utc),
@@ -171,12 +242,13 @@ class SecurityEventService:
             dedup_hash=dedup_hash,
         )
         try:
-            db.add(event)
+            with db.begin_nested():
+                db.add(event)
+                db.flush()
             db.commit()
             db.refresh(event)
             return event
         except IntegrityError:
-            db.rollback()
             existing = db.execute(
                 select(SecurityEvent).where(SecurityEvent.dedup_hash == dedup_hash)
             ).scalar_one_or_none()
@@ -195,11 +267,20 @@ class SecurityEventService:
     ) -> Optional[SecurityEvent]:
         """
         Translates a security audit log event into a normalized SecurityEvent.
+        Guards against recursive audit ingestion loops.
         """
-        mapping = AUDIT_ACTION_MAP.get(action.lower())
+        action_lower = action.lower() if action else ""
+
+        # Loop protection: Ignore audit events generated by internal detection/alerting operations
+        if action_lower.startswith(("alert_", "hunt_", "rule_", "security_event_")):
+            return None
+        if username and username.lower() == "detection_engine":
+            return None
+
+        mapping = AUDIT_ACTION_MAP.get(action_lower)
         if not mapping:
             is_suspicious = any(
-                k in action.lower()
+                k in action_lower
                 for k in (
                     "fail",
                     "unauthoriz",
@@ -215,7 +296,7 @@ class SecurityEventService:
             if not is_suspicious:
                 return None
             mapping = {
-                "event_type": f"audit.{action.lower()}",
+                "event_type": f"audit.{action_lower}",
                 "severity": "MEDIUM",
                 "source": "audit_log",
                 "resource_type": "audit_record",
@@ -224,17 +305,43 @@ class SecurityEventService:
         # Clean actor_id
         actor = username if username and username.lower() not in ("anonymous", "none") else None
 
+        # Extract resource_id from details string if applicable
+        extracted_resource: Optional[str] = None
+        if details:
+            m_branch = re.search(r"branch '([^']+)'", details, re.IGNORECASE)
+            m_dataset = re.search(r"dataset '([^']+)'", details, re.IGNORECASE)
+            m_model = re.search(r"model '([^']+)'", details, re.IGNORECASE)
+            m_job = re.search(r"(?:Job ID:\s*|RayJob\s*)([a-zA-Z0-9_\-]+)", details, re.IGNORECASE)
+
+            res_type = mapping.get("resource_type")
+            if res_type == "branch" and m_branch:
+                extracted_resource = m_branch.group(1)
+            elif res_type == "dataset" and m_dataset:
+                extracted_resource = m_dataset.group(1)
+            elif res_type == "model" and m_model:
+                extracted_resource = m_model.group(1)
+            elif res_type == "rayjob" and m_job:
+                extracted_resource = m_job.group(1)
+            elif m_branch:
+                extracted_resource = m_branch.group(1)
+            elif m_dataset:
+                extracted_resource = m_dataset.group(1)
+            elif m_model:
+                extracted_resource = m_model.group(1)
+            elif m_job:
+                extracted_resource = m_job.group(1)
+
         event_in = SecurityEventCreate(
             event_type=mapping["event_type"],
             source=mapping["source"],
             actor_id=actor,
             resource_type=mapping["resource_type"],
-            resource_id=None,
+            resource_id=extracted_resource,
             severity=mapping["severity"],
             attributes={
                 "audit_action": action,
                 "ip_address": ip_address,
-                "details": details,
+                "details": redact_sensitive_data(details) if isinstance(details, str) else details,
                 "request_id": request_id,
             },
             correlation_id=request_id,

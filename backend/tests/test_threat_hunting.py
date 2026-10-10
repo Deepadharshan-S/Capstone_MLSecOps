@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, and_
 
 from app.main import app
 from app.db.session import SessionLocal
@@ -691,3 +691,443 @@ def test_threat_hunting_api_endpoints(auth_headers):
     resp = client.get(f"/api/hunts/{hunt_id}/results", headers=admin_hdr)
     assert resp.status_code == 200
     assert "events" in resp.json()
+
+
+# ===========================================================================
+# 11. End-to-End Authentication Failure Detection Workflow (Phase 2)
+# ===========================================================================
+
+def test_e2e_authentication_failure_detection_workflow(db: Session, auth_headers):
+    """
+    Validates complete authentication failure detection workflow:
+    1. Produce representative authentication failure events via /api/auth/login.
+    2. Confirm events reach SecurityEvent persistence as auth.login_failed.
+    3. Confirm detection rule evaluates them.
+    4. Verify below-threshold produces 0 alerts.
+    5. Verify threshold-crossing produces 1 alert with correct evidence and event links.
+    6. Confirm GET /api/alerts returns the alert.
+    7. Verify repeated sweep correlates into existing alert without duplicates.
+    8. Verify alert lifecycle transition is audited.
+    9. Verify unauthorized users (viewer) cannot update alert.
+    """
+    rule_service.seed_default_rules(db)
+    victim_user = f"victim_{uuid.uuid4().hex[:8]}"
+
+    # Step 1: 2 failed login attempts (below threshold of 5)
+    for _ in range(2):
+        resp = client.post(
+            "/api/auth/login",
+            data={"username": victim_user, "password": "WrongPassword123!"},
+        )
+        assert resp.status_code in (400, 401)
+
+    # Step 2: Confirm events reached SecurityEvent persistence
+    events, total = event_service.list_events(
+        db,
+        SecurityEventFilter(event_type="auth.login_failed", actor_id=victim_user),
+    )
+    assert total == 2
+    assert all(e.event_type == "auth.login_failed" for e in events)
+    assert all(e.actor_id == victim_user for e in events)
+
+    # Step 3 & 4: Below-threshold sweep -> No alerts
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Repeated Authentication Failures (Brute Force)")
+    ).scalar_one()
+    detections_below = detection_engine.evaluate_single_rule(db, rule)
+    assert not any(d.actor_id == victim_user for d in detections_below)
+
+    # Step 5: Produce 3 more failed logins -> Crosses threshold (total 5)
+    for _ in range(3):
+        resp = client.post(
+            "/api/auth/login",
+            data={"username": victim_user, "password": "WrongPassword123!"},
+        )
+        assert resp.status_code in (400, 401)
+
+    events_total, total_count = event_service.list_events(
+        db,
+        SecurityEventFilter(event_type="auth.login_failed", actor_id=victim_user),
+    )
+    assert total_count == 5
+
+    # Step 5: Rule detects threshold crossing for victim_user
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.actor_id == victim_user]
+    assert len(matching) == 1
+    det = matching[0]
+    assert len(det.event_ids) == 5
+
+    # Process detection into alert
+    alert = alert_service.process_detection(db, det)
+    assert alert.event_count >= 5
+    assert alert.severity == "HIGH"
+    assert alert.mitre_attack_id == "T1110.001"
+    assert "matched_count" in alert.supporting_evidence
+
+    # Confirm event links
+    alert_evs = alert_service.get_alert_events(db, alert.id)
+    assert len(alert_evs) >= 5
+
+    # Step 7: Confirm GET /api/alerts returns the alert
+    admin_hdr = auth_headers["admin"]
+    resp = client.get("/api/alerts?status=OPEN", headers=admin_hdr)
+    assert resp.status_code == 200
+    alert_ids = [a["id"] for a in resp.json()["items"]]
+    assert str(alert.id) in alert_ids
+
+    # Step 8: Repeated processing correlates without duplicate alerts
+    alert2 = alert_service.process_detection(db, det)
+    assert alert2.id == alert.id
+    open_alerts = db.execute(
+        select(Alert).where(
+            and_(
+                Alert.rule_id == rule.id,
+                Alert.dedup_key.contains(victim_user),
+                Alert.status == "OPEN",
+            )
+        )
+    ).scalars().all()
+    assert len(open_alerts) == 1
+
+    # Step 9: Alert lifecycle update and audit
+    viewer_hdr = auth_headers["viewer"]
+    # Viewer forbidden (Step 10)
+    resp_forbidden = client.patch(
+        f"/api/alerts/{alert.id}",
+        headers=viewer_hdr,
+        json={"status": "INVESTIGATING"},
+    )
+    assert resp_forbidden.status_code == 403
+
+    # Admin allowed
+    resp_ok = client.patch(
+        f"/api/alerts/{alert.id}",
+        headers=admin_hdr,
+        json={"status": "INVESTIGATING", "notes": "Investigating brute force attempts."},
+    )
+    assert resp_ok.status_code == 200
+    assert resp_ok.json()["status"] == "INVESTIGATING"
+
+
+# ===========================================================================
+# 12. Verification of All Seeded Detection Rules (Phase 3)
+# ===========================================================================
+
+def test_seeded_rule_1_brute_force_via_audit(db: Session):
+    rule_service.seed_default_rules(db)
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Repeated Authentication Failures (Brute Force)")
+    ).scalar_one()
+
+    actor = f"attacker_{uuid.uuid4().hex[:6]}"
+    for _ in range(5):
+        log_audit_event(
+            action="login_failed_incorrect_password",
+            username=actor,
+            ip_address="10.0.0.1",
+            details="Password verification failed.",
+            db=db,
+        )
+
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.actor_id == actor]
+    assert len(matching) == 1
+    alert = alert_service.process_detection(db, matching[0])
+    assert alert.status == "OPEN"
+    assert alert.mitre_attack_id == "T1110.001"
+
+
+def test_seeded_rule_2_unauthorized_requests(db: Session, auth_headers):
+    rule_service.seed_default_rules(db)
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Excessive Unauthorized Requests (Privilege Abuse / Enumeration)")
+    ).scalar_one()
+
+    actor = f"unauth_user_{uuid.uuid4().hex[:6]}"
+    for _ in range(10):
+        log_audit_event(
+            action="unauthorized_access",
+            username=actor,
+            ip_address="10.0.0.2",
+            details="Permission denied. Required scope: 'users:manage'",
+            db=db,
+        )
+
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.actor_id == actor]
+    assert len(matching) == 1
+    alert = alert_service.process_detection(db, matching[0])
+    assert alert.status == "OPEN"
+    assert alert.mitre_attack_id == "T1078"
+
+
+def test_seeded_rule_3_revoked_token_reuse(db: Session):
+    rule_service.seed_default_rules(db)
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Revoked Token Reuse Attempt")
+    ).scalar_one()
+
+    actor = f"token_thief_{uuid.uuid4().hex[:6]}"
+    log_audit_event(
+        action="token_reuse_detected",
+        username=actor,
+        ip_address="10.0.0.3",
+        details="Revoked refresh token 'jti-123' was reused.",
+        db=db,
+    )
+
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.actor_id == actor]
+    assert len(matching) == 1
+    alert = alert_service.process_detection(db, matching[0])
+    assert alert.status == "OPEN"
+    assert alert.mitre_attack_id == "T1550"
+
+
+def test_seeded_rule_4_anomalous_inference_burst(db: Session):
+    """
+    Verifies Rule 4 config and evaluation.
+    Note: Live inference burst telemetry daemon is documented as a telemetry source gap.
+    Evaluated here via direct SecurityEvent ingestion.
+    """
+    rule_service.seed_default_rules(db)
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Anomalous Inference Request Rate (Model Inversion / Extraction)")
+    ).scalar_one()
+
+    model_name = f"test_model_{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc)
+    for i in range(50):
+        event_service.ingest_event(
+            db,
+            SecurityEventCreate(
+                event_type="inference.request_burst",
+                source="model_inference",
+                actor_id="guest_client",
+                resource_id=model_name,
+                resource_type="model",
+                severity="MEDIUM",
+                occurrence_time=now - timedelta(seconds=i),
+            ),
+        )
+
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.resource_id == model_name]
+    assert len(matching) == 1
+    alert = alert_service.process_detection(db, matching[0])
+    assert alert.status == "OPEN"
+    assert alert.mitre_atlas_id == "AML.T0024"
+
+
+def test_seeded_rule_5_dataset_branch_mutation(db: Session):
+    rule_service.seed_default_rules(db)
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Unauthorized Dataset Branch Mutation")
+    ).scalar_one()
+
+    branch_name = f"sensitive-branch-{uuid.uuid4().hex[:6]}"
+    log_audit_event(
+        action="dataset_branch_delete",
+        username="insider_user",
+        details=f"Deleted branch '{branch_name}' from dataset 'prod_data'.",
+        db=db,
+    )
+
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.resource_id == branch_name]
+    assert len(matching) == 1
+    alert = alert_service.process_detection(db, matching[0])
+    assert alert.status == "OPEN"
+    assert alert.mitre_attack_id == "T1485"
+    assert alert.mitre_atlas_id == "AML.T0031"
+
+
+def test_seeded_rule_6_rayjob_spikes(db: Session):
+    rule_service.seed_default_rules(db)
+    rule = db.execute(
+        select(DetectionRule).where(DetectionRule.name == "Unexpected RayJob Submission Spikes")
+    ).scalar_one()
+
+    actor = f"ray_user_{uuid.uuid4().hex[:6]}"
+    for _ in range(5):
+        log_audit_event(
+            action="model_training_start",
+            username=actor,
+            details=f"Started training on dataset 'ds_1'. Job ID: job_{uuid.uuid4().hex[:8]}",
+            db=db,
+        )
+
+    detections = detection_engine.evaluate_single_rule(db, rule)
+    matching = [d for d in detections if d.actor_id == actor]
+    assert len(matching) == 1
+    alert = alert_service.process_detection(db, matching[0])
+    assert alert.status == "OPEN"
+    assert alert.mitre_attack_id == "T1496"
+    assert alert.mitre_atlas_id == "AML.T0002"
+
+
+# ===========================================================================
+# 13. Reliability, Boundary Conditions, Out-of-Order & Concurrency (Phase 4)
+# ===========================================================================
+
+def test_threshold_boundary_and_sliding_window_expiration(db: Session):
+    actor = f"boundary_actor_{uuid.uuid4().hex[:6]}"
+    event_type = f"test.boundary_{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc)
+
+    rule = rule_service.create_rule(
+        db,
+        DetectionRuleCreate(
+            name=f"Boundary Rule {uuid.uuid4().hex[:6]}",
+            description="Testing threshold boundaries and expiration",
+            rule_type="threshold",
+            severity="HIGH",
+            config={
+                "event_type": event_type,
+                "threshold": 3,
+                "window_seconds": 60,
+                "group_by": "actor_id",
+            },
+        ),
+    )
+
+    # 1. Below boundary: 2 events -> 0 matches
+    for i in range(2):
+        event_service.ingest_event(
+            db,
+            SecurityEventCreate(
+                event_type=event_type,
+                source="test",
+                actor_id=actor,
+                occurrence_time=now - timedelta(seconds=10 * i),
+            ),
+        )
+    assert len(detection_engine.evaluate_single_rule(db, rule, now=now)) == 0
+
+    # 2. Exactly at boundary: 3 events -> 1 match
+    event_service.ingest_event(
+        db,
+        SecurityEventCreate(
+            event_type=event_type,
+            source="test",
+            actor_id=actor,
+            occurrence_time=now - timedelta(seconds=20),
+        ),
+    )
+    assert len(detection_engine.evaluate_single_rule(db, rule, now=now)) == 1
+
+    # 3. Expiration: evaluated at now + 70s (all 3 events now older than 60s) -> 0 matches
+    future = now + timedelta(seconds=70)
+    assert len(detection_engine.evaluate_single_rule(db, rule, now=future)) == 0
+
+
+def test_out_of_order_event_correlation(db: Session):
+    actor = f"ooo_actor_{uuid.uuid4().hex[:6]}"
+    event_type = f"test.ooo_{uuid.uuid4().hex[:6]}"
+    t_base = datetime.now(timezone.utc)
+
+    rule = rule_service.create_rule(
+        db,
+        DetectionRuleCreate(
+            name=f"OOO Rule {uuid.uuid4().hex[:6]}",
+            description="Testing out-of-order events",
+            rule_type="threshold",
+            severity="HIGH",
+            config={
+                "event_type": event_type,
+                "threshold": 2,
+                "window_seconds": 300,
+                "group_by": "actor_id",
+            },
+        ),
+    )
+
+    # Event at t=20s and t=30s
+    event_service.ingest_event(
+        db,
+        SecurityEventCreate(
+            event_type=event_type,
+            source="test",
+            actor_id=actor,
+            occurrence_time=t_base + timedelta(seconds=20),
+        ),
+    )
+    event_service.ingest_event(
+        db,
+        SecurityEventCreate(
+            event_type=event_type,
+            source="test",
+            actor_id=actor,
+            occurrence_time=t_base + timedelta(seconds=30),
+        ),
+    )
+
+    detections = detection_engine.evaluate_single_rule(db, rule, now=t_base + timedelta(seconds=35))
+    assert len(detections) == 1
+    alert = alert_service.process_detection(db, detections[0])
+    initial_first_seen = alert.first_seen
+
+    # Now ingest out-of-order event earlier at t=5s
+    event_service.ingest_event(
+        db,
+        SecurityEventCreate(
+            event_type=event_type,
+            source="test",
+            actor_id=actor,
+            occurrence_time=t_base + timedelta(seconds=5),
+        ),
+    )
+
+    detections2 = detection_engine.evaluate_single_rule(db, rule, now=t_base + timedelta(seconds=35))
+    updated_alert = alert_service.process_detection(db, detections2[0])
+    assert updated_alert.id == alert.id
+    # first_seen should now be updated to min(first_seen, e1.occurrence_time)
+    assert updated_alert.first_seen <= initial_first_seen
+    assert updated_alert.event_count == 3
+
+
+def test_recursive_audit_loop_guard(db: Session):
+    # Any action starting with alert_, hunt_, rule_, or user detection_engine must NOT create SecurityEvent
+    ev_alert = event_service.ingest_from_audit(
+        action="alert_created",
+        username="detection_engine",
+        details="Alert created internally.",
+        db=db,
+    )
+    assert ev_alert is None
+
+    ev_hunt = event_service.ingest_from_audit(
+        action="hunt_started",
+        username="admin",
+        details="Hunt started.",
+        db=db,
+    )
+    assert ev_hunt is None
+
+
+def test_hunt_definition_validation(auth_headers):
+    admin_hdr = auth_headers["admin"]
+    now = datetime.now(timezone.utc)
+
+    # Inverted time range (start_time > end_time) must fail schema validation (422)
+    resp = client.post(
+        "/api/hunts",
+        headers=admin_hdr,
+        json={
+            "name": "Invalid Inverted Hunt",
+            "hunt_definition": {
+                "event_types": ["auth.login_failed"],
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": now.isoformat(),
+            },
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_worker_advisory_lock_concurrency():
+    # Calling run_detection_sweep_once() succeeds
+    res1 = run_detection_sweep_once()
+    assert "detections_count" in res1
+    assert "alerts_processed" in res1

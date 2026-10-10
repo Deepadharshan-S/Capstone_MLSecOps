@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session
 from app.models.training_job import TrainingJob
 from app.models.user import User
 from app.schemas.ml_ops.training import JobStatusResponse
+from app.core.telemetry import (
+    record_training_job_completed,
+    record_training_duration,
+)
 
 logger = logging.getLogger("job_service")
 
@@ -203,6 +207,9 @@ class JobService:
                                 ray_svc.cleanup_job_resources(clean_id)
                             except Exception as clean_err:
                                 logger.debug(f"Failed to clean up k8s resources for job {clean_id}: {clean_err}")
+                            record_training_job_completed(status=norm)
+                            if job.duration_seconds is not None:
+                                record_training_duration(job.duration_seconds)
                         try:
                             db.commit()
                             db.refresh(job)
@@ -239,6 +246,9 @@ class JobService:
                 RayJobService().cleanup_job_resources(clean_id)
             except Exception as clean_err:
                 logger.debug(f"Failed to clean up k8s resources for job {clean_id}: {clean_err}")
+            record_training_job_completed(status=new_status)
+            if job.duration_seconds is not None:
+                record_training_duration(job.duration_seconds)
             try:
                 db.commit()
                 db.refresh(job)
@@ -422,9 +432,11 @@ class JobService:
             if s == "completed":
                 job.status = "SUCCEEDED"
                 job.completed_at = datetime.now(timezone.utc)
+                record_training_job_completed(status="SUCCEEDED")
             elif s == "failed":
                 job.status = "FAILED"
                 job.completed_at = datetime.now(timezone.utc)
+                record_training_job_completed(status="FAILED")
             else:
                 job.status = status_val.upper()
 
@@ -455,6 +467,10 @@ class JobService:
         elif metrics.get("training_duration_seconds"):
             job.duration_seconds = float(metrics["training_duration_seconds"])
 
+        record_training_job_completed(status="SUCCEEDED")
+        if job.duration_seconds is not None:
+            record_training_duration(job.duration_seconds)
+
         db.commit()
         db.refresh(job)
         _save_results_file(clean_id, metrics)
@@ -483,6 +499,10 @@ class JobService:
         job.completed_at = datetime.now(timezone.utc)
         if job.started_at:
             job.duration_seconds = round((job.completed_at - job.started_at).total_seconds(), 2)
+
+        record_training_job_completed(status="FAILED")
+        if job.duration_seconds is not None:
+            record_training_duration(job.duration_seconds)
 
         db.commit()
         db.refresh(job)

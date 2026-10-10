@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ============================================================================
@@ -210,6 +210,12 @@ class HuntDefinition(BaseModel):
     end_time: datetime
     attribute_filters: dict[str, Any] = Field(default_factory=dict)
     limit: int = Field(100, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "HuntDefinition":
+        if self.start_time > self.end_time:
+            raise ValueError("start_time cannot be after end_time")
+        return self
 
 
 class HuntJobCreate(BaseModel):

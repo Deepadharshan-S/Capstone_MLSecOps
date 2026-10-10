@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Callable, Optional
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -10,6 +11,8 @@ from app.services.threat_hunting.detection_engine import detection_engine
 
 logger = logging.getLogger("threat_hunting.worker")
 
+DETECTION_WORKER_ADVISORY_LOCK_ID = 88291039
+
 
 def run_detection_sweep_once(
     db_session_factory: Callable[[], Session] = SessionLocal,
@@ -17,13 +20,33 @@ def run_detection_sweep_once(
     """
     Executes a single detection cycle across all enabled rules with database session safety:
     1. Acquires a dedicated database session.
-    2. Runs detection_engine.evaluate_all_rules(db).
-    3. Feeds results to alert_service.process_detection(db).
-    4. Guarantees rollback upon unhandled exception.
-    5. Guarantees session closure in a finally block to prevent connection leaks.
+    2. Acquires a PostgreSQL advisory lock (if PG) to prevent worker duplication across instances.
+    3. Runs detection_engine.evaluate_all_rules(db).
+    4. Feeds results to alert_service.process_detection(db).
+    5. Guarantees rollback upon unhandled exception.
+    6. Guarantees session closure and advisory lock release in a finally block to prevent connection leaks.
     """
     db = db_session_factory()
+    raw_conn = None
+    lock_acquired = False
     try:
+        bind = db.get_bind()
+        if bind and bind.dialect.name == "postgresql":
+            raw_conn = bind.connect()
+            lock_res = raw_conn.execute(
+                text(f"SELECT pg_try_advisory_lock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
+            ).scalar()
+            if not lock_res:
+                logger.debug("Another detection worker instance holds the advisory lock; skipping sweep.")
+                raw_conn.close()
+                raw_conn = None
+                return {
+                    "detections_count": 0,
+                    "alerts_processed": 0,
+                    "skipped": True,
+                }
+            lock_acquired = True
+
         detections = detection_engine.evaluate_all_rules(db)
         alerts_created_or_updated = 0
         for d in detections:
@@ -51,6 +74,16 @@ def run_detection_sweep_once(
             pass
         raise
     finally:
+        if raw_conn:
+            try:
+                if lock_acquired:
+                    raw_conn.execute(
+                        text(f"SELECT pg_advisory_unlock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
+                    )
+            except Exception:
+                pass
+            finally:
+                raw_conn.close()
         db.close()
 
 
