@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -213,7 +213,13 @@ class HuntDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "HuntDefinition":
-        if self.start_time > self.end_time:
+        st = self.start_time
+        et = self.end_time
+        if st.tzinfo is None:
+            st = st.replace(tzinfo=timezone.utc)
+        if et.tzinfo is None:
+            et = et.replace(tzinfo=timezone.utc)
+        if st > et:
             raise ValueError("start_time cannot be after end_time")
         return self
 

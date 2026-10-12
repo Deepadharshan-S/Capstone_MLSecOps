@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,14 @@ VALID_STATUS_TRANSITIONS = {
 }
 
 
+def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class AlertService:
     """
     Manages security alert creation, correlation, deduplication, and investigation lifecycle.
@@ -36,6 +44,15 @@ class AlertService:
         Processes a detection result: correlates with existing active alerts or creates a new one.
         Handles concurrent execution safely within a database transaction and out-of-order events.
         """
+        # Serialize concurrent alert creation per correlation key on PostgreSQL
+        if detection.dedup_key:
+            bind = db.get_bind()
+            if bind and bind.dialect.name == "postgresql":
+                db.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                    {"key": f"alert_dedup:{detection.dedup_key}"},
+                )
+
         # Look for existing active alert with matching dedup_key
         existing_alert = db.execute(
             select(Alert).where(
@@ -47,11 +64,17 @@ class AlertService:
         ).scalar_one_or_none()
 
         if existing_alert:
-            # Correlate & update existing alert (support out-of-order events)
-            if existing_alert.first_seen and detection.first_seen:
-                existing_alert.first_seen = min(existing_alert.first_seen, detection.first_seen)
-            if existing_alert.last_seen and detection.last_seen:
-                existing_alert.last_seen = max(existing_alert.last_seen, detection.last_seen)
+            # Correlate & update existing alert (support out-of-order events with timezone safety)
+            t_first_existing = _to_utc(existing_alert.first_seen)
+            t_first_detection = _to_utc(detection.first_seen)
+            if t_first_existing and t_first_detection:
+                existing_alert.first_seen = min(t_first_existing, t_first_detection)
+
+            t_last_existing = _to_utc(existing_alert.last_seen)
+            t_last_detection = _to_utc(detection.last_seen)
+            if t_last_existing and t_last_detection:
+                existing_alert.last_seen = max(t_last_existing, t_last_detection)
+
             existing_alert.supporting_evidence = detection.supporting_evidence
             existing_alert.rule_version = detection.rule_version
 
@@ -123,10 +146,15 @@ class AlertService:
                 )
             ).scalar_one_or_none()
             if existing:
-                if existing.first_seen and detection.first_seen:
-                    existing.first_seen = min(existing.first_seen, detection.first_seen)
-                if existing.last_seen and detection.last_seen:
-                    existing.last_seen = max(existing.last_seen, detection.last_seen)
+                t_first_existing = _to_utc(existing.first_seen)
+                t_first_detection = _to_utc(detection.first_seen)
+                if t_first_existing and t_first_detection:
+                    existing.first_seen = min(t_first_existing, t_first_detection)
+
+                t_last_existing = _to_utc(existing.last_seen)
+                t_last_detection = _to_utc(detection.last_seen)
+                if t_last_existing and t_last_detection:
+                    existing.last_seen = max(t_last_existing, t_last_detection)
                 db.commit()
                 db.refresh(existing)
                 return existing
