@@ -30,7 +30,7 @@ from app.services.threat_hunting.event_service import event_service
 from app.services.threat_hunting.hunt_service import hunt_service
 from app.services.threat_hunting.rule_service import rule_service
 
-router = APIRouter()
+router = APIRouter(tags=["threat_hunting"])
 
 
 # ============================================================================
