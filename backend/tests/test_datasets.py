@@ -164,14 +164,14 @@ def test_dataset_lifecycle(user_tokens):
     )
     assert resp.status_code == 403
 
-    # Data Scientist uploads file
+    # Data Scientist direct upload to protected main is blocked (400 Bad Request)
     resp = client.post(
         f"/api/datasets/{dataset_name}/upload?branch=main",
         files={"file": ("data.csv", file_content)},
         headers=ds_headers
     )
-    assert resp.status_code == 200
-    assert resp.json()["path"] == file_path
+    assert resp.status_code == 400
+    assert "protected against direct writes" in resp.json()["detail"]
 
     # 4. Commit data (RBAC: ds_user/admin can, viewer cannot)
     commit_payload = {
@@ -559,6 +559,27 @@ def test_dataset_branching_and_tagging_lifecycle(user_tokens):
         headers=ds_headers,
     )
     assert resp.status_code == 200
+
+    # 6a. Upload using multipart form data branch (as frontend sends)
+    form_file = ("feature_form.csv", b"feat_a,feat_b\n5,6\n7,8")
+    resp_form = client.post(
+        f"/api/datasets/{dataset_name}/upload",
+        data={"branch": "feature-exp"},
+        files={"file": form_file},
+        headers=ds_headers,
+    )
+    assert resp_form.status_code == 200
+
+    # 6b. Upload using multipart form data targeting protected 'main' is rejected with 400
+    main_file = ("main_file.csv", b"feat_a,feat_b\n9,10\n11,12")
+    resp_main = client.post(
+        f"/api/datasets/{dataset_name}/upload",
+        data={"branch": "main"},
+        files={"file": main_file},
+        headers=ds_headers,
+    )
+    assert resp_main.status_code == 400
+    assert "protected against direct writes" in resp_main.json()["detail"]
 
     resp = client.post(
         f"/api/datasets/{dataset_name}/commit?branch=feature-exp",

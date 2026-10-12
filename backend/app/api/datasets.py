@@ -207,7 +207,8 @@ def delete_dataset(
 )
 def upload_file(
     dataset_name: str,
-    branch: Optional[str] = "main",
+    branch: Optional[str] = Query(None),
+    branch_form: Optional[str] = Form(None, alias="branch"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
@@ -216,8 +217,8 @@ def upload_file(
     """
     Uploads a file to the lakeFS repository via streaming.
     If the target branch is protected against direct writes (e.g. 'main'),
-    automatically routes the upload to an isolated staging branch to protect
-    baseline integrity until pre-merge validation.
+    rejects direct writes with HTTP 400 so changes must be pushed to a feature
+    branch and validated before merging.
     """
     file_path = file.filename
     if not file_path:
@@ -226,19 +227,16 @@ def upload_file(
             detail="Uploaded file must have a valid filename.",
         )
 
-    target_branch = branch or "main"
+    target_branch = branch_form or branch or "main"
     protected_rules = data_service.get_branch_protection(db, dataset_name=dataset_name)
     if target_branch in protected_rules:
-        import uuid
-        staging_branch = f"staging-{user.username}-{uuid.uuid4().hex[:8]}"
-        data_service.create_branch(
-            db=db,
-            dataset_name=dataset_name,
-            branch_name=staging_branch,
-            source_branch=target_branch,
-            username=user.username,
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Branch '{target_branch}' is protected against direct writes. "
+                f"Please create or select a feature branch to upload files, then merge into '{target_branch}'."
+            ),
         )
-        target_branch = staging_branch
 
     return data_service.upload_file(
         db=db,

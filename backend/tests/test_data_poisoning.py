@@ -912,15 +912,16 @@ hooks:
             pass
 
 
-def test_dataset_api_merge_and_transparent_staging_routing(admin_headers, db):
+def test_dataset_api_protected_branch_upload_rejection_and_merge_lifecycle(admin_headers, db):
     """
-    Tests dataset API transparent staging routing, merge endpoint, and staging branch pruning:
+    Tests dataset API branch protection enforcement, merge endpoint, and staging branch pruning:
     1. Register dataset via POST /api/datasets (safe bootstrap installs action and arms protection).
     2. Upload file via POST /api/datasets/{name}/upload with branch='main'.
-       Verify upload is automatically routed to an isolated staging branch without 403 error.
-    3. Commit changes on that staging branch.
-    4. Call POST /api/datasets/{name}/merge to merge staging branch into main.
-    5. Verify merge completes and staging branch is pruned (OPS-02).
+       Verify upload directly to protected main is rejected with HTTP 400 Bad Request.
+    3. Create a feature staging branch 'staging-api-clean' from 'main'.
+    4. Upload candidate data to 'staging-api-clean' and commit.
+    5. Call POST /api/datasets/{name}/merge to merge staging branch into main.
+    6. Verify merge completes and staging branch is pruned (OPS-02).
     """
     dataset_name = f"test-ds-api-{uuid.uuid4().hex[:8]}"
 
@@ -939,20 +940,35 @@ def test_dataset_api_merge_and_transparent_staging_routing(admin_headers, db):
         rules = data_service.get_branch_protection(db, dataset_name=dataset_name)
         assert "main" in rules
 
-        # 2. Transparent upload: target main, should be routed to staging-...
+        # 2. Attempt direct upload to protected main -> must be rejected with 400 Bad Request
         update_csv = b"feat_a,target\n1.1,0\n2.1,1\n3.1,0\n4.1,1\n"
         upload_resp = client.post(
-            f"/api/datasets/{dataset_name}/upload",
-            data={"branch": "main"},
+            f"/api/datasets/{dataset_name}/upload?branch=main",
             files={"file": ("dataset.csv", update_csv, "text/csv")},
             headers=admin_headers,
         )
-        assert upload_resp.status_code == 200
-        staging_branch = upload_resp.json()["branch"]
-        assert staging_branch.startswith("staging-")
-        assert staging_branch != "main"
+        assert upload_resp.status_code == 400
+        assert "protected against direct writes" in upload_resp.json()["detail"]
 
-        # 3. Commit on staging branch
+        # 3. Create feature staging branch from main
+        staging_branch = "staging-api-clean"
+        branch_resp = client.post(
+            f"/api/datasets/{dataset_name}/branches",
+            json={"branch_name": staging_branch, "source_branch": "main"},
+            headers=admin_headers,
+        )
+        assert branch_resp.status_code == 201
+
+        # 4. Upload file to staging branch
+        upload_staging_resp = client.post(
+            f"/api/datasets/{dataset_name}/upload?branch={staging_branch}",
+            files={"file": ("dataset.csv", update_csv, "text/csv")},
+            headers=admin_headers,
+        )
+        assert upload_staging_resp.status_code == 200
+        assert upload_staging_resp.json()["branch"] == staging_branch
+
+        # 5. Commit on staging branch
         commit_resp = client.post(
             f"/api/datasets/{dataset_name}/commit?branch={staging_branch}",
             json={"message": "Commit staging batch"},
