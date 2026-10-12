@@ -68,7 +68,7 @@ DEFAULT_RULES = [
     },
     {
         "name": "Anomalous Inference Request Rate (Model Inversion / Extraction)",
-        "description": "Detects an unexpected burst of inference predictions against a deployed model exceeding standard baseline.",
+        "description": "Detects an unexpected burst of inference predictions against a deployed model exceeding standard baseline (50 requests/min).",
         "rule_type": "threshold",
         "severity": "MEDIUM",
         "is_enabled": True,
@@ -76,7 +76,7 @@ DEFAULT_RULES = [
         "mitre_atlas_id": "AML.T0024",
         "config": {
             "event_type": "inference.request_burst",
-            "threshold": 50,
+            "threshold": 1,
             "window_seconds": 60,
             "group_by": "resource_id",
             "match_attributes": {},
@@ -230,9 +230,16 @@ class DetectionRuleService:
                 )
                 db.add(rule)
                 created += 1
+            elif existing.created_by == "system":
+                # Ensure canonical system rules stay synchronized with default configs
+                if existing.config != r_data["config"] or existing.description != r_data["description"]:
+                    existing.config = r_data["config"]
+                    existing.description = r_data["description"]
+                    existing.version += 1
+                    created += 1
         if created > 0:
             db.commit()
-            logger.info(f"Seeded {created} default detection rules.")
+            logger.info(f"Seeded or updated {created} default detection rules.")
         return created
 
     def test_rule(

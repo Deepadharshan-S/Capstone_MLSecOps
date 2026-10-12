@@ -13,6 +13,7 @@ from app.models.threat_hunting import (
     AlertEvent,
     AlertHistory,
     HuntJob,
+    InferenceRateRecord,
 )
 
 __all__ = [
@@ -29,4 +30,6 @@ __all__ = [
     "AlertEvent",
     "AlertHistory",
     "HuntJob",
+    "InferenceRateRecord",
 ]
+

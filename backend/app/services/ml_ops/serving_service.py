@@ -9,6 +9,7 @@ import re
 from typing import Optional
 
 import pandas as pd
+from sqlalchemy.orm import Session
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
@@ -127,12 +128,36 @@ class ModelServingService:
         data: dict,
         user: User,
         version: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> dict:
         """
         Executes real-time inference against the deployed model.
         Routes request directly to the active live Kubernetes RayService endpoint.
         Returns 503 with Retry-After header if the RayService is initializing or offline.
         """
+        # Record request telemetry and evaluate bounded sliding-window burst rate (AML.T0024)
+        try:
+            from app.services.threat_hunting.inference_detector import inference_rate_detector
+            from app.db.session import SessionLocal
+
+            caller_user = getattr(user, "username", "anonymous")
+            if db is not None:
+                inference_rate_detector.record_and_check_burst(
+                    db=db,
+                    actor_id=caller_user,
+                    resource_id=str(model_name_or_id),
+                )
+            else:
+                with SessionLocal() as db_session:
+                    inference_rate_detector.record_and_check_burst(
+                        db=db_session,
+                        actor_id=caller_user,
+                        resource_id=str(model_name_or_id),
+                    )
+                    db_session.commit()
+        except Exception as det_err:
+            logger.debug(f"Non-fatal inference telemetry notice: {det_err}")
+
         batch_size = 1
         if isinstance(data, dict):
             if "dataframe_records" in data and data["dataframe_records"] is not None:

@@ -390,6 +390,7 @@ def predict_model(
     version: Optional[str] = None,
     user: User = Security(get_current_active_user, scopes=["models:view"]),
     serving_service: ModelServingService = Depends(get_model_serving_service),
+    db: Session = Depends(get_db),
 ):
     """
     Executes real-time inference on a registered/deployed model.
@@ -402,6 +403,7 @@ def predict_model(
         data=data,
         user=user,
         version=version,
+        db=db,
     )
 
 
@@ -415,6 +417,7 @@ def predict_deployment(
     payload: PredictionRequestSchema,
     user: User = Security(get_current_active_user, scopes=["models:view"]),
     serving_service: ModelServingService = Depends(get_model_serving_service),
+    db: Session = Depends(get_db),
 ):
     """
     Executes real-time inference against a specific deployment ID.
@@ -425,6 +428,7 @@ def predict_deployment(
         model_name_or_id=deployment_id,
         data=data,
         user=user,
+        db=db,
     )
 
 

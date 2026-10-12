@@ -431,3 +431,36 @@ class HuntJob(BaseModel):
         nullable=False,
         default=dict,
     )
+
+
+class InferenceRateRecord(BaseModel):
+    """
+    Shared sliding-window request telemetry for inference endpoints across uvicorn workers.
+    Records authenticated actor, target model resource, and occurrence timestamp.
+    Bounded and automatically pruned.
+    """
+    __tablename__ = "inference_rate_records"
+
+    actor_id: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    resource_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    occurrence_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+
+    __table_args__ = (
+        Index("ix_inference_rate_resource_time", "resource_id", "occurrence_time"),
+        Index("ix_inference_rate_actor_time", "actor_id", "occurrence_time"),
+    )
+
