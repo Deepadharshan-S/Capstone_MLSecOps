@@ -68,6 +68,20 @@ class Settings(BaseSettings):
     LAKEFS_SECRET_ACCESS_KEY: str
     LAKEFS_DEFAULT_BRANCH: str = "main"
     LAKEFS_INTERNAL_ENDPOINT: Optional[str] = None
+    LAKEFS_WEBHOOK_URL: str = "http://host.docker.internal:8001/api/webhooks/lakefs/data-validation"
+    LAKEFS_WEBHOOK_SECRET: str = "sentinelml-dev-webhook-secret-key-32b"
+
+    # Statistical Poisoning Gate Settings
+    POISONING_DETECTION_ENABLED: bool = True
+    POISONING_KS_ALPHA: float = 0.01
+    POISONING_KS_D_THRESHOLD: float = 0.15
+    POISONING_CHI2_ALPHA: float = 0.01
+    POISONING_PSI_THRESHOLD: float = 0.25
+    POISONING_MAX_FILE_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 MB
+    POISONING_MAX_SAMPLE_ROWS: int = 50_000
+    POISONING_ALLOW_NEW_COLUMNS: bool = False
+    POISONING_ALLOW_NEW_DATASET_FILES: bool = False
+    POISONING_ALLOW_QUERY_PARAM_AUTH: bool = False
 
     # MinIO config
     MINIO_ENDPOINT: str = "http://localhost:9000"

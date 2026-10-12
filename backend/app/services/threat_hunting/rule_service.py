@@ -114,6 +114,22 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Statistical Data Poisoning on Dataset Merge",
+        "description": "Detects statistical distribution shifts and suspected data poisoning attempts blocked during lakeFS pre-merge validation.",
+        "rule_type": "threshold",
+        "severity": "HIGH",
+        "is_enabled": True,
+        "mitre_attack_id": "T1565.001",
+        "mitre_atlas_id": "AML.T0020",
+        "config": {
+            "event_type": "dataset.poisoning_suspected",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 

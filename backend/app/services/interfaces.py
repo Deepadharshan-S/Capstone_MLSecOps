@@ -126,3 +126,21 @@ class VersionControlService(ABC):
     def check_health(self) -> tuple[bool, str]:
         """Checks connection/health of the version control service backend. Returns (is_healthy, status_message)."""
         pass
+
+    def merge(
+        self,
+        repo_name: str,
+        source_branch: str,
+        destination_branch: str = "main",
+        message: Optional[str] = None,
+    ) -> str:
+        """Merges source_branch into destination_branch. Returns merge commit ID."""
+        raise NotImplementedError
+
+    def set_branch_protection_rule(self, repo_name: str, pattern: str = "main") -> None:
+        """Configures branch protection rule on pattern (e.g. 'main')."""
+        raise NotImplementedError
+
+    def get_branch_protection_rules(self, repo_name: str) -> list[str]:
+        """Retrieves active branch protection rule patterns for repository."""
+        return []

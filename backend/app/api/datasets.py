@@ -36,6 +36,8 @@ from app.schemas.dataset import (
     CreateTagRequest,
     TagResponse,
     FileEntryResponse,
+    MergeBranchRequest,
+    MergeBranchResponse,
 )
 from app.services.dependencies import get_data_service
 from app.services.dataset import DataService
@@ -88,6 +90,47 @@ def register_dataset(
         raise
 
     try:
+        # Safe Bootstrap: 1. Install pre-merge Action configuration on main
+        import os
+        from app.core.config import settings
+
+        action_template_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "templates",
+            "poisoning_gate_action.yaml",
+        )
+        if not os.path.exists(action_template_path):
+            raise RuntimeError(f"Action template not found at {action_template_path}")
+
+        with open(action_template_path, "r", encoding="utf-8") as af:
+            action_yaml = af.read()
+
+        webhook_url = settings.LAKEFS_WEBHOOK_URL
+        webhook_secret = settings.LAKEFS_WEBHOOK_SECRET
+        if getattr(settings, "POISONING_ALLOW_QUERY_PARAM_AUTH", False):
+            target_url = f"{webhook_url}?secret={webhook_secret}" if "?" not in webhook_url else f"{webhook_url}&secret={webhook_secret}"
+        else:
+            target_url = webhook_url
+        action_yaml = action_yaml.replace("{{ webhook_url }}", target_url).replace("{{ webhook_secret }}", webhook_secret)
+
+        data_service.upload_file(
+            db=db,
+            dataset_name=name,
+            file_path="_lakefs_actions/poisoning_gate.yaml",
+            content=action_yaml.encode("utf-8"),
+            branch_name=db_dataset.default_branch,
+            username=user.username,
+        )
+        data_service.commit_changes(
+            db=db,
+            dataset_name=name,
+            branch_name=db_dataset.default_branch,
+            message="Install statistical data poisoning gate action",
+            metadata=None,
+            username=user.username,
+        )
+
+        # Safe Bootstrap: 2. Upload and commit initial trusted baseline on main
         data_service.upload_file(
             db=db,
             dataset_name=name,
@@ -100,16 +143,32 @@ def register_dataset(
             db=db,
             dataset_name=name,
             branch_name=db_dataset.default_branch,
-            message=f"Upload {file_path}",
+            message=f"Initial trusted baseline: {file_path}",
             metadata=None,
             username=user.username,
         )
-    except HTTPException:
+
+        # Safe Bootstrap: 3. Arm branch protection on main
+        data_service.set_branch_protection(
+            db=db,
+            dataset_name=name,
+            pattern=db_dataset.default_branch,
+            username=user.username,
+        )
+
+    except Exception as bootstrap_err:
+        import logging
+        logging.getLogger("datasets").error(f"Security bootstrap failed for dataset '{name}': {bootstrap_err}")
         try:
             data_service.delete_dataset(db, name, username=user.username)
-        except Exception:
-            pass
-        raise
+        except Exception as cleanup_err:
+            logging.getLogger("datasets").error(f"Failed to cleanup dataset '{name}' after bootstrap failure: {cleanup_err}")
+        if isinstance(bootstrap_err, HTTPException):
+            raise bootstrap_err
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset registration aborted: security bootstrap failed ({str(bootstrap_err)})",
+        )
 
     return db_dataset
 
@@ -156,6 +215,9 @@ def upload_file(
 ):
     """
     Uploads a file to the lakeFS repository via streaming.
+    If the target branch is protected against direct writes (e.g. 'main'),
+    automatically routes the upload to an isolated staging branch to protect
+    baseline integrity until pre-merge validation.
     """
     file_path = file.filename
     if not file_path:
@@ -163,12 +225,27 @@ def upload_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file must have a valid filename.",
         )
+
+    target_branch = branch or "main"
+    protected_rules = data_service.get_branch_protection(db, dataset_name=dataset_name)
+    if target_branch in protected_rules:
+        import uuid
+        staging_branch = f"staging-{user.username}-{uuid.uuid4().hex[:8]}"
+        data_service.create_branch(
+            db=db,
+            dataset_name=dataset_name,
+            branch_name=staging_branch,
+            source_branch=target_branch,
+            username=user.username,
+        )
+        target_branch = staging_branch
+
     return data_service.upload_file(
         db=db,
         dataset_name=dataset_name,
         file_path=file_path,
         content=file.file,
-        branch_name=branch,
+        branch_name=target_branch,
         username=user.username,
     )
 
@@ -375,6 +452,34 @@ def delete_branch(
         db=db,
         dataset_name=dataset_name,
         branch_name=branch_name,
+        username=user.username,
+    )
+
+
+@router.post(
+    "/{dataset_name}/merge",
+    response_model=MergeBranchResponse,
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
+def merge_branch(
+    dataset_name: str,
+    req: MergeBranchRequest,
+    db: Session = Depends(get_db),
+    user: User = Security(get_current_active_user, scopes=["datasets:upload"]),
+    data_service: DataService = Depends(get_data_service),
+):
+    """
+    Merges a candidate staging branch into the protected baseline branch ('main').
+    Synchronously triggers pre-merge statistical validation actions (Kolmogorov-Smirnov,
+    target-label Chi-Square homogeneity, and PSI checks).
+    Rejects merges exhibiting anomalous distribution shifts with HTTP 422.
+    """
+    return data_service.merge_branches(
+        db=db,
+        dataset_name=dataset_name,
+        source_branch=req.source_branch,
+        destination_branch=req.destination_branch or "main",
+        message=req.message,
         username=user.username,
     )
 

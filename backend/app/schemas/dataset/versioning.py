@@ -50,3 +50,17 @@ class TagResponse(BaseModel):
 class FileEntryResponse(BaseModel):
     path: str
     size_bytes: Optional[int] = None
+
+
+class MergeBranchRequest(BaseModel):
+    source_branch: str
+    destination_branch: Optional[str] = "main"
+    message: Optional[str] = None
+
+
+class MergeBranchResponse(BaseModel):
+    dataset_name: str
+    source_branch: str
+    destination_branch: str
+    merge_commit_id: str
+    status: str

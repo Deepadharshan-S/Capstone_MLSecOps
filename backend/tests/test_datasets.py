@@ -394,19 +394,26 @@ def test_dataset_compare_types(user_tokens):
     assert resp.status_code == 200
     commit1_id = resp.json()["id"]
 
-    # 2. Upload second file and commit
+    # 2. Create branch, upload second file, and commit to establish second reference point
+    resp = client.post(
+        f"/api/datasets/{dataset_name}/branches",
+        json={"branch_name": "compare-exp", "source_branch": "main"},
+        headers=ds_headers,
+    )
+    assert resp.status_code == 201
+
     new_file_content = b"col1,col2\n3,4"
     resp = client.post(
-        f"/api/datasets/{dataset_name}/upload?branch=main",
+        f"/api/datasets/{dataset_name}/upload?branch=compare-exp",
         files={"file": ("new_data.csv", new_file_content)},
-        headers=ds_headers
+        headers=ds_headers,
     )
     assert resp.status_code == 200
 
     resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
+        f"/api/datasets/{dataset_name}/commit?branch=compare-exp",
         json={"message": "Second commit adding new_data.csv"},
-        headers=ds_headers
+        headers=ds_headers,
     )
     assert resp.status_code == 200
     commit2_id = resp.json()["id"]

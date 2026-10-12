@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.mlflow_loader import warm_mlflow
 from app.db.session import get_db, engine
-from app.api import auth, users, ml_ops, datasets, threat_hunting
+from app.api import auth, users, ml_ops, datasets, threat_hunting, webhooks
 from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dependencies import (
@@ -213,6 +213,7 @@ app.include_router(users.router, prefix="/api")
 app.include_router(ml_ops.router, prefix="/api")
 app.include_router(datasets.router, prefix="/api")
 app.include_router(threat_hunting.router, prefix="/api")
+app.include_router(webhooks.router, prefix="/api")
 
 
 @app.get("/")

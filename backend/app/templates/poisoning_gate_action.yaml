@@ -1,0 +1,15 @@
+name: StatisticalPoisoningGate
+description: Synchronous statistical data poisoning gate for merges into main
+on:
+  pre-merge:
+    branches:
+      - main
+hooks:
+  - id: poisoning_gate
+    type: webhook
+    description: Evaluate SciPy KS and Chi-Square distribution shifts
+    properties:
+      url: "{{ webhook_url }}"
+      timeout: 60s
+      headers:
+        X-Webhook-Secret: "{{ webhook_secret }}"

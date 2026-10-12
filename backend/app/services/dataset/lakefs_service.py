@@ -273,4 +273,50 @@ class LakeFSService(VersionControlService):
             )
         return files
 
+    def merge(self, repo_name: str, source_branch: str, destination_branch: str = "main", message: Optional[str] = None) -> str:
+        """
+        Merges source_branch into destination_branch.
+        Triggers pre-merge actions configured on destination_branch.
+        Returns the merge commit ID string.
+        """
+        if not self.client:
+            raise RuntimeError("lakeFS client is not initialized.")
+        repo = lakefs.Repository(repo_name, client=self.client)
+        source = repo.branch(source_branch)
+        kwargs = {}
+        if message:
+            kwargs["message"] = message
+        merge_commit_id = source.merge_into(destination_branch, **kwargs)
+        return str(merge_commit_id)
+
+    def set_branch_protection_rule(self, repo_name: str, pattern: str = "main") -> None:
+        """
+        Configures lakeFS branch protection on pattern (e.g. 'main').
+        Direct object writes and commits will be rejected with 403 Forbidden.
+        Only merges are permitted.
+        """
+        if not self.client:
+            raise RuntimeError("lakeFS client is not initialized.")
+        rules = [lakefs_sdk.BranchProtectionRule(pattern=pattern)]
+        self.client.sdk_client.repositories_api.set_branch_protection_rules(
+            repository=repo_name,
+            branch_protection_rule=rules,
+        )
+
+    def get_branch_protection_rules(self, repo_name: str) -> list[str]:
+        """
+        Retrieves active branch protection rule patterns for repository.
+        """
+        if not self.client:
+            return []
+        try:
+            rules = self.client.sdk_client.repositories_api.get_branch_protection_rules(
+                repository=repo_name
+            )
+            return [getattr(r, "pattern", str(r)) for r in rules]
+        except Exception as e:
+            logger.debug(f"Could not retrieve branch protection rules for '{repo_name}': {e}")
+            return []
+
+
 lakefs_service = LakeFSService()

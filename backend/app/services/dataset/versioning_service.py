@@ -271,3 +271,130 @@ class DatasetVersioningService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Tag deletion failed: {str(e)}",
             )
+
+    def merge_branches(
+        self,
+        db: Session,
+        dataset_name: str,
+        source_branch: str,
+        destination_branch: str = "main",
+        message: Optional[str] = None,
+        username: str = "system",
+    ) -> dict:
+        """
+        Merges source_branch into destination_branch.
+        Triggers pre-merge validation actions configured on destination_branch.
+        """
+        with trace_ml_operation("dataset.merge"):
+            dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+            msg = message or f"Merge '{source_branch}' into '{destination_branch}'"
+            try:
+                merge_commit_id = self.version_control_service.merge(
+                    sanitized_repo_name,
+                    source_branch=source_branch,
+                    destination_branch=destination_branch,
+                    message=msg,
+                )
+                log_audit_event(
+                    "dataset_merge",
+                    username,
+                    None,
+                    f"Merged branch '{source_branch}' into '{destination_branch}' of dataset '{dataset_name}'. Commit: {merge_commit_id}.",
+                    db=db,
+                )
+
+                # OPS-02: Safe lifecycle pruning of merged staging branch
+                if source_branch.startswith("staging-"):
+                    try:
+                        self.version_control_service.delete_branch(sanitized_repo_name, branch_name=source_branch)
+                        log_audit_event(
+                            "dataset_branch_delete",
+                            username,
+                            None,
+                            f"Pruned merged staging branch '{source_branch}' for dataset '{dataset_name}'.",
+                            db=db,
+                        )
+                    except Exception as prune_err:
+                        logger.warning(f"Could not prune merged staging branch '{source_branch}' on '{dataset_name}': {prune_err}")
+
+                return {
+                    "dataset_name": dataset_name,
+                    "source_branch": source_branch,
+                    "destination_branch": destination_branch,
+                    "merge_commit_id": str(merge_commit_id),
+                    "status": "merged",
+                }
+            except Exception as e:
+                err_status = getattr(e, "status_code", None) or getattr(e, "status", None)
+                err_msg = str(e)
+                if (err_status == 412) or ("412" in err_msg) or ("pre-merge hook aborted" in err_msg.lower()):
+                    log_audit_event(
+                        "dataset_merge_rejected",
+                        username,
+                        None,
+                        f"Merge of '{source_branch}' into '{destination_branch}' was rejected by pre-merge validation gate: {err_msg}",
+                        db=db,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "Dataset merge rejected: statistical distribution shift / suspected data poisoning "
+                            f"detected by pre-merge gate ({err_msg})."
+                        ),
+                    )
+                log_audit_event(
+                    "dataset_merge_error",
+                    username,
+                    None,
+                    f"Failed to merge '{source_branch}' into '{destination_branch}' of dataset '{dataset_name}': {err_msg}",
+                    db=db,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Merge failed: {err_msg}",
+                )
+
+    def set_branch_protection(
+        self,
+        db: Session,
+        dataset_name: str,
+        pattern: str = "main",
+        username: str = "system",
+    ) -> dict:
+        """
+        Enables branch protection on the specified pattern (e.g. 'main').
+        """
+        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        try:
+            self.version_control_service.set_branch_protection_rule(sanitized_repo_name, pattern=pattern)
+            log_audit_event(
+                "dataset_branch_protection_set",
+                username,
+                None,
+                f"Enabled branch protection rule on pattern '{pattern}' for dataset '{dataset_name}'.",
+                db=db,
+            )
+            return {"dataset_name": dataset_name, "pattern": pattern, "protected": True}
+        except Exception as e:
+            log_audit_event(
+                "dataset_branch_protection_error",
+                username,
+                None,
+                f"Failed to enable branch protection on pattern '{pattern}' for dataset '{dataset_name}': {str(e)}",
+                db=db,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to enable branch protection: {str(e)}",
+            )
+
+    def get_branch_protection(self, db: Session, dataset_name: str) -> list[str]:
+        """
+        Retrieves active branch protection patterns for the dataset repository.
+        """
+        dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        try:
+            return self.version_control_service.get_branch_protection_rules(sanitized_repo_name)
+        except Exception as e:
+            logger.debug(f"Failed to get branch protection rules for '{dataset_name}': {e}")
+            return []

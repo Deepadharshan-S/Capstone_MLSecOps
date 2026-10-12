@@ -165,6 +165,12 @@ AUDIT_ACTION_MAP = {
         "source": "lakefs",
         "resource_type": "dataset",
     },
+    "dataset_poisoning_detected": {
+        "event_type": "dataset.poisoning_suspected",
+        "severity": "HIGH",
+        "source": "lakefs_validator",
+        "resource_type": "dataset",
+    },
     # Inference Security
     "model_inference_spike": {
         "event_type": "inference.request_burst",
@@ -221,12 +227,24 @@ class SecurityEventService:
             attributes=redacted_attrs,
         )
 
-        # Check for duplicate
+        # Check for duplicate by dedup_hash
         existing = db.execute(
             select(SecurityEvent).where(SecurityEvent.dedup_hash == dedup_hash)
         ).scalar_one_or_none()
         if existing:
             return existing
+
+        # INT-01: Check for duplicate by correlation_id if provided
+        if event_in.correlation_id:
+            existing_corr = db.execute(
+                select(SecurityEvent).where(
+                    SecurityEvent.correlation_id == event_in.correlation_id,
+                    SecurityEvent.event_type == event_in.event_type,
+                    SecurityEvent.resource_id == cleaned_resource,
+                )
+            ).scalars().first()
+            if existing_corr:
+                return existing_corr
 
         event = SecurityEvent(
             event_type=event_in.event_type,
@@ -276,6 +294,22 @@ class SecurityEventService:
             return None
         if username and username.lower() == "detection_engine":
             return None
+
+        # INT-01: Prevent duplicate ingestion for dataset poisoning
+        # Direct webhook ingestion already records the authoritative SecurityEvent with complete violation payload
+        if action_lower == "dataset_poisoning_detected" and db is not None:
+            m_repo = re.search(r"repository '([^']+)'", details or "", re.IGNORECASE)
+            repo_id = m_repo.group(1) if m_repo else None
+            if repo_id:
+                recent_existing = db.execute(
+                    select(SecurityEvent).where(
+                        SecurityEvent.resource_id == repo_id,
+                        SecurityEvent.event_type == "dataset.poisoning_suspected",
+                    ).order_by(SecurityEvent.created_at.desc())
+                ).scalars().first()
+                if recent_existing:
+                    logger.debug(f"Audit log '{action}' skipped: SecurityEvent already directly ingested for '{repo_id}'.")
+                    return recent_existing
 
         mapping = AUDIT_ACTION_MAP.get(action_lower)
         if not mapping:

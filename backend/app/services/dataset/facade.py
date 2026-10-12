@@ -245,6 +245,41 @@ class DataService:
             username=username,
         )
 
+    def merge_branches(
+        self,
+        db: Session,
+        dataset_name: str,
+        source_branch: str,
+        destination_branch: str = "main",
+        message: Optional[str] = None,
+        username: str = "system",
+    ) -> dict:
+        return self.versioning.merge_branches(
+            db=db,
+            dataset_name=dataset_name,
+            source_branch=source_branch,
+            destination_branch=destination_branch,
+            message=message,
+            username=username,
+        )
+
+    def set_branch_protection(
+        self,
+        db: Session,
+        dataset_name: str,
+        pattern: str = "main",
+        username: str = "system",
+    ) -> dict:
+        return self.versioning.set_branch_protection(
+            db=db,
+            dataset_name=dataset_name,
+            pattern=pattern,
+            username=username,
+        )
+
+    def get_branch_protection(self, db: Session, dataset_name: str) -> list[str]:
+        return self.versioning.get_branch_protection(db=db, dataset_name=dataset_name)
+
     # 4. Dataset Diff Operations
     def compare_dataset_versions(
         self, db: Session, dataset_name: str, left_ref: str, right_ref: str, compare_type: str = "three_dot"
