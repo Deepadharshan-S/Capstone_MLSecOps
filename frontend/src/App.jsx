@@ -22,8 +22,12 @@ const Jobs = lazy(() => import('./pages/Jobs.jsx'))
 const Experiments = lazy(() => import('./pages/Experiments.jsx'))
 const Admin = lazy(() => import('./pages/Admin.jsx'))
 
-function Topbar({ onMenuOpen, menuOpen, health, onHealthClick }) {
+function Topbar({ onMenuOpen, menuOpen, health, healthError, healthLoading, onHealthClick }) {
   const { title, crumbs } = routeMeta(useLocation().pathname)
+
+  const status = health && !healthError
+    ? (health.status === 'healthy' ? 'healthy' : 'degraded')
+    : (healthLoading ? 'checking' : 'offline')
 
   return (
     <header className="topbar">
@@ -56,9 +60,18 @@ function Topbar({ onMenuOpen, menuOpen, health, onHealthClick }) {
       </div>
 
       <div className="topbar-right">
-        <button type="button" className="topbar-health" onClick={onHealthClick} title="Backend health — click to refresh">
-          <span className={`health-dot ${health ? 'is-ok' : 'is-err'}`} />
-          <span>{health ? 'Connected' : 'Offline'}</span>
+        <button
+          type="button"
+          className="topbar-health"
+          onClick={onHealthClick}
+          title={health
+            ? `db ${health.database ?? '—'} · lakefs ${health.lakefs ?? '—'} · minio ${health.minio ?? '—'} · mlflow ${health.mlflow ?? '—'}`
+            : 'Backend health — click to refresh'}
+        >
+          {/* /health answers 503 with a full body when one dependency is
+              down, so "degraded" is a real, reportable state — not "offline". */}
+          <span className={`health-dot ${status === 'healthy' ? 'is-ok' : status === 'degraded' ? 'is-warn' : status === 'offline' ? 'is-err' : ''}`} />
+          <span>{status === 'healthy' ? 'Connected' : status === 'degraded' ? 'Degraded' : status === 'checking' ? 'Checking…' : 'Offline'}</span>
         </button>
         <UserMenu />
       </div>
@@ -72,7 +85,14 @@ export default function App() {
   const location = useLocation()
 
   // GET /health — polled every 30s; drives the topbar connection chip.
-  const { data: health, refresh: refreshHealth } = usePolling(
+  // A 503 now yields a payload (degraded) instead of throwing, so `error`
+  // means the backend really is unreachable.
+  const {
+    data: health,
+    error: healthError,
+    loading: healthLoading,
+    refresh: refreshHealth,
+  } = usePolling(
     () => healthApi.check(),
     30000,
     { immediate: true },
@@ -92,7 +112,6 @@ export default function App() {
       <Sidebar
         collapsed={collapsed}
         onToggle={() => setCollapsed((c) => !c)}
-        open={mobileOpen}
         onNavigate={() => setMobileOpen(false)}
         health={health}
       />
@@ -102,6 +121,8 @@ export default function App() {
         onMenuOpen={() => setMobileOpen((o) => !o)}
         menuOpen={mobileOpen}
         health={health}
+        healthError={healthError}
+        healthLoading={healthLoading}
         onHealthClick={refreshHealth}
       />
 

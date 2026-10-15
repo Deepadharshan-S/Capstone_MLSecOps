@@ -112,9 +112,14 @@ export default function Deployments() {
             <SearchInput value={query} onChange={setQuery} placeholder="Search…" />
             <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter deployments by status" style={{ width: 140 }}>
               <option value="">All statuses</option>
-              <option value="running">running</option>
+              {/* Match the values deployment_service actually writes:
+                  "active" (healthy), "stopped", "rolled_back", plus lowered
+                  Kubernetes states. "running" never appears — the backend
+                  maps a Running service to "active" — so selecting it always
+                  returned an empty table. */}
+              <option value="active">active</option>
               <option value="stopped">stopped</option>
-              <option value="starting">starting</option>
+              <option value="rolled_back">rolled_back</option>
             </Select>
             <Select value={envFilter} onChange={(e) => setEnvFilter(e.target.value)} aria-label="Filter deployments by environment" style={{ width: 150 }}>
               <option value="">All environments</option>

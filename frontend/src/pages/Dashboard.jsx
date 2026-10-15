@@ -40,6 +40,12 @@ function quickStart(hasPermission) {
   ].filter((i) => !i.scope || hasPermission(i.scope))
 }
 
+// GET /datasets, GET /jobs and GET /users/ answer with a BARE array, while the
+// registry / deployment / experiment routes wrap theirs in .models /
+// .deployments / .experiments. Reading only the wrapped shape left three of
+// the Dashboard KPIs pinned at 0 forever — accept both.
+const asList = (data, key) => (Array.isArray(data) ? data : data?.[key] || [])
+
 export default function Dashboard() {
   const { user, hasPermission } = useAuth()
   const navigate = useNavigate()
@@ -51,14 +57,18 @@ export default function Dashboard() {
   const deployments = useFetch(() => mlOpsApi.listDeployments(), [])
   const experiments = useFetch(() => mlOpsApi.listExperiments(), [])
 
-  const loading = datasets.loading && models.loading && jobs.loading && deployments.loading
-  const firstError = datasets.error || models.error || jobs.error || deployments.error
+  // Skeleton only while *nothing* has arrived yet. The previous `&&` across
+  // four fetches meant the first response to land painted the whole page with
+  // 0s, and a manual Refresh blanked it back to skeletons.
+  const anyData = datasets.data || models.data || jobs.data || deployments.data || experiments.data
+  const loading = !anyData && [datasets, models, jobs, deployments, experiments].some((f) => f.loading)
+  const firstError = datasets.error || models.error || jobs.error || deployments.error || experiments.error
 
-  const dsList = datasets.data?.datasets || []
-  const modelList = models.data?.models || []
-  const jobList = jobs.data?.jobs || []
-  const depList = deployments.data?.deployments || []
-  const expList = experiments.data?.experiments || []
+  const dsList = asList(datasets.data, 'datasets')
+  const modelList = asList(models.data, 'models')
+  const jobList = asList(jobs.data, 'jobs')
+  const depList = asList(deployments.data, 'deployments')
+  const expList = asList(experiments.data, 'experiments')
 
   const runningJobs = jobList.filter((j) => ['running', 'pending', 'queued', 'in_progress'].includes(String(j.status).toLowerCase()))
   const activeDeps = depList.filter((d) => d.is_active ?? d.active ?? String(d.status).toLowerCase() === 'active')
@@ -103,7 +113,7 @@ export default function Dashboard() {
         <ErrorState
           error={firstError}
           title="Some panels failed to load"
-          onRetry={() => { datasets.refetch(); models.refetch(); jobs.refetch(); deployments.refetch() }}
+          onRetry={() => { datasets.refetch(); models.refetch(); jobs.refetch(); deployments.refetch(); experiments.refetch() }}
         />
       )}
 
@@ -368,7 +378,7 @@ export default function Dashboard() {
 
 function AdminTeaser() {
   const users = useFetch(() => usersApi.list(), [])
-  const list = users.data?.users || []
+  const list = asList(users.data, 'users')
   return (
     <Panel
       icon={ShieldCheck}

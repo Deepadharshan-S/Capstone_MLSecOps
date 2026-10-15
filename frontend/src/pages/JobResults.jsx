@@ -144,6 +144,33 @@ function FeatureImportance({ features }) {
   )
 }
 
+/* ── Metric tiles ─────────────────────────────────── */
+function MetricTiles({ results }) {
+  const tiles = [
+    ['Accuracy', results.accuracy, 't-accent'],
+    ['Precision', results.precision_score],
+    ['Recall', results.recall_score],
+    ['F1 Score', results.f1_score, 't-success'],
+    // JobStatusResponse has no `roc_auc` field — the ROC panel draws from
+    // `roc_curve` instead, so this entry only ever produced an empty tile.
+    // JobStatusResponse calls this training_duration (seconds).
+    ['Train time', results.training_duration ?? results.training_time ?? results.duration_s, null, true],
+  ].filter(([, v]) => v !== undefined && v !== null)
+
+  if (!tiles.length) return null
+  return (
+    <div className="metrics-grid">
+      {tiles.map(([label, val, tone, raw]) => (
+        <div key={label} className={`metric-tile ${tone || ''}`}>
+          <div className="metric-tile-lbl">{label}</div>
+          <div className="metric-tile-val">
+            {raw ? `${Number(val).toFixed(2)}s` : formatAccuracy(val)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 /* ══════════════════════════════════════════════════════
    JobResults — metrics, curves, matrix, importance.
@@ -229,6 +256,28 @@ export default function JobResults({ results, isTraining = false, progress = 0 }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+      {/* Headline metrics */}
+      <Panel
+        icon={Target}
+        title="Evaluation metrics"
+        subtitle={jobId ? `Job ${jobId}` : 'Hold-out test set'}
+        actions={
+          results.status
+            ? <StatusBadge status={results.status} sm />
+            : results.accuracy >= 0.85
+              ? <Badge tone="success" dot>Strong fit</Badge>
+              : <Badge tone="warning" dot>Review fit</Badge>
+        }
+      >
+        <MetricTiles results={results} />
+        {results.dataset_id || results.model_type ? (
+          <div className="mt-4 pill-row">
+            {results.dataset_id && <Badge tone="outline">dataset · {results.dataset_id}</Badge>}
+            {results.model_type && <Badge tone="accent">{results.model_type}</Badge>}
+          </div>
+        ) : null}
+      </Panel>
+
       {/* Curves */}
       <div className="charts-grid-2">
         <div className="chart-panel">

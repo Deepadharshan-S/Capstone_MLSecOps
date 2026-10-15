@@ -7,15 +7,30 @@ const enc = encodeURIComponent
 
 // GET / and GET /health are registered on the app root, *outside* the /api
 // router prefix, so they must bypass api.get()'s API_BASE. No auth required.
+//
+// /health intentionally answers **503 with a full JSON body** when a single
+// dependency is down (backend/app/main.py: status, database, lakefs, minio,
+// mlflow), so a non-2xx status here is NOT a transport failure — it carries
+// the exact payload the UI needs to say "degraded" rather than "offline".
+// Only a dead server / non-JSON reply is treated as unreachable.
 const ROOT_BASE = API_BASE.replace(/\/api\/?$/, '')
 async function rootGet(path) {
-  const res = await fetch(`${ROOT_BASE}${path}`, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  })
-  if (!res.ok) throw new Error(`Health check failed: HTTP ${res.status}`)
-  return res.json()
+  let res
+  try {
+    res = await fetch(`${ROOT_BASE}${path}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    })
+  } catch {
+    throw new Error('Health check failed: backend unreachable.')
+  }
+  let body = null
+  try { body = await res.json() } catch { /* empty or non-JSON reply */ }
+  if (!body || typeof body !== 'object') {
+    throw new Error(`Health check failed: HTTP ${res.status}`)
+  }
+  return body
 }
 
 export const healthApi = {
@@ -103,7 +118,14 @@ export const datasetsApi = {
 
   /* ── Files ──────────────────────────────────────── */
   // POST /datasets/{name}/upload · GET /datasets/{name}/download
-  uploadFile: (name, formData) => api.upload(`/datasets/${enc(name)}/upload`, formData),
+  // `branch` must travel as a QUERY param: the backend declares it as
+  // `branch: Optional[str] = "main"` (no Form(...)), so a multipart field of
+  // the same name is silently dropped and the file would land on the default
+  // branch no matter what the UI's branch selector said.
+  uploadFile: (name, formData, branch) => api.upload(
+    `/datasets/${enc(name)}/upload${branch ? `?branch=${enc(branch)}` : ''}`,
+    formData,
+  ),
   downloadUrl: (name, path, ref = 'main') =>
     `/datasets/${enc(name)}/download?path=${enc(path)}&ref=${enc(ref)}`,
   // GET /datasets/{name}/files — objects stored under a ref

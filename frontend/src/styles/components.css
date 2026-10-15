@@ -553,7 +553,6 @@
   animation: shimmer 1.4s ease-in-out infinite;
   border-radius: var(--r-sm);
 }
-.skeleton-row { height: 15px; margin: 14px var(--sp-4); }
 .skeleton-card { height: 92px; border-radius: var(--r-xl); }
 
 .spinner {
@@ -820,22 +819,6 @@
   letter-spacing: .07em;
   color: var(--text-tertiary);
   margin-bottom: var(--sp-3);
-}
-.tooltip-wrap { position: relative; display: inline-flex; }
-.tooltip-bubble {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg-inverse);
-  color: #fff;
-  font-size: var(--fs-xs);
-  padding: 5px 9px;
-  border-radius: var(--r-sm);
-  white-space: nowrap;
-  z-index: 90;
-  pointer-events: none;
-  box-shadow: var(--sh-md);
 }
 .hyperparam-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--sp-4); }
 .quick-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
