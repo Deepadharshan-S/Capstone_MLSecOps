@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { usersApi } from '../api/endpoints.js'
-import { api } from '../api/client.js'
+import { usersApi, authApi } from '../api/endpoints.js'
 import { useFetch, useDebounced } from '../hooks/useFetch.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
@@ -294,11 +293,11 @@ function AddUserModal({ onClose, onDone }) {
     setError(null)
     try {
       // Registration is public; the seeded roles are assigned by an admin afterwards.
-      await api.post('/auth/register', {
+      await authApi.register({
         username: form.username.trim(),
         email: form.email.trim() || `${form.username.trim()}@example.com`,
         password: form.password,
-      }, { skipAuth: true })
+      })
       toast.success('Account created', `${form.username} can now sign in. Assign a role from the list.`)
       onDone()
     } catch (err) {

@@ -28,8 +28,12 @@ export default function Experiments() {
   const runList = runs.data?.runs || []
 
   // "All runs" aggregates GET /experiments/{id}/runs across every experiment.
+  // `runsToken` gives the panel's Refresh button something to depend on — the
+  // previous button only called setTab('runs') while already on that tab, so
+  // it never refetched anything.
   const [allRuns, setAllRuns] = useState([])
   const [allRunsLoading, setAllRunsLoading] = useState(false)
+  const [runsToken, setRunsToken] = useState(0)
   const expKey = expList.map((e) => `${e.experiment_id}::${e.name}`).join('|')
   useEffect(() => {
     if (tab !== 'runs' || !expKey) return undefined
@@ -46,7 +50,9 @@ export default function Experiments() {
       setAllRunsLoading(false)
     })
     return () => { cancelled = true }
-  }, [tab, expKey])
+  }, [tab, expKey, runsToken])
+
+  const refreshRuns = () => { experiments.refetch(); setRunsToken((t) => t + 1) }
 
   const filteredExp = expList.filter((e) =>
     !debounced || String(e.name).toLowerCase().includes(debounced.toLowerCase()),
@@ -157,7 +163,7 @@ export default function Experiments() {
           icon={Play}
           title="All runs"
           subtitle={`${runRows?.length || 0} runs`}
-          actions={<Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => setTab('runs')}>Refresh</Button>}
+          actions={<Button variant="ghost" size="sm" icon={RefreshCw} loading={allRunsLoading} onClick={refreshRuns}>Refresh</Button>}
           bodyClass={runRows?.length ? 'tight' : ''}
         >
           {allRunsLoading ? (

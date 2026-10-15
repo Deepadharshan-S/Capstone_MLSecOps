@@ -121,7 +121,8 @@ function MetricTiles({ results }) {
     ['Precision', results.precision_score],
     ['Recall', results.recall_score],
     ['F1 Score', results.f1_score, 't-success'],
-    ['ROC AUC', results.roc_auc],
+    // JobStatusResponse has no `roc_auc` field — the ROC panel draws from
+    // `roc_curve` instead, so this entry only ever produced an empty tile.
     // JobStatusResponse calls this training_duration (seconds).
     ['Train time', results.training_duration ?? results.training_time ?? results.duration_s, null, true],
   ].filter(([, v]) => v !== undefined && v !== null)
@@ -210,8 +211,6 @@ export default function JobResults({ results, isTraining = false, progress = 0, 
           <div className="mt-4 pill-row">
             {results.dataset_id && <Badge tone="outline">dataset · {results.dataset_id}</Badge>}
             {results.model_type && <Badge tone="accent">{results.model_type}</Badge>}
-            {results.rows_used && <Badge tone="outline">{results.rows_used} rows</Badge>}
-            {results.target_column && <Badge tone="outline">target · {results.target_column}</Badge>}
           </div>
         ) : null}
       </Panel>

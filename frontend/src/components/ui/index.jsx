@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, createContext, useContext, useRef } from 'react'
 import {
   X, AlertCircle, CheckCircle2, Info, AlertTriangle, ChevronLeft, ChevronRight,
-  ChevronsUpDown, Search, Inbox, ArrowUp, ArrowDown, Loader2, RefreshCw, Copy,
+  ChevronsUpDown, Search, Inbox, ArrowUp, ArrowDown, RefreshCw, Copy,
 } from '../icons.jsx'
 
 /* ══════════════════════════════════════════════════════
@@ -9,7 +9,7 @@ import {
    ══════════════════════════════════════════════════════ */
 export function Button({
   children, variant = 'secondary', size, icon: Icon, loading = false,
-  block = false, iconOnly = false, className = '', ...rest
+  block = false, iconOnly = false, className = '', disabled, ...rest
 }) {
   const cls = [
     'btn',
@@ -20,8 +20,11 @@ export function Button({
     loading ? 'btn-loading' : '',
     className,
   ].filter(Boolean).join(' ')
+  // `disabled` is destructured out and applied LAST so a caller's own
+  // `disabled={false}` can never cancel the loading guard — spread after it
+  // and a button stays clickable mid-request (double submissions).
   return (
-    <button className={cls} disabled={loading || rest.disabled} {...rest}>
+    <button className={cls} {...rest} disabled={loading || disabled} aria-busy={loading || undefined}>
       {Icon && <Icon size={size === 'xs' ? 12 : size === 'sm' ? 13 : 15} strokeWidth={2} />}
       {!iconOnly && children}
     </button>
@@ -464,16 +467,6 @@ export function ErrorState({ error, onRetry, title = 'Something went wrong' }) {
   )
 }
 
-export function SkeletonRows({ rows = 5 }) {
-  return (
-    <div aria-hidden>
-      {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="skeleton skeleton-row" style={{ width: `${94 - (i % 4) * 12}%` }} />
-      ))}
-    </div>
-  )
-}
-
 export function SkeletonCards({ count = 4 }) {
   return (
     <div className="stat-grid" aria-hidden>
@@ -495,25 +488,6 @@ export function KeyValue({ items }) {
         </div>
       ))}
     </div>
-  )
-}
-
-/* ══════════════════════════════════════════════════════
-   Tooltip (hover / focus)
-   ══════════════════════════════════════════════════════ */
-export function Tooltip({ label, children }) {
-  const [show, setShow] = useState(false)
-  return (
-    <span
-      className="tooltip-wrap"
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-      onFocus={() => setShow(true)}
-      onBlur={() => setShow(false)}
-    >
-      {children}
-      {show && <span className="tooltip-bubble" role="tooltip">{label}</span>}
-    </span>
   )
 }
 
@@ -684,15 +658,4 @@ export function CopyButton({ text, size = 'xs' }) {
       aria-label="Copy"
     />
   )
-}
-
-/* ══════════════════════════════════════════════════════
-   Loading button helper
-   ══════════════════════════════════════════════════════ */
-export function BusyButton({ busy, children, ...rest }) {
-  return <Button loading={busy} {...rest}>{children}</Button>
-}
-
-export function InlineLoader() {
-  return <Loader2 size={13} className="spin-inline" style={{ animation: 'spin .8s linear infinite' }} />
 }

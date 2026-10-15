@@ -134,11 +134,12 @@ export default function Registry() {
               },
               {
                 key: 'precision', width: 110, header: 'Precision',
-                render: (m) => <span className="tnum">{m.precision ? Number(m.precision).toFixed(3) : '—'}</span>,
+                // `!= null`, not truthiness: a legitimate 0.0 score rendered as "—".
+                render: (m) => <span className="tnum">{m.precision != null ? Number(m.precision).toFixed(3) : '—'}</span>,
               },
               {
                 key: 'recall', width: 100, header: 'Recall',
-                render: (m) => <span className="tnum">{m.recall ? Number(m.recall).toFixed(3) : '—'}</span>,
+                render: (m) => <span className="tnum">{m.recall != null ? Number(m.recall).toFixed(3) : '—'}</span>,
               },
               {
                 key: 'accuracy', width: 120, sortKey: 'accuracy', header: 'Accuracy',
@@ -298,9 +299,12 @@ function ModelDrawer({ model, versions, onClose, canDeploy, onDeploy, onGoExperi
                 ['Model ID', model.id],
                 ['Name', model.name],
                 ['Experiment', model.experiment_name],
-                ['Algorithm', model.algorithm || model.model_type],
+                // ModelItem carries only {id, name, metrics, created_at,
+                // experiment_name, parameters, tags} — `model.algorithm`,
+                // `model.model_type` and `model.run_id` were never part of the
+                // response, so those rows always rendered as "—".
+                ['Algorithm', model.parameters?.model_type || model.tags?.model_type],
                 ['Created', model.created_at && model.created_at !== 'unknown' ? new Date(model.created_at).toLocaleString() : undefined],
-                ['Run ID', model.run_id],
               ]}
             />
             <div className="mt-3 flex items-center gap-2">

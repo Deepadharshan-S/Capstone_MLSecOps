@@ -197,7 +197,7 @@ export default function Datasets() {
       <Panel icon={Info} title="How datasets work here" subtitle="Version control semantics applied to tabular data">
         <div className="grid-3">
           {[
-            ['Branches', 'Branch a dataset to experiment on a copy without touching main. Merge-free by design — training reads one ref.', GitBranch],
+            ['Branches', 'Branch a dataset to experiment on a copy without touching the default branch. Review differences under Compare, then commit on the branch you want — history is never rewritten.', GitBranch],
             ['Commits', 'Every upload and mutation is committed with a message, author and timestamp.', FolderTree],
             ['Rollback', 'Compare two refs and restore an earlier state with a single action.', RefreshCw],
           ].map(([t, d, Icon]) => (

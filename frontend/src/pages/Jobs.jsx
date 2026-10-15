@@ -6,7 +6,7 @@ import { formatAccuracy } from '../lib/models.js'
 import {
   PageHeader, Panel, Button, DataTable, Drawer, Badge, StatusBadge,
   EmptyState, LoadingState, ErrorState, SearchInput, Select,
-  Progress, StatCard, Alert,
+  Progress, StatCard, Alert, useToast,
 } from '../components/ui/index.jsx'
 import { JobSummary, TrainingConsole } from './JobPanels.jsx'
 import {
@@ -21,6 +21,7 @@ const ACTIVE = ['running', 'training', 'pending', 'queued', 'in_progress', 'star
 
 export default function Jobs() {
   const navigate = useNavigate()
+  const toast = useToast()
 
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
@@ -33,7 +34,10 @@ export default function Jobs() {
   const list = jobs.data?.jobs || (Array.isArray(jobs.data) ? jobs.data : [])
   const anyActive = list.some((j) => ACTIVE.includes(String(j.status).toLowerCase()))
 
-  usePolling(
+  // The polling result is stored straight into `jobs`, so its own `data` is
+  // unused — but its `error` must not be discarded, otherwise a failing
+  // refresh silently freezes the table behind a "Live: on" badge.
+  const listPoll = usePolling(
     async () => { const d = await mlOpsApi.listJobs(100); jobs.setData(d); return d },
     4000,
     { enabled: live && anyActive },
@@ -59,7 +63,13 @@ export default function Jobs() {
       const j = await mlOpsApi.getJob(jobId)
       setSelected(j)
       if (j.status === 'completed' || j.status === 'failed') jobs.refetch()
-    } catch { /* job may be gone */ }
+    } catch (err) {
+      // Previously swallowed every failure, so "Refresh status" looked broken
+      // with no feedback at all.
+      toast.error('Could not refresh this job', err?.status === 404
+        ? 'This job no longer exists on the server.'
+        : (err?.message || 'Request failed.'))
+    }
   }
 
   return (
@@ -82,6 +92,15 @@ export default function Jobs() {
           </>
         }
       />
+
+      {listPoll.error && (
+        <Alert
+          tone="warning"
+          actions={<Button size="xs" variant="secondary" onClick={listPoll.refresh}>Retry</Button>}
+        >
+          Live refresh failed: {listPoll.error.message} — the table may be stale.
+        </Alert>
+      )}
 
       <div className="stat-grid">
         <StatCard icon={ClipboardList} tone="accent" value={counts.total} label="Total jobs" sub="all time" />

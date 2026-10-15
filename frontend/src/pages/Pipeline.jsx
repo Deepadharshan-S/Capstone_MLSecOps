@@ -18,7 +18,7 @@ import {
   Database, GitBranch, BrainCircuit, Play, BarChart3, Upload, Check,
   ChevronRight, ChevronLeft, RefreshCw, Rocket, ClipboardList, Sparkles,
   Code2, FileText, Target, Layers, Zap, GitCommitHorizontal,
-  Tag, Boxes, RotateCcw, Save, Copy,
+  Boxes, RotateCcw, Save, Copy,
 } from '../components/icons.jsx'
 
 // recharts lives in JobResults — defer it until the Results stage renders.
@@ -273,12 +273,16 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
    ══════════════════════════════════════════════════════ */
 function VersionStep({ dataset, ref, onRefChange }) {
   const name = dataset?.name
+  // The dataset's own default branch: offered in the dropdown even before the
+  // branch listing resolves, and used to seed the commits fetch while no ref
+  // has been picked yet (an empty ref used to fall back to a hardcoded "main").
+  const datasetDefault = dataset?.default_branch || 'main'
   const branches = useFetch(() => datasetsApi.branches(name), [name], { enabled: !!name })
   const tags = useFetch(() => datasetsApi.tags(name), [name], { enabled: !!name })
   // Debounce the free-typed ref: without this, every keystroke fires a
   // lakeFS-backed commits request and flips the panel into its loading
   // skeleton, making the whole page jump while typing.
-  const commitsRef = useDebounced(ref, 500)
+  const commitsRef = useDebounced(ref || datasetDefault, 500)
   const commits = useFetch(() => datasetsApi.commits(name, commitsRef), [name, commitsRef], { enabled: !!name })
 
   const branchList = Array.isArray(branches.data) ? branches.data : branches.data?.branches || []
@@ -293,13 +297,31 @@ function VersionStep({ dataset, ref, onRefChange }) {
     return <EmptyState icon={GitBranch} title="Pick a dataset first" desc="A dataset is required before choosing a version ref." />
   }
 
+  // The dropdown always offers the dataset's own default branch, even before
+  // the branch listing resolves, so the control can never hold a value that
+  // matches no <option>.
+  const branchNames = [...new Set([
+    ...branchList.map((b) => (typeof b === 'string' ? b : b?.name)).filter(Boolean),
+    datasetDefault,
+  ])]
   const options = [
-    ...branchList.map((b) => ({ kind: 'branch', value: b.name, meta: b.head_commit_id })),
+    ...branchNames.map((v) => ({
+      kind: 'branch',
+      value: v,
+      meta: branchList.find((b) => (typeof b === 'string' ? b : b?.name) === v)?.head_commit_id,
+    })),
     ...tagList.map((t) => ({ kind: 'tag', value: t.name, meta: t.commit_id })),
-    ...commitList.slice(0, 12).map((c) => ({ kind: 'commit', value: c.id, meta: c.message })),
+    ...commitList.slice(0, 20).map((c) => ({ kind: 'commit', value: c.id, meta: c.message })),
   ]
+  const values = options.map((o) => o.value)
+  // A ref typed by hand (or restored from a draft) may not be in the list —
+  // surface it as an explicit "custom" entry rather than silently swapping
+  // the selection for something else.
+  const displayValue = values.includes(ref) ? ref : (ref ? '__custom__' : '')
+  const selected = options.find((o) => o.value === ref)
 
   const loading = branches.loading || tags.loading
+  const group = (kind) => options.filter((o) => o.kind === kind)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
@@ -307,38 +329,61 @@ function VersionStep({ dataset, ref, onRefChange }) {
         icon={GitBranch}
         title="Training ref"
         subtitle={`Branch, tag or commit of ${name} to read the data from`}
-        actions={<Badge tone="outline">{ref || 'main'}</Badge>}
+        actions={<Badge tone="outline">{ref || datasetDefault}</Badge>}
       >
         {loading ? (
           <LoadingState label="Loading refs…" />
         ) : (
           <>
-            <div className="pill-row" style={{ gap: 8 }}>
-              {options.length === 0 && <span className="muted">No branches, tags or commits found (is lakeFS up?).</span>}
-              {options.map((o) => (
-                <button
-                  key={`${o.kind}:${o.value}`}
-                  type="button"
-                  className={`ref-chip ${ref === o.value ? 'is-selected' : ''}`}
-                  onClick={() => onRefChange(o.value)}
-                  title={o.meta || o.value}
-                >
-                  {o.kind === 'branch' ? <GitBranch size={12} /> : o.kind === 'tag' ? <Tag size={12} /> : <GitCommitHorizontal size={12} />}
-                  {o.kind === 'commit' ? String(o.value).slice(0, 10) : o.value}
-                </button>
-              ))}
-            </div>
+            <Field
+              label="Training ref"
+              htmlFor="train-ref"
+              hint={selected?.meta
+                ? `${selected.kind} · ${String(selected.meta).slice(0, 10)}`
+                : `Defaults to this dataset's branch, ${datasetDefault}`}
+            >
+              <select
+                id="train-ref"
+                className="select-field"
+                value={displayValue}
+                onChange={(e) => { if (e.target.value !== '__custom__') onRefChange(e.target.value) }}
+              >
+                {!ref && <option value="" disabled>Select a ref…</option>}
+                {displayValue === '__custom__' && (
+                  <option value="__custom__" hidden>custom · {ref}</option>
+                )}
+                <optgroup label="Branches">
+                  {group('branch').map((o) => (
+                    <option key={`b:${o.value}`} value={o.value}>{o.value}</option>
+                  ))}
+                </optgroup>
+                {group('tag').length > 0 && (
+                  <optgroup label="Tags">
+                    {group('tag').map((o) => (
+                      <option key={`t:${o.value}`} value={o.value}>{o.value}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {group('commit').length > 0 && (
+                  <optgroup label="Commits">
+                    {group('commit').map((o) => (
+                      <option key={`c:${o.value}`} value={o.value}>{String(o.value).slice(0, 10)}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </Field>
 
             <div className="mt-4">
               <Field label="Or type an explicit ref" hint="Any branch, tag name, or full/short commit id accepted by lakeFS.">
-                <TextInput value={ref} onChange={(e) => onRefChange(e.target.value)} placeholder="main" />
+                <TextInput value={ref} onChange={(e) => onRefChange(e.target.value)} placeholder={datasetDefault} />
               </Field>
             </div>
           </>
         )}
       </Panel>
 
-      <Panel icon={GitCommitHorizontal} title="Recent commits" subtitle={`On ref "${commitsRef || 'main'}"`} bodyClass={commitList.length ? 'tight' : ''}>
+      <Panel icon={GitCommitHorizontal} title="Recent commits" subtitle={`On ref "${commitsRef}"`} bodyClass={commitList.length ? 'tight' : ''}>
         {showCommitsLoading ? (
           <LoadingState label="Loading commits…" />
         ) : commitList.length === 0 ? (
@@ -559,6 +604,29 @@ function ModelStep({
 }
 
 /* ══════════════════════════════════════════════════════
+   Hyperparameter normalisation
+   Shared by the submit path and the "request preview" panel so the previewed
+   payload is byte-for-byte what POST /models/train(-pipeline) actually gets:
+   `__json` is an editor-only mirror of the custom-mode textarea and must not
+   leak into either.
+   ══════════════════════════════════════════════════════ */
+function cleanHyperparams(hyperparams) {
+  const out = {}
+  for (const [k, v] of Object.entries(hyperparams || {})) {
+    if (k === '__json') continue
+    if (v === '' || v === null || v === undefined) continue
+    if (typeof v === 'string') {
+      const t = v.trim()
+      if (t === '') continue
+      out[k] = /^-?\d+(\.\d+)?$/.test(t) ? (t.includes('.') ? parseFloat(t) : parseInt(t, 10)) : t
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
+/* ══════════════════════════════════════════════════════
    Page root
    ══════════════════════════════════════════════════════ */
 export default function Pipeline() {
@@ -581,7 +649,7 @@ export default function Pipeline() {
   const [dsLoading, setDsLoading] = useState(true)
   const [dsError, setDsError] = useState(null)
   const [selectedDs, setSelectedDs] = useState(null)
-  const [ref, setRef] = useState(() => draft?.ref ?? 'main')
+  const [ref, setRef] = useState(() => draft?.ref ?? '')
 
   const [mode, setMode] = useState(() => draft?.mode ?? 'pipeline')
   const [modelId, setModelId] = useState(() => draft?.modelId ?? '')
@@ -774,26 +842,12 @@ export default function Pipeline() {
     setResults(null)
     setJob(null)
 
-    const cleanParams = () => {
-      const out = {}
-      for (const [k, v] of Object.entries(hyperparams)) {
-        if (k === '__json') continue
-        if (v === '' || v === null || v === undefined) continue
-        if (typeof v === 'string') {
-          const t = v.trim()
-          if (t === '') continue
-          out[k] = /^-?\d+(\.\d+)?$/.test(t) ? (t.includes('.') ? parseFloat(t) : parseInt(t, 10)) : t
-        } else {
-          out[k] = v
-        }
-      }
-      return out
-    }
-
     const common = {
       dataset_id: selectedDs.name,
-      ref: ref || 'main',
-      hyperparameters: cleanParams(),
+      // The dataset's own default branch is the real fallback — a hardcoded
+      // "main" would 400/404 on datasets registered with another default.
+      ref: ref || selectedDs.default_branch || 'main',
+      hyperparameters: cleanHyperparams(hyperparams),
       experiment_name: meta.experiment_name || undefined,
       model_name: meta.model_name || undefined,
     }
@@ -845,7 +899,7 @@ export default function Pipeline() {
     stopPolling()
     clearDraft()
     setStep(0); setMaxReached(0)
-    setSelectedDs(null); setRef('main')
+    setSelectedDs(null); setRef('')
     setModelId(''); setHyperparams({})
     setMeta({ experiment_name: '', model_name: '', target_column: 'label' })
     setJob(null); setResults(null); setLogs([]); setProgress(0)
@@ -929,7 +983,7 @@ export default function Pipeline() {
       {step === 3 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
           <div className="stat-grid">
-            <StatCard icon={Database} tone="accent" value={selectedDs?.name || '—'} label="Dataset" sub={`ref · ${ref}`} />
+            <StatCard icon={Database} tone="accent" value={selectedDs?.name || '—'} label="Dataset" sub={`ref · ${ref || selectedDs?.default_branch || 'main'}`} />
             <StatCard
               icon={BrainCircuit} tone="info"
               value={mode === 'pipeline' ? (AVAILABLE_ALGORITHMS.find((a) => a.id === modelId)?.name || '—') : 'Custom code'}
@@ -946,8 +1000,8 @@ export default function Pipeline() {
           <Panel icon={FileText} title="Request preview" subtitle="Exact payload sent to the API" actions={job?.job_id ? <Badge tone="success" dot>submitted</Badge> : <Badge tone="outline">draft</Badge>}>
             <div className="code-block">{JSON.stringify(
               mode === 'pipeline'
-                ? { dataset_id: selectedDs?.name, ref, target_column: meta.target_column || 'label', model_type: modelId, hyperparameters: hyperparams, experiment_name: meta.experiment_name || null, model_name: meta.model_name || null }
-                : { dataset_id: selectedDs?.name, ref, epochs: Number(epochs) || 10, hyperparameters: hyperparams, code: `# ${code.split('\n').length} lines omitted`, experiment_name: meta.experiment_name || null, model_name: meta.model_name || null },
+                ? { dataset_id: selectedDs?.name, ref: ref || selectedDs?.default_branch || 'main', target_column: meta.target_column || 'label', model_type: modelId, hyperparameters: cleanHyperparams(hyperparams), experiment_name: meta.experiment_name || null, model_name: meta.model_name || null }
+                : { dataset_id: selectedDs?.name, ref: ref || selectedDs?.default_branch || 'main', epochs: Number(epochs) || 10, hyperparameters: cleanHyperparams(hyperparams), code: `# ${code.split('\n').length} lines omitted`, experiment_name: meta.experiment_name || null, model_name: meta.model_name || null },
               null, 2,
             )}</div>
             <div className="mt-3 flex items-center justify-between">

@@ -4,6 +4,7 @@ import { datasetsApi } from '../api/endpoints.js'
 import { useFetch } from '../hooks/useFetch.js'
 import { fmtUnixDate } from '../lib/models.js'
 import { api } from '../api/client.js'
+import { useAuth } from '../auth/AuthContext.jsx'
 import {
   PageHeader, Panel, Button, DataTable, Field, TextInput, TextArea, Badge,
   Tabs, EmptyState, LoadingState, ErrorState, Alert, KeyValue, Modal,
@@ -28,6 +29,12 @@ const TABS = [
 export default function DatasetDetail() {
   const { name } = useParams()
   const navigate = useNavigate()
+  // UI-only gating that mirrors the scopes on each backend route
+  // (backend/app/api/datasets.py): writes need datasets:upload, destructive
+  // operations need datasets:delete. The API re-checks regardless.
+  const { hasPermission } = useAuth()
+  const canUpload = hasPermission('datasets:upload')
+  const canDelete = hasPermission('datasets:delete')
 
   const [tab, setTab] = useState('overview')
 
@@ -37,7 +44,7 @@ export default function DatasetDetail() {
   const [commitMsg, setCommitMsg] = useState('')
   const [commitBranch, setCommitBranch] = useState('')
   const [rollbackTarget, setRollbackTarget] = useState(null)
-  const [cmpLeft, setCmpLeft] = useState('main')
+  const [cmpLeft, setCmpLeft] = useState('')
   const [cmpRight, setCmpRight] = useState('')
   const [cmpRows, setCmpRows] = useState(null)
 
@@ -48,17 +55,25 @@ export default function DatasetDetail() {
   const catalog = useFetch(() => datasetsApi.list(), [])
   const branches = useFetch(() => datasetsApi.branches(name), [name])
   const tags = useFetch(() => datasetsApi.tags(name), [name])
-  const commits = useFetch(() => datasetsApi.commits(name, 'main', 100), [name])
-
-  const branchList = norm(branches.data, 'branches')
-  const tagList = norm(tags.data, 'tags')
-  const commitList = norm(commits.data, 'commits')
 
   const listed = (Array.isArray(catalog.data) ? catalog.data : [])
     .find((d) => d.name === name) || {}
   const dbMeta = { ...listed, ...(meta.data?.db_metadata || {}) }
   const lfMeta = meta.data?.lakefs_metadata || {}
   if (!dbMeta.description) dbMeta.description = lfMeta.description || undefined
+
+  // Resolve the dataset's real default branch before the commit fetch: a
+  // dataset registered with a non-"main" default branch used to show an empty
+  // history because this was hardcoded. Refetches once the value lands.
+  const defaultBranch = dbMeta.default_branch || 'main'
+  const commits = useFetch(
+    () => datasetsApi.commits(name, defaultBranch, 100),
+    [name, defaultBranch],
+  )
+
+  const branchList = norm(branches.data, 'branches')
+  const tagList = norm(tags.data, 'tags')
+  const commitList = norm(commits.data, 'commits')
 
   const refreshAll = () => {
     meta.refetch(); catalog.refetch(); branches.refetch(); tags.refetch(); commits.refetch()
@@ -93,7 +108,7 @@ export default function DatasetDetail() {
       />
 
       <div className="stat-grid">
-        <StatCard icon={GitBranch} tone="accent" value={branchList.length} label="Branches" sub={dbMeta.default_branch || 'main'} />
+        <StatCard icon={GitBranch} tone="accent" value={branchList.length} label="Branches" sub={defaultBranch} />
         <StatCard icon={Tag} tone="info" value={tagList.length} label="Tags" sub="named refs" />
         <StatCard icon={GitCommitHorizontal} tone="purple" value={commitList.length} label="Commits" sub="on default ref" />
         <StatCard icon={Layers} tone="success" value={meta.data?.dataset_name ? 'lakeFS' : '—'} label="Backend" sub="object storage" />
@@ -102,7 +117,7 @@ export default function DatasetDetail() {
       <Tabs tabs={TABS} active={tab} onChange={setTab} variant="underline" />
 
       {tab === 'overview' && <OverviewTab meta={meta.data} dbMeta={dbMeta} lfMeta={lfMeta} />}
-      {tab === 'files' && <FilesTab name={name} defaultBranch={dbMeta.default_branch || 'main'} branches={branchList} />}
+      {tab === 'files' && <FilesTab name={name} defaultBranch={defaultBranch} branches={branchList} canUpload={canUpload} />}
       {tab === 'commits' && (
         <CommitsTab
           name={name}
@@ -111,23 +126,49 @@ export default function DatasetDetail() {
           error={commits.error}
           onRefresh={commits.refetch}
           branches={branchList}
-          defaultBranch={dbMeta.default_branch || 'main'}
+          defaultBranch={defaultBranch}
           message={commitMsg}
           onMessage={setCommitMsg}
-          branch={commitBranch || dbMeta.default_branch || 'main'}
+          branch={commitBranch || defaultBranch}
           onBranch={setCommitBranch}
           rollbackTarget={rollbackTarget}
           onRollbackTarget={setRollbackTarget}
+          canUpload={canUpload}
         />
       )}
-      {tab === 'branches' && <BranchesTab name={name} branches={branchList} loading={branches.loading} error={branches.error} onRefresh={branches.refetch} />}
-      {tab === 'tags' && <TagsTab name={name} tags={tagList} commits={commitList} loading={tags.loading} error={tags.error} onRefresh={tags.refetch} />}
+      {tab === 'branches' && (
+        <BranchesTab
+          name={name}
+          branches={branchList}
+          defaultBranch={defaultBranch}
+          loading={branches.loading}
+          error={branches.error}
+          onRefresh={branches.refetch}
+          canUpload={canUpload}
+          canDelete={canDelete}
+        />
+      )}
+      {tab === 'tags' && (
+        <TagsTab
+          name={name}
+          tags={tagList}
+          commits={commitList}
+          branches={branchList}
+          defaultBranch={defaultBranch}
+          loading={tags.loading}
+          error={tags.error}
+          onRefresh={tags.refetch}
+          canUpload={canUpload}
+          canDelete={canDelete}
+        />
+      )}
       {tab === 'compare' && (
         <CompareTab
           name={name}
           branches={branchList}
           tags={tagList}
           commits={commitList}
+          defaultBranch={defaultBranch}
           left={cmpLeft}
           onLeft={setCmpLeft}
           right={cmpRight}
@@ -136,7 +177,16 @@ export default function DatasetDetail() {
           onRows={setCmpRows}
         />
       )}
-      {tab === 'manage' && <ManageTab name={name} dbMeta={dbMeta} onSaved={meta.refetch} onDeleted={() => navigate('/datasets')} />}
+      {tab === 'manage' && (
+        <ManageTab
+          name={name}
+          dbMeta={dbMeta}
+          onSaved={meta.refetch}
+          onDeleted={() => navigate('/datasets')}
+          canUpload={canUpload}
+          canDelete={canDelete}
+        />
+      )}
     </div>
   )
 }
@@ -237,7 +287,7 @@ function OverviewTab({ meta, dbMeta, lfMeta }) {
 /* ══════════════════════════════════════════════════════
    Files — upload + download
    ══════════════════════════════════════════════════════ */
-function FilesTab({ name, defaultBranch, branches }) {
+function FilesTab({ name, defaultBranch, branches, canUpload }) {
   const toast = useToast()
   const fileRef = useRef(null)
   const [branch, setBranch] = useState(defaultBranch)
@@ -263,8 +313,8 @@ function FilesTab({ name, defaultBranch, branches }) {
     try {
       const body = new FormData()
       body.append('file', file)
-      body.append('branch', branch)
-      await datasetsApi.uploadFile(name, body)
+      // The branch rides in the query string — see datasetsApi.uploadFile.
+      await datasetsApi.uploadFile(name, body, branch)
       toast.success('File uploaded', `${file.name} staged on ${branch}. Commit to publish it.`)
       setLog((l) => [{ file: file.name, at: new Date(), branch }, ...l])
       // The listing is now stale — refresh it and preview the new file.
@@ -342,7 +392,7 @@ function FilesTab({ name, defaultBranch, branches }) {
         <div className="field-row field-row-2 mb-3">
           <Field label="Branch" htmlFor="up-branch">
             <select id="up-branch" className="select-field" value={branch} onChange={(e) => setBranch(e.target.value)}>
-              {(branchNames.length ? branchNames : [defaultBranch]).map((b) => (
+              {(branchNames.length ? [...new Set([...branchNames, defaultBranch])] : [defaultBranch]).map((b) => (
                 <option key={b} value={b}>{b}</option>
               ))}
             </select>
@@ -354,24 +404,33 @@ function FilesTab({ name, defaultBranch, branches }) {
           </Field>
         </div>
 
-        <div
-          className={`file-drop ${drag ? 'is-drag' : ''}`}
-          onClick={() => fileRef.current?.click()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click() }
-          }}
-          onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => { e.preventDefault(); setDrag(false); upload(e.dataTransfer.files?.[0]) }}
-          role="button"
-          tabIndex={0}
-        >
-          <span className="file-drop-icon"><Upload size={19} /></span>
-          <span className="file-drop-title">Drop a file or click to browse</span>
-          <span className="file-drop-sub">Uploaded to {name} @ {branch}</span>
-        </div>
-        <input ref={fileRef} type="file" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = '' }} />
-        {error && <div className="mt-3"><Alert tone="error">{error}</Alert></div>}
+        {canUpload ? (
+          <>
+            <div
+              className={`file-drop ${drag ? 'is-drag' : ''}`}
+              onClick={() => fileRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click() }
+              }}
+              onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={(e) => { e.preventDefault(); setDrag(false); upload(e.dataTransfer.files?.[0]) }}
+              role="button"
+              tabIndex={0}
+            >
+              <span className="file-drop-icon"><Upload size={19} /></span>
+              <span className="file-drop-title">Drop a file or click to browse</span>
+              <span className="file-drop-sub">Uploaded to {name} @ {branch}</span>
+            </div>
+            <input ref={fileRef} type="file" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = '' }} />
+            {error && <div className="mt-3"><Alert tone="error">{error}</Alert></div>}
+          </>
+        ) : (
+          <Alert tone="info">
+            You can browse, preview and download from any ref, but the <strong>datasets:upload</strong> scope
+            is required to stage a new file on {branch}.
+          </Alert>
+        )}
       </Panel>
 
       <Panel icon={Download} title="Download" subtitle={`Fetch a file from ${name} @ ${branch}`}>
@@ -508,7 +567,7 @@ function FilesTab({ name, defaultBranch, branches }) {
 function CommitsTab({
   name, commits, loading, error, onRefresh,
   branches, defaultBranch, message, onMessage, branch, onBranch,
-  rollbackTarget, onRollbackTarget,
+  rollbackTarget, onRollbackTarget, canUpload,
 }) {
   const toast = useToast()
   const confirm = useConfirm()
@@ -518,7 +577,10 @@ function CommitsTab({
     .map((b) => (typeof b === 'string' ? b : b?.name))
     .filter(Boolean)
   const effectiveBranch = branch || defaultBranch || 'main'
-  const branchOptions = branchNames.length ? branchNames : [effectiveBranch]
+  // Always offer the effective branch as an option: the listing may not
+  // contain it yet (default branch still resolving, or the branch was deleted
+  // elsewhere) and a <select> whose value matches no option renders blank.
+  const branchOptions = [...new Set([...branchNames, effectiveBranch])]
 
   async function commit(e) {
     e.preventDefault()
@@ -561,21 +623,27 @@ function CommitsTab({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
       <Panel icon={Save} title="Commit pending changes" subtitle={`Publish staged uploads to the ${effectiveBranch} branch head`}>
-        <form onSubmit={commit} className="field-row field-row-3">
-          <Field label="Branch" htmlFor="commit-branch" hint="Staged uploads land here">
-            <select id="commit-branch" className="select-field" value={effectiveBranch} onChange={(e) => onBranch(e.target.value)}>
-              {branchOptions.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Commit message" htmlFor="commit-msg" required>
-            <TextInput id="commit-msg" value={message} onChange={(e) => onMessage(e.target.value)} placeholder="Add churn features" />
-          </Field>
-          <Field label="&nbsp;">
-            <Button type="submit" variant="primary" icon={GitCommitHorizontal} loading={busy} block>Commit</Button>
-          </Field>
-        </form>
+        {!canUpload ? (
+          <Alert tone="info">
+            The <strong>datasets:upload</strong> scope is required to commit staged changes to {effectiveBranch}.
+          </Alert>
+        ) : (
+          <form onSubmit={commit} className="field-row field-row-3">
+            <Field label="Branch" htmlFor="commit-branch" hint="Staged uploads land here">
+              <select id="commit-branch" className="select-field" value={effectiveBranch} onChange={(e) => onBranch(e.target.value)}>
+                {branchOptions.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Commit message" htmlFor="commit-msg" required>
+              <TextInput id="commit-msg" value={message} onChange={(e) => onMessage(e.target.value)} placeholder="Add churn features" />
+            </Field>
+            <Field label="&nbsp;">
+              <Button type="submit" variant="primary" icon={GitCommitHorizontal} loading={busy} block>Commit</Button>
+            </Field>
+          </form>
+        )}
       </Panel>
 
       <Panel
@@ -611,11 +679,11 @@ function CommitsTab({
                 },
                 {
                   key: 'actions', actions: true, header: <span className="sr-only">Actions</span>,
-                  render: (c) => (
+                  render: (c) => canUpload ? (
                     <Button variant="danger-ghost" size="xs" icon={Undo2} onClick={() => onRollbackTarget(c.id)}>
                       Roll back
                     </Button>
-                  ),
+                  ) : null,
                 },
               ]}
             />
@@ -655,20 +723,35 @@ function CommitsTab({
 /* ══════════════════════════════════════════════════════
    Branches
    ══════════════════════════════════════════════════════ */
-function BranchesTab({ name, branches, loading, error, onRefresh }) {
+function BranchesTab({ name, branches, defaultBranch, loading, error, onRefresh, canUpload, canDelete }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ branch_name: '', source_branch: 'main' })
+  // source_branch stays '' until the user picks one, so the selector keeps
+  // tracking the dataset's real default branch while it resolves instead of
+  // freezing on a hardcoded "main".
+  const [form, setForm] = useState({ branch_name: '', source_branch: '' })
   const [busy, setBusy] = useState(false)
+
+  // Branch rows are {name, head_commit_id} objects — reduce to names before
+  // they are used as <option> values or URL segments.
+  const branchNames = (Array.isArray(branches) ? branches : [])
+    .map((b) => (typeof b === 'string' ? b : b?.name))
+    .filter(Boolean)
+  const sourceBranch = form.source_branch || defaultBranch
+  const sourceOptions = [...new Set([...branchNames, defaultBranch])]
 
   async function create(e) {
     e.preventDefault()
+    if (!form.branch_name.trim()) {
+      toast.warning('Branch name required', 'Name the branch before creating it.')
+      return
+    }
     setBusy(true)
     try {
-      await datasetsApi.createBranch(name, form.branch_name.trim(), form.source_branch)
-      toast.success('Branch created', form.branch_name)
-      setOpen(false); setForm({ branch_name: '', source_branch: 'main' }); onRefresh()
+      await datasetsApi.createBranch(name, form.branch_name.trim(), sourceBranch)
+      toast.success('Branch created', `${form.branch_name.trim()} from ${sourceBranch}`)
+      setOpen(false); setForm({ branch_name: '', source_branch: '' }); onRefresh()
     } catch (err) {
       toast.error('Branch creation failed', err?.message)
     } finally { setBusy(false) }
@@ -676,15 +759,15 @@ function BranchesTab({ name, branches, loading, error, onRefresh }) {
 
   async function remove(b) {
     const ok = await confirm({
-      title: `Delete branch "${b}"?`,
+      title: `Delete branch "${b.name}"?`,
       text: 'All commits reachable only from this branch will be lost.',
       confirmLabel: 'Delete branch',
       tone: 'danger',
     })
     if (!ok) return
     try {
-      await datasetsApi.deleteBranch(name, b)
-      toast.success('Branch deleted', b)
+      await datasetsApi.deleteBranch(name, b.name)
+      toast.success('Branch deleted', b.name)
       onRefresh()
     } catch (err) { toast.error('Delete failed', err?.message) }
   }
@@ -694,9 +777,18 @@ function BranchesTab({ name, branches, loading, error, onRefresh }) {
       icon={GitBranch}
       title="Branches"
       subtitle={`${branches.length} branch${branches.length === 1 ? '' : 'es'}`}
-      actions={<Button variant="primary" size="sm" icon={Plus} onClick={() => setOpen(true)}>New branch</Button>}
+      actions={canUpload ? (
+        <Button variant="primary" size="sm" icon={Plus} onClick={() => setOpen(true)}>New branch</Button>
+      ) : null}
       bodyClass={branches.length ? 'tight' : ''}
     >
+      {!canUpload && (
+        <div className="mb-3">
+          <Alert tone="info">
+            The <strong>datasets:upload</strong> scope is required to create or delete branches.
+          </Alert>
+        </div>
+      )}
       {loading ? <LoadingState label="Loading branches…" />
         : error ? <ErrorState error={error} onRetry={onRefresh} />
         : branches.length === 0 ? <EmptyState icon={GitBranch} title="No branches" desc="Create a branch to experiment on a copy of the data." />
@@ -707,12 +799,16 @@ function BranchesTab({ name, branches, loading, error, onRefresh }) {
             columns={[
               { key: 'name', strong: true, header: 'Branch', render: (b) => <span className="flex items-center gap-2"><GitBranch size={13} /> {b.name}</span> },
               { key: 'head_commit_id', header: 'HEAD', render: (b) => <code className="mono text-xs">{String(b.head_commit_id || '—').slice(0, 10)}</code> },
-              { key: 'type', header: 'Type', render: (b) => <Badge tone="outline">{b.type || 'branch'}</Badge> },
               {
                 key: 'actions', actions: true, header: <span className="sr-only">Actions</span>,
-                render: (b) => b.name === 'main'
+                // The backend protects the dataset's *default* branch, not a
+                // literal "main" (versioning_service.py) — mirror that here so
+                // the real default is never offered for deletion.
+                render: (b) => b.name === defaultBranch
                   ? <Badge tone="success" sm>default</Badge>
-                  : <Button variant="danger-ghost" size="xs" icon={Trash2} onClick={() => remove(b)}>Delete</Button>,
+                  : canDelete
+                    ? <Button variant="danger-ghost" size="xs" icon={Trash2} onClick={() => remove(b)}>Delete</Button>
+                    : null,
               },
             ]}
           />
@@ -734,8 +830,17 @@ function BranchesTab({ name, branches, loading, error, onRefresh }) {
           <Field label="Branch name" required htmlFor="br-name">
             <TextInput id="br-name" value={form.branch_name} onChange={(e) => setForm({ ...form, branch_name: e.target.value })} placeholder="experiment-dropout" />
           </Field>
-          <Field label="Source branch" htmlFor="br-src">
-            <TextInput id="br-src" value={form.source_branch} onChange={(e) => setForm({ ...form, source_branch: e.target.value })} />
+          <Field label="Source branch" htmlFor="br-src" hint={`Branch to fork from — currently ${sourceBranch}`}>
+            <select
+              id="br-src"
+              className="select-field"
+              value={sourceBranch}
+              onChange={(e) => setForm({ ...form, source_branch: e.target.value })}
+            >
+              {sourceOptions.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
           </Field>
           <button type="submit" hidden />
         </form>
@@ -747,35 +852,51 @@ function BranchesTab({ name, branches, loading, error, onRefresh }) {
 /* ══════════════════════════════════════════════════════
    Tags
    ══════════════════════════════════════════════════════ */
-function TagsTab({ name, tags, commits, loading, error, onRefresh }) {
+function TagsTab({ name, tags, commits, branches, defaultBranch, loading, error, onRefresh, canUpload, canDelete }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ tag_name: '', target_ref: 'main' })
+  // target_ref stays '' until the user picks one so the selector follows the
+  // dataset's real default branch instead of a hardcoded "main".
+  const [form, setForm] = useState({ tag_name: '', target_ref: '' })
   const [busy, setBusy] = useState(false)
+
+  const names = (list) => (Array.isArray(list) ? list : [])
+    .map((x) => (typeof x === 'string' ? x : x?.name))
+    .filter(Boolean)
+  const branchNames = [...new Set([...names(branches), defaultBranch])]
+  const tagNames = names(tags)
+  const commitIds = (Array.isArray(commits) ? commits : [])
+    .map((c) => String(c?.id || ''))
+    .filter(Boolean)
+  const targetRef = form.target_ref || defaultBranch
 
   async function create(e) {
     e.preventDefault()
+    if (!form.tag_name.trim()) {
+      toast.warning('Tag name required', 'Name the tag before creating it.')
+      return
+    }
     setBusy(true)
     try {
-      await datasetsApi.createTag(name, form.tag_name.trim(), form.target_ref)
-      toast.success('Tag created', form.tag_name)
-      setOpen(false); setForm({ tag_name: '', target_ref: 'main' }); onRefresh()
+      await datasetsApi.createTag(name, form.tag_name.trim(), targetRef)
+      toast.success('Tag created', `${form.tag_name.trim()} → ${targetRef}`)
+      setOpen(false); setForm({ tag_name: '', target_ref: '' }); onRefresh()
     } catch (err) { toast.error('Tag creation failed', err?.message) }
     finally { setBusy(false) }
   }
 
   async function remove(t) {
     const ok = await confirm({
-      title: `Delete tag "${t}"?`,
+      title: `Delete tag "${t.name}"?`,
       text: 'The tag pointer is removed; the underlying commits remain reachable from branches.',
       confirmLabel: 'Delete tag',
       tone: 'danger',
     })
     if (!ok) return
     try {
-      await datasetsApi.deleteTag(name, t)
-      toast.success('Tag deleted', t)
+      await datasetsApi.deleteTag(name, t.name)
+      toast.success('Tag deleted', t.name)
       onRefresh()
     } catch (err) { toast.error('Delete failed', err?.message) }
   }
@@ -785,9 +906,18 @@ function TagsTab({ name, tags, commits, loading, error, onRefresh }) {
       icon={Tag}
       title="Tags"
       subtitle="Immutable pointers to a commit — ideal for marking dataset releases"
-      actions={<Button variant="primary" size="sm" icon={Plus} onClick={() => setOpen(true)}>New tag</Button>}
+      actions={canUpload ? (
+        <Button variant="primary" size="sm" icon={Plus} onClick={() => setOpen(true)}>New tag</Button>
+      ) : null}
       bodyClass={tags.length ? 'tight' : ''}
     >
+      {!canUpload && (
+        <div className="mb-3">
+          <Alert tone="info">
+            The <strong>datasets:upload</strong> scope is required to create or delete tags.
+          </Alert>
+        </div>
+      )}
       {loading ? <LoadingState label="Loading tags…" />
         : error ? <ErrorState error={error} onRetry={onRefresh} />
         : tags.length === 0 ? <EmptyState icon={Tag} title="No tags" desc="Tag a commit to create a stable dataset release." />
@@ -798,10 +928,11 @@ function TagsTab({ name, tags, commits, loading, error, onRefresh }) {
             columns={[
               { key: 'name', strong: true, header: 'Tag', render: (t) => <span className="flex items-center gap-2"><Tag size={13} /> {t.name}</span> },
               { key: 'commit_id', header: 'Commit', render: (t) => <code className="mono text-xs">{String(t.commit_id || '—').slice(0, 10)}</code> },
-              { key: 'message', header: 'Message', render: (t) => <span className="muted">{t.message || '—'}</span> },
               {
                 key: 'actions', actions: true, header: <span className="sr-only">Actions</span>,
-                render: (t) => <Button variant="danger-ghost" size="xs" icon={Trash2} onClick={() => remove(t)}>Delete</Button>,
+                render: (t) => canDelete
+                  ? <Button variant="danger-ghost" size="xs" icon={Trash2} onClick={() => remove(t)}>Delete</Button>
+                  : null,
               },
             ]}
           />
@@ -823,14 +954,38 @@ function TagsTab({ name, tags, commits, loading, error, onRefresh }) {
           <Field label="Tag name" required htmlFor="tg-name">
             <TextInput id="tg-name" value={form.tag_name} onChange={(e) => setForm({ ...form, tag_name: e.target.value })} placeholder="v1.0-release" />
           </Field>
-          <Field label="Target ref" htmlFor="tg-ref" hint="Branch name or commit id">
-            <TextInput id="tg-ref" value={form.target_ref} onChange={(e) => setForm({ ...form, target_ref: e.target.value })} />
+          <Field label="Target ref" htmlFor="tg-ref" hint={`Currently pointing at ${targetRef}`}>
+            <select
+              id="tg-ref"
+              className="select-field"
+              value={targetRef}
+              onChange={(e) => setForm({ ...form, target_ref: e.target.value })}
+            >
+              <optgroup label="Branches">
+                {branchNames.map((b) => <option key={`b:${b}`} value={b}>{b}</option>)}
+              </optgroup>
+              {tagNames.length > 0 && (
+                <optgroup label="Tags">
+                  {tagNames.map((t) => <option key={`t:${t}`} value={t}>{t}</option>)}
+                </optgroup>
+              )}
+              {commitIds.length > 0 && (
+                <optgroup label="Commits">
+                  {commitIds.map((c) => <option key={`c:${c}`} value={c}>{c.slice(0, 10)}</option>)}
+                </optgroup>
+              )}
+            </select>
           </Field>
-          {commits.length > 0 && (
+          {commitIds.length > 0 && (
             <div className="pill-row">
-              {commits.slice(0, 6).map((c) => (
-                <button key={c.id} type="button" className="ref-chip" onClick={() => setForm({ ...form, target_ref: c.id })}>
-                  <GitCommitHorizontal size={11} /> {String(c.id).slice(0, 8)}
+              {commitIds.slice(0, 6).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`ref-chip ${targetRef === c ? 'is-selected' : ''}`}
+                  onClick={() => setForm({ ...form, target_ref: c })}
+                >
+                  <GitCommitHorizontal size={11} /> {c.slice(0, 8)}
                 </button>
               ))}
             </div>
@@ -845,7 +1000,7 @@ function TagsTab({ name, tags, commits, loading, error, onRefresh }) {
 /* ══════════════════════════════════════════════════════
    Compare (three-dot diff)
    ══════════════════════════════════════════════════════ */
-function CompareTab({ name, branches, tags, commits, left, onLeft, right, onRight, rows, onRows }) {
+function CompareTab({ name, branches, tags, commits, defaultBranch, left, onLeft, right, onRight, rows, onRows }) {
   const toast = useToast()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -859,9 +1014,11 @@ function CompareTab({ name, branches, tags, commits, left, onLeft, right, onRigh
   const commitIds = (Array.isArray(commits) ? commits : [])
     .map((c) => String(c?.id || '').slice(0, 10))
     .filter(Boolean)
-  // Harden the restored left ref (e.g. a branch deleted elsewhere).
-  const leftOptions = [...new Set([...branchNames, ...tagNames, ...commitIds, 'main'])]
-  const effectiveLeft = leftOptions.includes(left) ? left : (leftOptions[0] || 'main')
+  // Harden the restored left ref (e.g. a branch deleted elsewhere) and seed
+  // it from the dataset's *actual* default branch instead of a literal "main".
+  const branchGroup = [...new Set([...branchNames, defaultBranch])].filter(Boolean)
+  const leftOptions = [...new Set([...branchGroup, ...tagNames, ...commitIds])]
+  const effectiveLeft = leftOptions.includes(left) ? left : defaultBranch
 
   async function run() {
     if (!effectiveLeft || !right) { toast.warning('Pick both refs', 'Choose a left and right ref to compare.'); return }
@@ -894,7 +1051,7 @@ function CompareTab({ name, branches, tags, commits, left, onLeft, right, onRigh
           <Field label="Left ref" htmlFor="cmp-left">
             <select id="cmp-left" className="select-field" value={effectiveLeft} onChange={(e) => onLeft(e.target.value)}>
               <optgroup label="Branches">
-                {branchNames.map((b) => (
+                {branchGroup.map((b) => (
                   <option key={`b:${b}`} value={b}>{b}</option>
                 ))}
               </optgroup>
@@ -918,7 +1075,7 @@ function CompareTab({ name, branches, tags, commits, left, onLeft, right, onRigh
             <select id="cmp-right" className="select-field" value={right} onChange={(e) => onRight(e.target.value)}>
               <option value="" disabled>Select a ref…</option>
               <optgroup label="Branches">
-                {branchNames.map((b) => (
+                {branchGroup.map((b) => (
                   <option key={`b:${b}`} value={b}>{b}</option>
                 ))}
               </optgroup>
@@ -990,7 +1147,7 @@ function CompareTab({ name, branches, tags, commits, left, onLeft, right, onRigh
 /* ══════════════════════════════════════════════════════
    Manage (metadata update + delete)
    ══════════════════════════════════════════════════════ */
-function ManageTab({ name, dbMeta, onSaved, onDeleted }) {
+function ManageTab({ name, dbMeta, onSaved, onDeleted, canUpload, canDelete }) {
   const toast = useToast()
   const confirm = useConfirm()
   const [kvText, setKvText] = useState(serializeMeta(dbMeta))
@@ -998,12 +1155,14 @@ function ManageTab({ name, dbMeta, onSaved, onDeleted }) {
   const [error, setError] = useState(null)
 
   // The catalog fetch can land after mount — keep the editor in sync until the
-  // user starts typing.
+  // user starts typing. Depends on the metadata *contents*, not the dbMeta
+  // object, which is rebuilt (new identity) on every parent render.
   const [pristine, setPristine] = useState(true)
   useEffect(() => {
     if (!pristine) return
     setKvText(serializeMeta(dbMeta))
-  }, [dbMeta, pristine])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbMeta.metadata_info, pristine])
 
   async function save(e) {
     e.preventDefault()
@@ -1080,20 +1239,26 @@ function ManageTab({ name, dbMeta, onSaved, onDeleted }) {
       </Panel>
 
       <Panel icon={Settings} title="Custom metadata" subtitle="Free-form key/value pairs stored alongside the dataset">
-        <form onSubmit={save} className="flex flex-col gap-4">
-          {error && <Alert tone="error">{error}</Alert>}
-          <Field
-            label="Metadata (JSON)"
-            htmlFor="mg-kv"
-            hint='dict[str, str] — numbers and booleans are stringified automatically. e.g. {"owner":"team-a","pii":"false"}'
-          >
-            <TextArea id="mg-kv" rows={8} value={kvText} onChange={(e) => { setKvText(e.target.value); setPristine(false) }} />
-          </Field>
-          <div className="flex gap-2">
-            <Button type="submit" variant="primary" icon={Save} loading={busy}>Save metadata</Button>
-            <Button variant="ghost" icon={RotateCcw} onClick={reset}>Revert</Button>
-          </div>
-        </form>
+        {!canUpload ? (
+          <Alert tone="info">
+            The <strong>datasets:upload</strong> scope is required to update this dataset's metadata.
+          </Alert>
+        ) : (
+          <form onSubmit={save} className="flex flex-col gap-4">
+            {error && <Alert tone="error">{error}</Alert>}
+            <Field
+              label="Metadata (JSON)"
+              htmlFor="mg-kv"
+              hint='dict[str, str] — numbers and booleans are stringified automatically. e.g. {"owner":"team-a","pii":"false"}'
+            >
+              <TextArea id="mg-kv" rows={8} value={kvText} onChange={(e) => { setKvText(e.target.value); setPristine(false) }} />
+            </Field>
+            <div className="flex gap-2">
+              <Button type="submit" variant="primary" icon={Save} loading={busy}>Save metadata</Button>
+              <Button variant="ghost" icon={RotateCcw} onClick={reset}>Revert</Button>
+            </div>
+          </form>
+        )}
       </Panel>
 
       <Panel
@@ -1111,8 +1276,19 @@ function ManageTab({ name, dbMeta, onSaved, onDeleted }) {
               Removes the lakeFS repository, all branches and tags, and the PostgreSQL record.
             </span>
           </span>
-          <Button variant="danger" size="sm" icon={Trash2} loading={busy} onClick={destroy}>Delete dataset</Button>
+          {canDelete ? (
+            <Button variant="danger" size="sm" icon={Trash2} loading={busy} onClick={destroy}>Delete dataset</Button>
+          ) : (
+            <Badge tone="outline" sm>needs datasets:delete</Badge>
+          )}
         </div>
+        {!canDelete && (
+          <div className="mt-3">
+            <Alert tone="info">
+              Only roles with the <strong>datasets:delete</strong> scope can remove a dataset.
+            </Alert>
+          </div>
+        )}
       </Panel>
     </div>
   )

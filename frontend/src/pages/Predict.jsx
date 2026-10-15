@@ -36,11 +36,18 @@ export default function Predict() {
   const modelList = models.data?.models || []
   const depList = deployments.data?.deployments || []
 
-  // Keep the target valid when the query param isn't in either list yet.
+  // Keep the target valid for the ACTIVE tab. The old version ignored `tab`
+  // and always picked a model name, so on the default deployment tab "Send
+  // request" issued POST /deployments/{model_name}/predict and 404'd.
   useEffect(() => {
-    if (!target && modelList.length) setTarget(modelList[0].name)
+    const list = tab === 'model' ? modelList : depList
+    if (target && list.some((o) => (o.deployment_id || o.name) === target)) return
+    // List not loaded yet — leave a deep-linked target alone rather than
+    // blanking it before we can tell whether it is valid.
+    if (!list.length) return
+    setTarget(list[0].deployment_id || list[0].name)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelList.length, depList.length])
+  }, [tab, target, modelList.length, depList.length])
 
   async function run() {
     setError(null)
