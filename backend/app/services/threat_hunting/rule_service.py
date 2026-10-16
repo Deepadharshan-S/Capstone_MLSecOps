@@ -130,6 +130,22 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Pickle Deserialization RCE Payload Detected",
+        "description": "Detects arbitrary shellcode, remote code execution payloads, or dangerous opcodes (GLOBAL, REDUCE pointing to os, sys, posix, subprocess, socket) discovered during static AST disassembly of model files.",
+        "rule_type": "threshold",
+        "severity": "CRITICAL",
+        "is_enabled": True,
+        "mitre_attack_id": "T1203",
+        "mitre_atlas_id": "AML.T0025",
+        "config": {
+            "event_type": "model.rce_payload_detected",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 

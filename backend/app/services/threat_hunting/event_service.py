@@ -184,6 +184,19 @@ AUDIT_ACTION_MAP = {
         "source": "model_inference",
         "resource_type": "model",
     },
+    # Model Artifact Security & RCE Gatekeeper
+    "model_rce_payload_detected": {
+        "event_type": "model.rce_payload_detected",
+        "severity": "CRITICAL",
+        "source": "pickle_scanner",
+        "resource_type": "model",
+    },
+    "model_pickle_unsafe": {
+        "event_type": "model.rce_payload_detected",
+        "severity": "CRITICAL",
+        "source": "pickle_scanner",
+        "resource_type": "model",
+    },
 }
 
 

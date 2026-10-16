@@ -440,6 +440,26 @@ class ModelRegistryService:
                     detail="Uploaded model file is empty.",
                 )
 
+            # 4b. Pickle Deserialization RCE Gatekeeper (Fickling & Bytecode Opcode Scan)
+            from app.services.ml_ops.pickle_scanner import pickle_scanner
+
+            scan_result = pickle_scanner.scan_file(temp_file_path)
+            if not scan_result["is_safe"]:
+                quarantine_path = pickle_scanner.quarantine_file(
+                    source_path=temp_file_path,
+                    filename=safe_filename,
+                    username=user.username,
+                    scan_result=scan_result,
+                )
+                violations_summary = "; ".join(scan_result.get("violations", []))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Security Gatekeeper Violation: Model artifact contains unsafe instructions or "
+                        f"remote code execution payload and has been quarantined. Violations: {violations_summary}"
+                    ),
+                )
+
             # 5. Load the model using cloudpickle or pickle
             try:
                 with open(temp_file_path, "rb") as f:
