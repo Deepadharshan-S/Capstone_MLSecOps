@@ -262,6 +262,19 @@ AUDIT_ACTION_MAP = {
         "source": "rayserve_monitor",
         "resource_type": "rayservice",
     },
+    # Model Behavioral Drift & Inference Latency Anomalies
+    "model_confidence_drift_detected": {
+        "event_type": "inference.confidence_drift_detected",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
+    "inference_latency_spike_detected": {
+        "event_type": "inference.latency_spike_anomaly",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
 }
 
 

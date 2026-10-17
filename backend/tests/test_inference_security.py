@@ -153,3 +153,71 @@ def test_systematic_feature_perturbation_detection(db):
     assert len(pert_detections) > 0, "Expected alert for Systematic Feature Perturbation!"
     alert = alert_service.process_detection(db, pert_detections[0])
     assert alert.severity == "HIGH"
+
+
+def test_model_confidence_drift_detection(db):
+    """
+    Verifies that an abrupt collapse in prediction confidence distributions
+    triggers a Model Behavioral Drift alert.
+    """
+    detector = InferenceRateDetector()
+    model_id = f"drift_model_{uuid.uuid4().hex[:6]}"
+
+    # Normal healthy high-confidence predictions (0.95, 0.90)
+    for _ in range(5):
+        assert (
+            detector.record_and_check_confidence_drift(
+                resource_id=model_id, predictions=[0.95, 0.90], db=db
+            )
+            is False
+        )
+
+    # Abrupt degradation in confidence (collapsing to near 0.50 uniform uncertainty)
+    triggered = False
+    for _ in range(12):
+        if detector.record_and_check_confidence_drift(
+            resource_id=model_id, predictions=[0.52, 0.51], db=db
+        ):
+            triggered = True
+
+    assert triggered is True, "Confidence distribution collapse should trigger Behavioral Drift alert!"
+
+    # Verify Threat Hunting Alert
+    detections = detection_engine.evaluate_all_rules(db)
+    drift_detections = [d for d in detections if "Confidence Degradation" in d.title]
+    assert len(drift_detections) > 0, "Expected alert for Confidence Degradation Drift!"
+    alert = alert_service.process_detection(db, drift_detections[0])
+    assert alert.severity == "HIGH"
+
+
+def test_algorithmic_dos_latency_spike_detection(db):
+    """
+    Verifies that an extreme inference latency spike (e.g. 1800ms vs 50ms baseline)
+    triggers an Algorithmic DoS alert under stable traffic.
+    """
+    detector = InferenceRateDetector()
+    model_id = f"dos_target_{uuid.uuid4().hex[:6]}"
+
+    # Normal fast latencies (baseline ~ 50ms)
+    for lat in [45.0, 50.0, 48.0, 52.0, 50.0]:
+        assert (
+            detector.record_and_check_latency_spike(
+                resource_id=model_id, latency_ms=lat, db=db
+            )
+            is False
+        )
+
+    # Extreme latency spike: 1800ms (> 3x baseline and > 1500ms)
+    triggered = detector.record_and_check_latency_spike(
+        resource_id=model_id, latency_ms=1800.0, db=db
+    )
+    assert triggered is True, "Latency spike to 1800ms should trigger Algorithmic DoS alert!"
+
+    # Verify Threat Hunting Alert
+    detections = detection_engine.evaluate_all_rules(db)
+    dos_detections = [d for d in detections if "Inference Latency Spike Anomaly" in d.title]
+    assert len(dos_detections) > 0, "Expected alert for Inference Latency Spike Anomaly!"
+    alert = alert_service.process_detection(db, dos_detections[0])
+    assert alert.severity == "HIGH"
+    assert alert.mitre_attack_id == "T1499"
+    assert alert.mitre_atlas_id == "AML.T0029"

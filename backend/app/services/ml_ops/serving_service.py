@@ -384,13 +384,24 @@ class ModelServingService:
         record_inference_request(result="success")
         record_inference_duration(latency_s)
 
-        # 3b. Decision-Boundary Scraping Detector (0.48 <= P <= 0.52 - MITRE ATLAS AML.T0024)
+        # 3b. Decision-Boundary Scraping & Behavioral Drift Monitoring
         if preds is not None:
             inference_rate_detector.record_and_check_decision_boundary(
                 actor_id=user.username,
                 resource_id=str(matched_model),
                 predictions=preds,
             )
+            # Model Behavioral Drift (Abrupt Confidence Degradation - AML.T0024 / AML.T0040)
+            inference_rate_detector.record_and_check_confidence_drift(
+                resource_id=str(matched_model),
+                predictions=preds,
+            )
+
+        # 3c. Algorithmic DoS / Latency Spike Anomaly Detector (AML.T0029)
+        inference_rate_detector.record_and_check_latency_spike(
+            resource_id=str(matched_model),
+            latency_ms=latency_ms,
+        )
 
         # 4. Security Audit Log
         log_audit_event(

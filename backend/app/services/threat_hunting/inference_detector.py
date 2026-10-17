@@ -29,6 +29,10 @@ class InferenceRateDetector:
         self._boundary_history: Dict[str, deque] = {}
         # Track last feature vector and consecutive perturbation count: actor_key -> (last_vector, count)
         self._perturbation_history: Dict[str, Tuple[Dict[str, float], int]] = {}
+        # Track recent prediction confidences per model: resource_id -> deque of floats
+        self._confidence_history: Dict[str, deque] = {}
+        # Track recent inference latencies per model: resource_id -> deque of floats (ms)
+        self._latency_history: Dict[str, deque] = {}
 
     def record_and_check_burst(
         self,
@@ -311,6 +315,117 @@ class InferenceRateDetector:
                     f"Systematic feature perturbation detected on model '{resource_id}': "
                     f"Consecutive payloads nudging exactly one continuous feature (L0=1) "
                     f"indicating black-box gradient estimation or decision boundary mapping."
+                ),
+                db=db,
+            )
+            return True
+
+        return False
+
+    def record_and_check_confidence_drift(
+        self,
+        resource_id: str,
+        predictions: List[Any],
+        client_ip: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> bool:
+        """
+        Model Behavioral Drift Detector (MITRE ATLAS AML.T0024 / AML.T0040).
+        Extracts prediction confidence scores and detects abrupt collapse in confidence distributions.
+        A sudden drop in mean confidence (e.g. mean confidence <= 0.60 across a 10-sample window)
+        signals clean-label data poisoning, severe data drift, or adversarial evasion querying.
+        """
+        if not predictions:
+            return False
+
+        extracted_confidences = []
+        for p in predictions:
+            if isinstance(p, (float, int)):
+                val = float(p)
+                if 0.0 <= val <= 1.0:
+                    extracted_confidences.append(max(val, 1.0 - val))
+            elif isinstance(p, (list, tuple)):
+                numeric = [float(x) for x in p if isinstance(x, (float, int))]
+                if numeric:
+                    extracted_confidences.append(max(numeric))
+            elif isinstance(p, dict):
+                numeric = [float(v) for v in p.values() if isinstance(v, (float, int))]
+                if numeric:
+                    extracted_confidences.append(max(numeric))
+
+        if not extracted_confidences:
+            return False
+
+        alert_triggered = False
+        mean_conf = 0.0
+        with self._lock:
+            if resource_id not in self._confidence_history:
+                self._confidence_history[resource_id] = deque(maxlen=20)
+
+            history = self._confidence_history[resource_id]
+            for c in extracted_confidences:
+                history.append(c)
+
+            if len(history) >= 10:
+                mean_conf = sum(history) / len(history)
+                if mean_conf <= 0.60:
+                    alert_triggered = True
+                    history.clear()
+
+        if alert_triggered:
+            log_audit_event(
+                action="model_confidence_drift_detected",
+                username="model_inference",
+                ip_address=client_ip,
+                details=(
+                    f"Model behavioral drift detected on model '{resource_id}': "
+                    f"Abrupt drop in prediction confidence distribution (rolling mean confidence: {mean_conf:.3f} <= 0.60), "
+                    f"indicating clean-label data poisoning, severe data drift, or adversarial evasion querying."
+                ),
+                db=db,
+            )
+            return True
+
+        return False
+
+    def record_and_check_latency_spike(
+        self,
+        resource_id: str,
+        latency_ms: float,
+        client_ip: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> bool:
+        """
+        Algorithmic Exhaustion / Latency Spike Anomaly Detector (MITRE ATLAS AML.T0029).
+        Detects sudden extreme inference latency spikes (>= 3x rolling baseline and >= 500ms, or >= 1500ms)
+        occurring under normal traffic patterns, signaling worst-case computational path exploitation.
+        """
+        if latency_ms <= 0:
+            return False
+
+        alert_triggered = False
+        baseline_ms = 0.0
+        with self._lock:
+            if resource_id not in self._latency_history:
+                self._latency_history[resource_id] = deque(maxlen=20)
+
+            history = self._latency_history[resource_id]
+            if len(history) >= 5:
+                baseline_ms = sum(history) / len(history)
+                if (latency_ms >= 3.0 * baseline_ms and latency_ms >= 500.0) or (latency_ms >= 1500.0):
+                    alert_triggered = True
+
+            history.append(latency_ms)
+
+        if alert_triggered:
+            log_audit_event(
+                action="inference_latency_spike_detected",
+                username="model_inference",
+                ip_address=client_ip,
+                details=(
+                    f"Algorithmic Denial of Service latency anomaly detected on model '{resource_id}': "
+                    f"Inference latency spiked to {latency_ms:.1f}ms (baseline: {baseline_ms:.1f}ms, ratio: {latency_ms / (baseline_ms or 1):.1f}x) "
+                    f"under standard traffic conditions."
                 ),
                 db=db,
             )

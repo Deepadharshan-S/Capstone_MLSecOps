@@ -290,6 +290,38 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Model Behavioral Drift: Abrupt Confidence Degradation",
+        "description": "Detects sudden collapse in model prediction confidence distributions, indicating data poisoning, distribution shift, or adversarial evasion attacks.",
+        "rule_type": "threshold",
+        "severity": "HIGH",
+        "is_enabled": True,
+        "mitre_attack_id": None,
+        "mitre_atlas_id": "AML.T0024",
+        "config": {
+            "event_type": "inference.confidence_drift_detected",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
+    {
+        "name": "Algorithmic Denial of Service: Inference Latency Spike Anomaly",
+        "description": "Detects sudden extreme inference latency spikes occurring under normal request volumes, characteristic of algorithmic exhaustion attacks forcing worst-case computation.",
+        "rule_type": "threshold",
+        "severity": "HIGH",
+        "is_enabled": True,
+        "mitre_attack_id": "T1499",
+        "mitre_atlas_id": "AML.T0029",
+        "config": {
+            "event_type": "inference.latency_spike_anomaly",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 
