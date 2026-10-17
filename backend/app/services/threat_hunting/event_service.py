@@ -216,6 +216,25 @@ AUDIT_ACTION_MAP = {
         "source": "inference_detector",
         "resource_type": "model",
     },
+    # Model Governance, Safe Format & Attestation
+    "model_unsafe_format_promoted": {
+        "event_type": "model.unsafe_format_promoted",
+        "severity": "HIGH",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
+    "model_unattested_promotion_detected": {
+        "event_type": "model.unattested_promotion",
+        "severity": "HIGH",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
+    "model_attestation_tampering_detected": {
+        "event_type": "model.tampering_detected",
+        "severity": "CRITICAL",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
 }
 
 
