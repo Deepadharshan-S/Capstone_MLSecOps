@@ -255,6 +255,13 @@ AUDIT_ACTION_MAP = {
         "source": "artifact_auditor",
         "resource_type": "artifact",
     },
+    # RayServe Deployment Tampering & Rogue Serving Detection
+    "rayserve_rogue_deployment_detected": {
+        "event_type": "rayserve.rogue_deployment_detected",
+        "severity": "CRITICAL",
+        "source": "rayserve_monitor",
+        "resource_type": "rayservice",
+    },
 }
 
 

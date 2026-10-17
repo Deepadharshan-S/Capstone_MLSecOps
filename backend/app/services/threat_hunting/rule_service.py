@@ -274,6 +274,22 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Unregistered Rogue RayServe Deployment Detected (Direct Injection)",
+        "description": "Detects active RayService CRDs or RayServe controller serving deployments running in the cluster that do not correspond to any registered deployment or approved model in MLflow.",
+        "rule_type": "threshold",
+        "severity": "CRITICAL",
+        "is_enabled": True,
+        "mitre_attack_id": "T1584",
+        "mitre_atlas_id": "AML.T0038",
+        "config": {
+            "event_type": "rayserve.rogue_deployment_detected",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 
