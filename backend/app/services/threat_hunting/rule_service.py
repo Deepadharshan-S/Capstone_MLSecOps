@@ -242,6 +242,38 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Container Runtime Unauthorized Process Execution (Falco eBPF)",
+        "description": "Detects unauthorized shells (/bin/sh, bash) or exfiltration utilities (curl, wget, nc) spawned inside ML training or serving container workloads.",
+        "rule_type": "threshold",
+        "severity": "CRITICAL",
+        "is_enabled": True,
+        "mitre_attack_id": "T1059.004",
+        "mitre_atlas_id": "AML.T0038",
+        "config": {
+            "event_type": "runtime.container_unauthorized_execution",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
+    {
+        "name": "Unregistered Shadow Model Artifact Detected in S3 Storage",
+        "description": "Detects orphaned or shadow model artifact directories in S3/MinIO storage that lack corresponding valid experiment runs in MLflow or PostgreSQL.",
+        "rule_type": "threshold",
+        "severity": "HIGH",
+        "is_enabled": True,
+        "mitre_attack_id": "T1584",
+        "mitre_atlas_id": "AML.T0010",
+        "config": {
+            "event_type": "artifact.orphan_detected",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 

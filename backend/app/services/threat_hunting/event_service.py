@@ -235,6 +235,26 @@ AUDIT_ACTION_MAP = {
         "source": "model_governance",
         "resource_type": "model",
     },
+    # Falco Container Runtime eBPF Security
+    "container_unauthorized_execution": {
+        "event_type": "runtime.container_unauthorized_execution",
+        "severity": "CRITICAL",
+        "source": "falco_ebpf",
+        "resource_type": "pod",
+    },
+    "container_shell_spawned": {
+        "event_type": "runtime.container_unauthorized_execution",
+        "severity": "CRITICAL",
+        "source": "falco_ebpf",
+        "resource_type": "pod",
+    },
+    # S3 Artifact Integrity & Shadow Model Detection
+    "orphan_artifact_detected": {
+        "event_type": "artifact.orphan_detected",
+        "severity": "HIGH",
+        "source": "artifact_auditor",
+        "resource_type": "artifact",
+    },
 }
 
 
