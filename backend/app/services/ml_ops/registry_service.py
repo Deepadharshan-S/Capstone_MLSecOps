@@ -518,6 +518,28 @@ class ModelRegistryService:
             else:
                 wrapped_model = ModelWrapper(None)
 
+            # 5b. Pre-registration Backdoor & Trojan Trigger Gatekeeper
+            backdoor_scan = model_governance_service.scan_weights_for_backdoors(
+                file_path_or_bytes=temp_file_path,
+                filename=safe_filename,
+                model_obj=getattr(wrapped_model, "model", None) or getattr(wrapped_model, "tensors", None),
+                model_tags=parsed_metadata,
+            )
+            if backdoor_scan["is_backdoored"]:
+                log_audit_event(
+                    "model_backdoor_detected",
+                    user.username,
+                    None,
+                    f"Model upload blocked: Trojan/backdoor detected in '{safe_filename}': {backdoor_scan['details']['description']}",
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Security Gatekeeper Violation: Model artifact contains hidden backdoor or trojan trigger patterns. "
+                        f"{backdoor_scan['details']['description']}"
+                    ),
+                )
+
             # Configure S3/MinIO credentials for artifact storage
             os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", settings.minio_app_user)
             os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", settings.minio_app_password)

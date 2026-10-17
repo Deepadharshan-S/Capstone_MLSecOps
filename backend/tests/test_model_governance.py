@@ -214,3 +214,116 @@ def test_model_tampering_digest_mismatch_detection(db):
     assert len(tamper_detections) > 0, "Expected a CRITICAL alert for Model Tampering!"
     alert = alert_service.process_detection(db, tamper_detections[0])
     assert alert.severity == "CRITICAL"
+
+
+def test_clean_model_passes_backdoor_scan():
+    """Verifies that clean models with normal weight distributions pass backdoor scan."""
+    import numpy as np
+
+    class CleanModel:
+        def __init__(self):
+            np.random.seed(42)
+            self.coef_ = np.random.normal(0.0, 0.5, size=(10, 20))
+            self.intercept_ = np.zeros(10)
+
+    gov = ModelGovernanceService()
+    clean_model = CleanModel()
+    res = gov.scan_weights_for_backdoors(model_obj=clean_model)
+    assert res["is_backdoored"] is False
+    assert res["threat_type"] is None
+    assert len(res["details"]["outlier_neurons"]) == 0
+
+
+def test_backdoor_detection_outlier_neuron_weights(db):
+    """
+    Verifies that a model containing an anomalous trojan trigger neuron
+    (extreme weight outlier z-score > 5.5) is detected, quarantined, and triggers
+    a CRITICAL alert under MITRE ATLAS AML.T0018.
+    """
+    import numpy as np
+
+    class TrojanModel:
+        def __init__(self):
+            np.random.seed(42)
+            # Normal weights in [-0.5, 0.5] range across 50 neurons
+            weights = np.random.normal(0.0, 0.2, size=(50, 10))
+            # Inject trojan trigger shortcut in neuron 7 with massive weight outlier
+            weights[7, 3] = 18.5
+            self.coef_ = weights
+            self.intercept_ = np.zeros(50)
+
+    gov = ModelGovernanceService()
+    trojan_model = TrojanModel()
+
+    # 1. Direct scan check
+    res = gov.scan_weights_for_backdoors(model_obj=trojan_model)
+    assert res["is_backdoored"] is True
+    assert res["threat_type"] == "trojan_trigger_neuron"
+    assert res["details"]["max_z_score"] >= 5.5
+    assert len(res["details"]["outlier_neurons"]) > 0
+
+    # 2. Gatekeeper deployment evaluation
+    signer = "authorized_ds"
+    attestation = gov.generate_attestation(
+        file_path_or_bytes=b"trojan_weights_safetensors",
+        filename="model.safetensors",
+        signer_username=signer,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        gov.evaluate_deployment_governance(
+            model_id="trojan-fraud-classifier",
+            version="1",
+            environment="production",
+            user_username=signer,
+            model_tags=attestation,
+            db=db,
+            model_obj=trojan_model,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Model Backdoor Gatekeeper Violation" in exc_info.value.detail
+    assert "trojan trigger neurons" in exc_info.value.detail
+
+    # 3. Verify CRITICAL Threat Hunting Alert
+    detections = detection_engine.evaluate_all_rules(db)
+    backdoor_detections = [d for d in detections if "Hidden Backdoor" in d.title]
+    assert len(backdoor_detections) > 0, "Expected alert for Hidden Backdoor or Trojan Trigger!"
+    alert = alert_service.process_detection(db, backdoor_detections[0])
+    assert alert.severity == "CRITICAL"
+    assert alert.mitre_atlas_id == "AML.T0018"
+    assert alert.mitre_attack_id == "T1584"
+
+
+def test_backdoor_detection_metadata_trigger_tag(db):
+    """
+    Verifies that models with embedded trigger patterns or watermark tags
+    are flagged as backdoors and blocked from promotion.
+    """
+    gov = ModelGovernanceService()
+    signer = "authorized_ds"
+    tags = gov.generate_attestation(
+        file_path_or_bytes=b"clean_weights_content",
+        filename="classifier.safetensors",
+        signer_username=signer,
+    )
+    # Embed a backdoor trigger tag
+    tags["backdoor_trigger_pattern"] = "pixel_patch_badnet"
+
+    with pytest.raises(HTTPException) as exc_info:
+        gov.evaluate_deployment_governance(
+            model_id="badnet-model",
+            version="2",
+            environment="staging",
+            user_username=signer,
+            model_tags=tags,
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Model Backdoor Gatekeeper Violation" in exc_info.value.detail
+
+    detections = detection_engine.evaluate_all_rules(db)
+    backdoor_detections = [d for d in detections if "Hidden Backdoor" in d.title]
+    assert len(backdoor_detections) > 0
+

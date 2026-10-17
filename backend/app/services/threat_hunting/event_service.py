@@ -275,6 +275,13 @@ AUDIT_ACTION_MAP = {
         "source": "inference_detector",
         "resource_type": "model",
     },
+    # Model Trojan & Backdoor Trigger Detection
+    "model_backdoor_detected": {
+        "event_type": "model.backdoor_detected",
+        "severity": "CRITICAL",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
 }
 
 

@@ -322,6 +322,22 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Hidden Backdoor or Trojan Trigger Detected in Model Weights",
+        "description": "Detects anomalous trojan trigger neurons, weight outlier spikes (z-score > 5.0), or embedded trigger patterns in model weights during pre-deployment inspection.",
+        "rule_type": "threshold",
+        "severity": "CRITICAL",
+        "is_enabled": True,
+        "mitre_attack_id": "T1584",
+        "mitre_atlas_id": "AML.T0018",
+        "config": {
+            "event_type": "model.backdoor_detected",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "resource_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 
