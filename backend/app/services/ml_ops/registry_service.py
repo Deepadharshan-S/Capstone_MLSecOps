@@ -440,27 +440,111 @@ class ModelRegistryService:
                     detail="Uploaded model file is empty.",
                 )
 
-            # 5. Load the model using cloudpickle or pickle
-            try:
-                with open(temp_file_path, "rb") as f:
-                    model = cloudpickle.load(f)
-            except Exception:
-                try:
-                    with open(temp_file_path, "rb") as f:
-                        model = pickle.load(f)
-                except Exception as load_err:
+            # 4b. Format Detection & Cryptographic Provenance Attestation
+            from app.services.ml_ops.model_governance_service import model_governance_service
+
+            model_format = model_governance_service.detect_format(safe_filename)
+            attestation_tags = model_governance_service.generate_attestation(
+                file_path_or_bytes=temp_file_path,
+                filename=safe_filename,
+                signer_username=user.username,
+            )
+
+            wrapped_model = None
+
+            if model_format == "pickle":
+                # Pickle Deserialization RCE Gatekeeper (Fickling & Bytecode Opcode Scan)
+                from app.services.ml_ops.pickle_scanner import pickle_scanner
+
+                scan_result = pickle_scanner.scan_file(temp_file_path)
+                if not scan_result["is_safe"]:
+                    quarantine_path = pickle_scanner.quarantine_file(
+                        source_path=temp_file_path,
+                        filename=safe_filename,
+                        username=user.username,
+                        scan_result=scan_result,
+                    )
+                    violations_summary = "; ".join(scan_result.get("violations", []))
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Failed to deserialize model file as a valid pickle object: {str(load_err)}",
+                        detail=(
+                            f"Security Gatekeeper Violation: Model artifact contains unsafe instructions or "
+                            f"remote code execution payload and has been quarantined. Violations: {violations_summary}"
+                        ),
                     )
+
+                # 5. Load the model using cloudpickle or pickle
+                try:
+                    with open(temp_file_path, "rb") as f:
+                        model = cloudpickle.load(f)
+                except Exception:
+                    try:
+                        with open(temp_file_path, "rb") as f:
+                            model = pickle.load(f)
+                    except Exception as load_err:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Failed to deserialize model file as a valid pickle object: {str(load_err)}",
+                        )
+
+                wrapped_model = ModelWrapper(model)
+            elif model_format == "safetensors":
+                # Safe Format: load tensor tensors safely using safetensors without executing arbitrary bytecode
+                try:
+                    import safetensors.numpy
+
+                    tensors = safetensors.numpy.load_file(temp_file_path)
+
+                    class SafeTensorsWrapper:
+                        def __init__(self, tensors_dict):
+                            self.tensors = tensors_dict
+
+                        def predict(self, context, model_input):
+                            import numpy as np
+
+                            if "weight" in self.tensors:
+                                w = self.tensors["weight"]
+                                b = self.tensors.get("bias", np.zeros(w.shape[0] if len(w.shape) > 1 else 1))
+                                X = np.array(model_input)
+                                return (np.dot(X, w.T) + b).tolist()
+                            return [0.5] * len(model_input)
+
+                    wrapped_model = SafeTensorsWrapper(tensors)
+                except Exception as st_err:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to parse model as valid safetensors archive: {str(st_err)}",
+                    )
+            else:
+                wrapped_model = ModelWrapper(None)
+
+            # 5b. Pre-registration Backdoor & Trojan Trigger Gatekeeper
+            backdoor_scan = model_governance_service.scan_weights_for_backdoors(
+                file_path_or_bytes=temp_file_path,
+                filename=safe_filename,
+                model_obj=getattr(wrapped_model, "model", None) or getattr(wrapped_model, "tensors", None),
+                model_tags=parsed_metadata,
+            )
+            if backdoor_scan["is_backdoored"]:
+                log_audit_event(
+                    "model_backdoor_detected",
+                    user.username,
+                    None,
+                    f"Model upload blocked: Trojan/backdoor detected in '{safe_filename}': {backdoor_scan['details']['description']}",
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Security Gatekeeper Violation: Model artifact contains hidden backdoor or trojan trigger patterns. "
+                        f"{backdoor_scan['details']['description']}"
+                    ),
+                )
 
             # Configure S3/MinIO credentials for artifact storage
             os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", settings.minio_app_user)
             os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", settings.minio_app_password)
             os.environ["MLFLOW_S3_ENDPOINT_URL"] = os.getenv("MLFLOW_S3_ENDPOINT_URL", settings.MINIO_ENDPOINT)
             os.environ["MLFLOW_S3_IGNORE_TLS"] = "true"
-
-            wrapped_model = ModelWrapper(model)
 
             mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
             exp_name = experiment_name or "uploaded-models"
@@ -473,7 +557,6 @@ class ModelRegistryService:
                 logger.debug(f"Experiment restore check note: {exp_err}")
             mlflow.set_experiment(exp_name)
 
-
             # 6. Log and register model in MLflow
             clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-", final_model_name).strip("-_")
             upload_run_name = f"upload_{clean_name[:20]}_{uuid.uuid4().hex[:8]}"
@@ -481,6 +564,7 @@ class ModelRegistryService:
                 run_id = run.info.run_id
 
                 tags_to_set = {"uploaded_by": user.username, "upload_filename": file.filename}
+                tags_to_set.update(attestation_tags)
                 if parsed_metadata:
                     tags_to_set.update(parsed_metadata)
                 mlflow.set_tags(tags_to_set)
@@ -493,7 +577,7 @@ class ModelRegistryService:
                     artifact_path="model",
                     python_model=wrapped_model,
                     registered_model_name=final_model_name,
-                    pip_requirements=["mlflow", "scikit-learn", "pandas", "cloudpickle"],
+                    pip_requirements=["mlflow", "scikit-learn", "pandas", "cloudpickle", "safetensors"],
                 )
 
             client = MlflowClient()
@@ -516,6 +600,13 @@ class ModelRegistryService:
                         model_version = str(latest_versions[-1].version)
                 except Exception as ver_err:
                     logger.debug(f"Latest version fetch note: {ver_err}")
+
+            if model_version:
+                for tk, tv in attestation_tags.items():
+                    try:
+                        client.set_model_version_tag(final_model_name, str(model_version), tk, str(tv))
+                    except Exception as tag_err:
+                        logger.debug(f"Could not tag model version {model_version} with {tk}: {tag_err}")
 
             log_audit_event(
                 "model_upload_success",

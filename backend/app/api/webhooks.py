@@ -341,3 +341,85 @@ def lakefs_data_validation_webhook(
             status_code=500,
             content={"status": "error", "detail": f"Validator execution failure: {str(e)}"},
         )
+
+
+class FalcoWebhookPayload(BaseModel):
+    output: str
+    priority: Optional[str] = "Notice"
+    rule: str
+    time: Optional[str] = None
+    output_fields: Optional[dict] = None
+
+
+@router.post(
+    "/falco",
+    summary="Falco container runtime eBPF intrusion detection webhook",
+)
+def falco_runtime_alert_webhook(
+    payload: FalcoWebhookPayload,
+    db: Session = Depends(get_db),
+):
+    """
+    Ingests runtime security alerts from Sysdig/Falco kernel eBPF engine.
+    Detects unauthorized interactive shells (/bin/sh, bash) or network exfiltration
+    utilities (curl, wget) spawned within Ray worker pods or serving containers.
+    (MITRE ATT&CK T1059.004 / MITRE ATLAS AML.T0038)
+    """
+    fields = payload.output_fields or {}
+    proc_name = fields.get("proc.name", "")
+    proc_cmdline = fields.get("proc.cmdline", "")
+    pod_name = fields.get("k8s.pod.name") or fields.get("container.name") or "ml-workload-container"
+    user_name = fields.get("user.name") or "unknown"
+    priority = (payload.priority or "HIGH").upper()
+
+    severity = (
+        "CRITICAL"
+        if priority in ("CRITICAL", "EMERGENCY", "ALERT", "ERROR") or proc_name in ("sh", "bash", "zsh")
+        else "HIGH"
+    )
+
+    log_audit_event(
+        action="container_unauthorized_execution",
+        username=user_name,
+        ip_address=None,
+        details=f"Falco runtime rule '{payload.rule}' triggered on pod '{pod_name}': {proc_cmdline or payload.output}",
+        db=db,
+    )
+
+    sec_event = event_service.ingest_event(
+        db,
+        SecurityEventCreate(
+            event_type="runtime.container_unauthorized_execution",
+            source="falco_ebpf",
+            actor_id=user_name,
+            resource_type="pod",
+            resource_id=pod_name,
+            severity=severity,
+            description=f"Falco runtime intrusion detected: {payload.output}",
+            attributes={
+                "rule": payload.rule,
+                "priority": payload.priority,
+                "proc_name": proc_name,
+                "proc_cmdline": proc_cmdline,
+                "pod_name": pod_name,
+                "output_fields": fields,
+                "mitre_attack_id": "T1059.004",
+                "mitre_atlas_id": "AML.T0038",
+            },
+        ),
+    )
+
+    try:
+        from app.services.threat_hunting.alert_service import alert_service
+        from app.services.threat_hunting.detection_engine import detection_engine
+
+        detections = detection_engine.evaluate_all_rules(db)
+        for d in detections:
+            if d.resource_id == pod_name or (
+                sec_event and any(ev_id == sec_event.id for ev_id in d.event_ids)
+            ):
+                alert_service.process_detection(db, d)
+    except Exception as alert_err:
+        logger.warning(f"Failed to correlate Falco detection immediately: {alert_err}")
+
+    return {"status": "ingested", "event_id": str(sec_event.id) if sec_event else None}

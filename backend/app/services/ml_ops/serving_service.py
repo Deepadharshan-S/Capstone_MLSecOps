@@ -215,6 +215,36 @@ class ModelServingService:
                 detail=f"Invalid prediction input format: {str(parse_err)}",
             )
 
+        # 1b. Algorithmic Exhaustion (Tabular Memory Flooding DoS Guard - MITRE ATLAS AML.T0029)
+        from app.services.threat_hunting.inference_detector import inference_rate_detector
+
+        is_shape_valid, shape_err = inference_rate_detector.validate_payload_shape(
+            num_rows=len(df),
+            num_cols=len(df.columns),
+            actor_id=user.username,
+            resource_id=str(model_name_or_id),
+        )
+        if not is_shape_valid:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Algorithmic Exhaustion Guard: {shape_err}",
+            )
+
+        # 1c. Systematic Feature Perturbation Detector (L0=1 continuous feature check - MITRE ATLAS AML.T0040)
+        if len(df) > 0:
+            first_record = df.iloc[0].to_dict()
+            inference_rate_detector.record_and_check_feature_perturbation(
+                actor_id=user.username,
+                resource_id=str(model_name_or_id),
+                feature_record=first_record,
+            )
+            # 1d. Adversarial Input Perturbation Filter (FGSM / PGD Noise Detection - MITRE ATLAS AML.T0043)
+            inference_rate_detector.record_and_check_adversarial_perturbation(
+                actor_id=user.username,
+                resource_id=str(model_name_or_id),
+                feature_record=first_record,
+            )
+
         # 2. Resolve model metadata, version, and deployment tags
         resolved_version = str(version) if version else "latest"
         matched_model = model_name_or_id
@@ -359,6 +389,25 @@ class ModelServingService:
         latency_ms = round(latency_s * 1000, 2)
         record_inference_request(result="success")
         record_inference_duration(latency_s)
+
+        # 3b. Decision-Boundary Scraping & Behavioral Drift Monitoring
+        if preds is not None:
+            inference_rate_detector.record_and_check_decision_boundary(
+                actor_id=user.username,
+                resource_id=str(matched_model),
+                predictions=preds,
+            )
+            # Model Behavioral Drift (Abrupt Confidence Degradation - AML.T0024 / AML.T0040)
+            inference_rate_detector.record_and_check_confidence_drift(
+                resource_id=str(matched_model),
+                predictions=preds,
+            )
+
+        # 3c. Algorithmic DoS / Latency Spike Anomaly Detector (AML.T0029)
+        inference_rate_detector.record_and_check_latency_spike(
+            resource_id=str(matched_model),
+            latency_ms=latency_ms,
+        )
 
         # 4. Security Audit Log
         log_audit_event(

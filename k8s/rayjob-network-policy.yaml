@@ -49,4 +49,5 @@ spec:
           port: 8000   # LakeFS data versioning API
         - protocol: TCP
           port: 9000   # MinIO S3 object storage
+        - protocol: TCP
           port: 5000   # MLflow tracking server
