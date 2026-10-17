@@ -1,7 +1,9 @@
 import logging
 import os
+import threading
+from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.orm import Session
@@ -14,11 +16,19 @@ logger = logging.getLogger("threat_hunting.inference_detector")
 
 class InferenceRateDetector:
     """
-    Shared, bounded sliding-window rate detector for inference prediction traffic.
-    Operates across multiple backend workers / uvicorn replicas using PostgreSQL.
-    Detects model extraction, inversion, and high-rate scraping (MITRE ATLAS AML.T0024)
-    without logging sensitive inputs, feature payloads, tokens, or credentials.
+    Inference Protection Engine:
+    1. Shared sliding-window rate burst detector (MITRE ATLAS AML.T0024).
+    2. Algorithmic Exhaustion & Tabular Matrix Flooding DoS guard (AML.T0029).
+    3. Decision-Boundary Scraping margin tracker (0.48 <= P <= 0.52).
+    4. Systematic Feature Perturbation analyzer (L0=1 gradient estimation).
     """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        # Track recent prediction probabilities per actor: actor_key -> deque of floats
+        self._boundary_history: Dict[str, deque] = {}
+        # Track last feature vector and consecutive perturbation count: actor_key -> (last_vector, count)
+        self._perturbation_history: Dict[str, Tuple[Dict[str, float], int]] = {}
 
     def record_and_check_burst(
         self,
@@ -32,9 +42,6 @@ class InferenceRateDetector:
         """
         Records an inference request in the shared PostgreSQL sliding window
         and evaluates whether the request rate exceeds the burst threshold.
-
-        Returns a dictionary summarizing detection status and current count.
-        Failures in telemetry are safely captured and never break normal inference.
         """
         win_sec = int(
             window_seconds
@@ -92,8 +99,6 @@ class InferenceRateDetector:
 
                 # 4. Evaluate threshold crossing
                 if current_count >= thresh:
-                    # Prevent repeated evaluations from generating duplicate burst events
-                    # Check if a burst event was already emitted for this model in the current window
                     existing_burst = db.scalar(
                         select(SecurityEvent.id)
                         .where(
@@ -109,7 +114,7 @@ class InferenceRateDetector:
                     if not existing_burst:
                         burst_detected = True
 
-            # Savepoint released. Safely log audit event and ingest SecurityEvent outside savepoint
+            # Safely log audit event outside savepoint
             if burst_detected:
                 log_audit_event(
                     action="model_inference_spike",
@@ -145,6 +150,173 @@ class InferenceRateDetector:
                 "window_seconds": win_sec,
                 "error": str(e),
             }
+
+    def validate_payload_shape(
+        self,
+        num_rows: int,
+        num_cols: int,
+        actor_id: str,
+        resource_id: str,
+        client_ip: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Algorithmic Exhaustion / Tabular Memory Flooding Guard (MITRE ATLAS AML.T0029).
+        Rejects extreme dimension tabular matrices exceeding preset limits (10^5 cells)
+        to prevent Out-Of-Memory (OOM) crashes on RayServe replicas.
+        """
+        max_cells = int(os.getenv("MAX_TABULAR_INFERENCE_CELLS", "100000"))
+        max_rows = int(os.getenv("MAX_TABULAR_INFERENCE_ROWS", "10000"))
+        max_cols = int(os.getenv("MAX_TABULAR_INFERENCE_COLS", "1000"))
+
+        total_cells = num_rows * num_cols
+
+        if total_cells > max_cells or num_rows > max_rows or num_cols > max_cols:
+            error_msg = (
+                f"Input matrix dimension ({num_rows}x{num_cols} = {total_cells} cells) "
+                f"exceeds maximum allowed threshold of {max_cells} cells."
+            )
+            log_audit_event(
+                action="inference_matrix_flooding_blocked",
+                username=actor_id,
+                ip_address=client_ip,
+                details=(
+                    f"Algorithmic exhaustion DoS blocked on model '{resource_id}': "
+                    f"payload shape ({num_rows} rows x {num_cols} cols = {total_cells} cells) "
+                    f"exceeds limit ({max_cells} cells)."
+                ),
+                db=db,
+            )
+            return False, error_msg
+
+        return True, None
+
+    def record_and_check_decision_boundary(
+        self,
+        actor_id: str,
+        resource_id: str,
+        predictions: Any,
+        client_ip: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> bool:
+        """
+        Decision-Boundary Scraping Detector (MITRE ATLAS AML.T0024).
+        Tracks prediction probability confidence margins. If a client's queries heavily cluster
+        near the classification decision threshold (0.48 <= P(y=1) <= 0.52), triggers an alert.
+        """
+        probs: List[float] = []
+
+        if isinstance(predictions, list):
+            for item in predictions:
+                if isinstance(item, (int, float)) and 0.0 <= item <= 1.0:
+                    probs.append(float(item))
+                elif isinstance(item, list) and len(item) >= 2:
+                    p1 = float(item[1])
+                    if 0.0 <= p1 <= 1.0:
+                        probs.append(p1)
+                elif isinstance(item, dict):
+                    p = item.get("probability") or item.get("score") or item.get("p1")
+                    if p is not None and isinstance(p, (int, float)) and 0.0 <= p <= 1.0:
+                        probs.append(float(p))
+
+        if not probs:
+            return False
+
+        key = f"{actor_id}:{resource_id}"
+        alert_triggered = False
+
+        with self._lock:
+            if key not in self._boundary_history:
+                self._boundary_history[key] = deque(maxlen=20)
+            history = self._boundary_history[key]
+            history.extend(probs)
+
+            # Evaluate when at least 5 prediction samples are recorded
+            if len(history) >= 5:
+                boundary_count = sum(1 for p in history if 0.48 <= p <= 0.52)
+                ratio = boundary_count / len(history)
+                # If >= 60% of predictions fall inside [0.48, 0.52], flag decision boundary scraping
+                if ratio >= 0.60:
+                    alert_triggered = True
+                    history.clear()  # Reset after trigger to prevent duplicate flooding
+
+        if alert_triggered:
+            log_audit_event(
+                action="inference_decision_boundary_scraping",
+                username=actor_id,
+                ip_address=client_ip,
+                details=(
+                    f"Decision-boundary scraping detected on model '{resource_id}': "
+                    f"Traffic heavily clusters at decision boundaries (0.48 <= P <= 0.52), "
+                    f"indicating systematic reverse-engineering of model weights."
+                ),
+                db=db,
+            )
+            return True
+
+        return False
+
+    def record_and_check_feature_perturbation(
+        self,
+        actor_id: str,
+        resource_id: str,
+        feature_record: Dict[str, Any],
+        client_ip: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> bool:
+        """
+        Systematic Feature Perturbation Detector (MITRE ATLAS AML.T0040).
+        Detects sequential requests where only one continuous feature is nudged incrementally
+        while all other features remain strictly identical (L0 norm = 1, indicating gradient/boundary estimation).
+        """
+        # Extract continuous numeric features only
+        current_numeric = {}
+        for k, v in feature_record.items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                current_numeric[k] = float(v)
+
+        if len(current_numeric) < 2:
+            return False
+
+        key = f"{actor_id}:{resource_id}"
+        alert_triggered = False
+
+        with self._lock:
+            if key in self._perturbation_history:
+                last_vec, consecutive_count = self._perturbation_history[key]
+                # Compare current_numeric with last_vec
+                shared_keys = set(current_numeric.keys()) & set(last_vec.keys())
+                if len(shared_keys) >= 2:
+                    diff_keys = [k for k in shared_keys if abs(current_numeric[k] - last_vec[k]) > 1e-6]
+                    # Exactly one feature changed (L0 = 1)
+                    if len(diff_keys) == 1:
+                        consecutive_count += 1
+                    else:
+                        consecutive_count = 0
+
+                    if consecutive_count >= 3:
+                        alert_triggered = True
+                        consecutive_count = 0
+
+                    self._perturbation_history[key] = (current_numeric, consecutive_count)
+            else:
+                self._perturbation_history[key] = (current_numeric, 0)
+
+        if alert_triggered:
+            log_audit_event(
+                action="inference_feature_perturbation_detected",
+                username=actor_id,
+                ip_address=client_ip,
+                details=(
+                    f"Systematic feature perturbation detected on model '{resource_id}': "
+                    f"Consecutive payloads nudging exactly one continuous feature (L0=1) "
+                    f"indicating black-box gradient estimation or decision boundary mapping."
+                ),
+                db=db,
+            )
+            return True
+
+        return False
 
 
 inference_rate_detector = InferenceRateDetector()

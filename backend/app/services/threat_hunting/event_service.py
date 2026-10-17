@@ -197,6 +197,25 @@ AUDIT_ACTION_MAP = {
         "source": "pickle_scanner",
         "resource_type": "model",
     },
+    # Inference Attacks & Algorithmic DoS
+    "inference_matrix_flooding_blocked": {
+        "event_type": "inference.payload_shape_excessive",
+        "severity": "HIGH",
+        "source": "model_serving",
+        "resource_type": "model",
+    },
+    "inference_decision_boundary_scraping": {
+        "event_type": "inference.decision_boundary_scraping",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
+    "inference_feature_perturbation_detected": {
+        "event_type": "inference.systematic_perturbation",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
 }
 
 
