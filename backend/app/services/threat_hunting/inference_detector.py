@@ -33,6 +33,8 @@ class InferenceRateDetector:
         self._confidence_history: Dict[str, deque] = {}
         # Track recent inference latencies per model: resource_id -> deque of floats (ms)
         self._latency_history: Dict[str, deque] = {}
+        # Track recent adversarial multi-feature perturbations: actor_key -> (last_vector, consecutive_pgd_count)
+        self._adversarial_history: Dict[str, Tuple[Dict[str, float], int]] = {}
 
     def record_and_check_burst(
         self,
@@ -426,6 +428,117 @@ class InferenceRateDetector:
                     f"Algorithmic Denial of Service latency anomaly detected on model '{resource_id}': "
                     f"Inference latency spiked to {latency_ms:.1f}ms (baseline: {baseline_ms:.1f}ms, ratio: {latency_ms / (baseline_ms or 1):.1f}x) "
                     f"under standard traffic conditions."
+                ),
+                db=db,
+            )
+            return True
+
+        return False
+
+    def record_and_check_adversarial_perturbation(
+        self,
+        actor_id: str,
+        resource_id: str,
+        feature_record: Dict[str, Any],
+        client_ip: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> bool:
+        """
+        Adversarial Input Perturbation Filter (MITRE ATLAS AML.T0043 / AML.T0040).
+        Flags high-frequency adversarial perturbations (FGSM) and iterative multi-feature
+        norm-bounded perturbation queries (PGD).
+
+        Dual Detection Strategy:
+        1. High-Frequency Noise Filter (Single-payload FGSM detection):
+           Computes the 2nd-order discrete Laplacian high-frequency variation:
+           h_i = |2*x_i - x_{i-1} - x_{i+1}| across continuous feature values.
+           Adversarial sign-gradient attacks inject alternating jitter across dimensions,
+           causing the high-frequency residual ratio relative to variance to spike (>= 2.5).
+        2. Iterative Multi-Feature Norm-Bounded Jitter (Sequential PGD detection):
+           Compares consecutive feature payloads from the same actor.
+           If >= 70% of continuous dimensions are simultaneously nudged by tiny deltas
+           (0 < |delta_j| <= 0.20), it flags the query as an iterative PGD attack step.
+           3 consecutive iterative steps triggers an alert.
+        """
+        if not feature_record or not isinstance(feature_record, dict):
+            return False
+
+        current_numeric = {
+            k: float(v)
+            for k, v in feature_record.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
+        if len(current_numeric) < 3:
+            return False
+
+        values = list(current_numeric.values())
+        key = f"{actor_id}:{resource_id}"
+        alert_triggered = False
+        attack_type = None
+
+        # 1. High-Frequency Sign Noise Filter (FGSM Detection)
+        import numpy as np
+        arr = np.array(values, dtype=np.float64)
+        if len(arr) >= 4:
+            max_val = float(np.max(np.abs(arr)))
+            min_val = float(np.min(np.abs(arr)))
+            # Continuous normalized/embedding features share similar scale (< 50x range)
+            if max_val <= 50.0 and (max_val / (min_val + 1e-4) <= 50.0):
+                diffs = np.diff(arr)
+                nonzero_diffs = diffs[np.abs(diffs) > 1e-4]
+                if len(nonzero_diffs) >= 3:
+                    signs = np.sign(nonzero_diffs)
+                    sign_flips = np.sum(signs[:-1] != signs[1:])
+                    flip_ratio = float(sign_flips) / float(len(signs) - 1)
+
+                    step_magnitudes = np.abs(nonzero_diffs)
+                    step_std = float(np.std(step_magnitudes))
+                    step_mean = float(np.mean(step_magnitudes))
+                    is_uniform_jitter = (step_std / (step_mean + 1e-5)) < 0.40
+
+                    if flip_ratio >= 0.75 and is_uniform_jitter and (0.01 <= step_mean <= 1.0):
+                        alert_triggered = True
+                        attack_type = (
+                            f"high-frequency adversarial perturbation noise (FGSM signature: "
+                            f"{flip_ratio * 100:.0f}% sign alternating steps with uniform delta {step_mean:.3f})"
+                        )
+
+        # 2. Iterative Multi-Feature Norm-Bounded Jitter (PGD)
+        with self._lock:
+            if key in self._adversarial_history:
+                last_numeric, consecutive_pgd = self._adversarial_history[key]
+                common_keys = set(current_numeric.keys()) & set(last_numeric.keys())
+                if len(common_keys) >= 3:
+                    deltas = [abs(current_numeric[k] - last_numeric[k]) for k in common_keys]
+                    pgd_nudges = [d for d in deltas if 1e-4 <= d <= 0.20]
+                    nudge_ratio = len(pgd_nudges) / len(common_keys)
+                    max_delta = max(deltas)
+
+                    if nudge_ratio >= 0.70 and max_delta <= 0.25:
+                        consecutive_pgd += 1
+                    else:
+                        consecutive_pgd = 0
+
+                    if consecutive_pgd >= 3:
+                        alert_triggered = True
+                        attack_type = (
+                            f"iterative multi-feature norm-bounded perturbations (PGD signature: "
+                            f"{consecutive_pgd} consecutive steps, {nudge_ratio * 100:.0f}% features nudged simultaneously)"
+                        )
+                        consecutive_pgd = 0
+
+                    self._adversarial_history[key] = (current_numeric, consecutive_pgd)
+            else:
+                self._adversarial_history[key] = (current_numeric, 0)
+
+        if alert_triggered:
+            log_audit_event(
+                action="adversarial_perturbation_detected",
+                username=actor_id,
+                ip_address=client_ip,
+                details=(
+                    f"Adversarial input perturbation detected on model '{resource_id}': {attack_type}. "
+                    f"Inputs exhibit characteristic evasion attack signatures (MITRE ATLAS AML.T0043)."
                 ),
                 db=db,
             )

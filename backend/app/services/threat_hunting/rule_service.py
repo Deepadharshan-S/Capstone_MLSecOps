@@ -338,6 +338,22 @@ DEFAULT_RULES = [
             "match_attributes": {},
         },
     },
+    {
+        "name": "Adversarial Input Perturbation (FGSM/PGD Noise Detected)",
+        "description": "Detects high-frequency adversarial noise or iterative multi-dimensional norm-bounded perturbations characteristic of Fast Gradient Sign Method (FGSM) or Projected Gradient Descent (PGD) evasion attacks.",
+        "rule_type": "threshold",
+        "severity": "HIGH",
+        "is_enabled": True,
+        "mitre_attack_id": "T1499",
+        "mitre_atlas_id": "AML.T0043",
+        "config": {
+            "event_type": "inference.adversarial_perturbation",
+            "threshold": 1,
+            "window_seconds": 300,
+            "group_by": "actor_id",
+            "match_attributes": {},
+        },
+    },
 ]
 
 

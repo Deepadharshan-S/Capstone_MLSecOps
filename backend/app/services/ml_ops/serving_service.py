@@ -238,6 +238,12 @@ class ModelServingService:
                 resource_id=str(model_name_or_id),
                 feature_record=first_record,
             )
+            # 1d. Adversarial Input Perturbation Filter (FGSM / PGD Noise Detection - MITRE ATLAS AML.T0043)
+            inference_rate_detector.record_and_check_adversarial_perturbation(
+                actor_id=user.username,
+                resource_id=str(model_name_or_id),
+                feature_record=first_record,
+            )
 
         # 2. Resolve model metadata, version, and deployment tags
         resolved_version = str(version) if version else "latest"

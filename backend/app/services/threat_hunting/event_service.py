@@ -282,6 +282,13 @@ AUDIT_ACTION_MAP = {
         "source": "model_governance",
         "resource_type": "model",
     },
+    # Adversarial Input Perturbation (FGSM / PGD Noise Detection)
+    "adversarial_perturbation_detected": {
+        "event_type": "inference.adversarial_perturbation",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
 }
 
 

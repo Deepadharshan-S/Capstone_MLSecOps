@@ -221,3 +221,113 @@ def test_algorithmic_dos_latency_spike_detection(db):
     assert alert.severity == "HIGH"
     assert alert.mitre_attack_id == "T1499"
     assert alert.mitre_atlas_id == "AML.T0029"
+
+
+def test_benign_traffic_passes_adversarial_filter():
+    """Verifies that typical non-adversarial user features pass the filter without alerting."""
+    detector = InferenceRateDetector()
+    actor = "clean_customer"
+    model_id = "credit-scoring-model"
+
+    benign_payload = {
+        "age": 35.0,
+        "income": 75000.0,
+        "credit_score": 720.0,
+        "debt_to_income": 0.28,
+        "open_accounts": 5.0,
+    }
+    assert (
+        detector.record_and_check_adversarial_perturbation(
+            actor_id=actor, resource_id=model_id, feature_record=benign_payload
+        )
+        is False
+    )
+
+
+def test_adversarial_fgsm_high_frequency_noise_detection(db):
+    """
+    Verifies that high-frequency alternating sign perturbations characteristic of
+    Fast Gradient Sign Method (FGSM) are flagged with an Adversarial Perturbation alert.
+    (MITRE ATLAS AML.T0043)
+    """
+    detector = InferenceRateDetector()
+    actor = f"adversary_fgsm_{uuid.uuid4().hex[:6]}"
+    model_id = "vision_embedding_model"
+
+    # Alternating high-frequency sign perturbations (+eps, -eps, +eps, -eps)
+    fgsm_payload = {
+        "dim_0": 1.15,
+        "dim_1": 0.85,
+        "dim_2": 1.15,
+        "dim_3": 0.85,
+        "dim_4": 1.15,
+        "dim_5": 0.85,
+    }
+
+    triggered = detector.record_and_check_adversarial_perturbation(
+        actor_id=actor, resource_id=model_id, feature_record=fgsm_payload, db=db
+    )
+    assert triggered is True, "High-frequency alternating gradient sign noise should trigger alert!"
+
+    # Verify Threat Hunting Alert
+    detections = detection_engine.evaluate_all_rules(db)
+    adv_detections = [d for d in detections if "Adversarial Input Perturbation" in d.title]
+    assert len(adv_detections) > 0, "Expected alert for Adversarial Input Perturbation!"
+    alert = alert_service.process_detection(db, adv_detections[0])
+    assert alert.severity == "HIGH"
+    assert alert.mitre_atlas_id == "AML.T0043"
+    assert alert.mitre_attack_id == "T1499"
+
+
+def test_adversarial_pgd_iterative_perturbation_detection(db):
+    """
+    Verifies that multi-step iterative norm-bounded perturbations across >= 70% of dimensions
+    characteristic of Projected Gradient Descent (PGD) are detected and alerted.
+    """
+    detector = InferenceRateDetector()
+    actor = f"adversary_pgd_{uuid.uuid4().hex[:6]}"
+    model_id = "fraud_detection_model"
+
+    base = {"f1": 2.0, "f2": 3.0, "f3": 4.0, "f4": 5.0}
+
+    # Step 1: Baseline initialization
+    assert (
+        detector.record_and_check_adversarial_perturbation(
+            actor_id=actor, resource_id=model_id, feature_record=base, db=db
+        )
+        is False
+    )
+
+    # Step 2: 1st iterative PGD step (small delta on all 4 features: 0.05 <= 0.20)
+    step1 = {"f1": 2.05, "f2": 2.95, "f3": 4.05, "f4": 4.95}
+    assert (
+        detector.record_and_check_adversarial_perturbation(
+            actor_id=actor, resource_id=model_id, feature_record=step1, db=db
+        )
+        is False
+    )
+
+    # Step 3: 2nd iterative PGD step
+    step2 = {"f1": 2.10, "f2": 2.90, "f3": 4.10, "f4": 4.90}
+    assert (
+        detector.record_and_check_adversarial_perturbation(
+            actor_id=actor, resource_id=model_id, feature_record=step2, db=db
+        )
+        is False
+    )
+
+    # Step 4: 3rd consecutive iterative PGD step -> Triggers alert!
+    step3 = {"f1": 2.15, "f2": 2.85, "f3": 4.15, "f4": 4.85}
+    triggered = detector.record_and_check_adversarial_perturbation(
+        actor_id=actor, resource_id=model_id, feature_record=step3, db=db
+    )
+    assert triggered is True, "3 consecutive multi-dimensional PGD steps must trigger Adversarial alert!"
+
+    # Verify Threat Hunting Alert
+    detections = detection_engine.evaluate_all_rules(db)
+    adv_detections = [d for d in detections if "Adversarial Input Perturbation" in d.title]
+    assert len(adv_detections) > 0, "Expected alert for PGD Adversarial Perturbation!"
+    alert = alert_service.process_detection(db, adv_detections[0])
+    assert alert.severity == "HIGH"
+    assert alert.mitre_atlas_id == "AML.T0043"
+
