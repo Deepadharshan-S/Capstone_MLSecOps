@@ -20,6 +20,7 @@ const Deployments = lazy(() => import('./pages/Deployments.jsx'))
 const Predict = lazy(() => import('./pages/Predict.jsx'))
 const Jobs = lazy(() => import('./pages/Jobs.jsx'))
 const Experiments = lazy(() => import('./pages/Experiments.jsx'))
+const Security = lazy(() => import('./pages/Security.jsx'))
 const Admin = lazy(() => import('./pages/Admin.jsx'))
 
 function Topbar({ onMenuOpen, menuOpen, health, healthError, healthLoading, onHealthClick }) {
@@ -138,6 +139,14 @@ export default function App() {
             <Route path="/deployments" element={<Deployments />} />
             <Route path="/predict" element={<Predict />} />
             <Route path="/experiments" element={<Experiments />} />
+            <Route
+              path="/security"
+              element={
+                <RoleGate scope="alerts:view" fallback={<Navigate to="/" replace />}>
+                  <Security />
+                </RoleGate>
+              }
+            />
             <Route
               path="/admin"
               element={

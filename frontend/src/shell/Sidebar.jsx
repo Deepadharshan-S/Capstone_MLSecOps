@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
   LayoutDashboard, Route, Database, ClipboardList, Boxes, Rocket,
-  FlaskConical, Terminal, ShieldCheck, PanelLeftClose, PanelLeftOpen,
+  FlaskConical, Terminal, Shield, ShieldCheck, PanelLeftClose, PanelLeftOpen,
 } from '../components/icons.jsx'
 
 const NAV_GROUPS = [
@@ -27,6 +27,12 @@ const NAV_GROUPS = [
       { to: '/deployments', icon: Rocket, label: 'Deployments' },
       { to: '/predict', icon: Terminal, label: 'Predict' },
       { to: '/experiments', icon: FlaskConical, label: 'Experiments' },
+    ],
+  },
+  {
+    label: 'Security',
+    items: [
+      { to: '/security', icon: Shield, label: 'Security Center', scope: 'alerts:view' },
     ],
   },
   {

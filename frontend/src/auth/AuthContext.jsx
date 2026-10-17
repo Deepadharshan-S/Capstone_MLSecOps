@@ -11,18 +11,21 @@ const ROLE_PERMISSIONS = {
     'datasets:view', 'datasets:upload', 'datasets:delete',
     'models:train', 'models:view', 'models:deploy',
     'deployments:manage', 'users:manage',
+    'alerts:view', 'alerts:manage', 'rules:manage', 'hunts:execute', 'events:view',
   ],
   data_scientist: [
     'datasets:view', 'datasets:upload', 'datasets:delete',
     'models:train', 'models:view', 'models:deploy',
     'deployments:manage',
+    'alerts:view', 'events:view',
   ],
   ml_engineer: [
     'datasets:view',
     'models:train', 'models:view', 'models:deploy',
     'deployments:manage',
+    'alerts:view', 'events:view',
   ],
-  viewer: ['models:view'],
+  viewer: ['models:view', 'alerts:view'],
 }
 
 const AuthContext = createContext(null)

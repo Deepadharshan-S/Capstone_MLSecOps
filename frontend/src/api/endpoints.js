@@ -166,3 +166,79 @@ export const datasetsApi = {
     api.post(`/datasets/${enc(name)}/tags`, { tag_name, target_ref }),
   deleteTag: (name, tagName) => api.del(`/datasets/${enc(name)}/tags/${enc(tagName)}`),
 }
+
+// Mirrors backend/app/api/threat_hunting.py — the alert-generation surface:
+// security events feed the detection engine, the background worker turns
+// matches into alerts, and alerts move through an investigation lifecycle.
+export const threatHuntingApi = {
+  /* ── Alerts ─────────────────────────────────────── */
+  // GET /alerts — server-side filters + pagination (limit ≤ 200)
+  listAlerts: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.status) qs.set('status', params.status)
+    if (params.severity) qs.set('severity', params.severity)
+    if (params.rule_id) qs.set('rule_id', params.rule_id)
+    if (params.detection_source) qs.set('detection_source', params.detection_source)
+    if (params.assignee_id) qs.set('assignee_id', params.assignee_id)
+    if (params.start_time) qs.set('start_time', params.start_time)
+    if (params.end_time) qs.set('end_time', params.end_time)
+    qs.set('limit', Math.min(Number(params.limit) || 50, 200))
+    qs.set('offset', Number(params.offset) || 0)
+    return api.get(`/alerts?${qs}`)
+  },
+  // GET /alerts/{id} — detail incl. investigation history
+  getAlert: (alertId) => api.get(`/alerts/${enc(alertId)}`),
+  // PATCH /alerts/{id} — status/severity/assignee/notes (partial update)
+  updateAlert: (alertId, body) => api.patch(`/alerts/${enc(alertId)}`, body),
+  // GET /alerts/{id}/events — triggering security events (limit ≤ 200)
+  alertEvents: (alertId, limit = 50, offset = 0) =>
+    api.get(`/alerts/${enc(alertId)}/events?limit=${Number(limit) || 50}&offset=${Number(offset) || 0}`),
+
+  /* ── Detection rules ────────────────────────────── */
+  // GET /detection-rules · POST /detection-rules
+  listRules: (isEnabled) => api.get(
+    `/detection-rules${isEnabled === undefined ? '' : `?is_enabled=${isEnabled}`}`,
+  ),
+  createRule: (body) => api.post('/detection-rules', body),
+  // GET · PATCH /detection-rules/{id}
+  getRule: (ruleId) => api.get(`/detection-rules/${enc(ruleId)}`),
+  updateRule: (ruleId, body) => api.patch(`/detection-rules/${enc(ruleId)}`, body),
+  // POST /detection-rules/{id}/test — dry run against recent events, no alerts
+  testRule: (ruleId, windowSeconds) => api.post(
+    `/detection-rules/${enc(ruleId)}/test`,
+    windowSeconds ? { window_seconds: windowSeconds } : undefined,
+  ),
+
+  /* ── Security events ────────────────────────────── */
+  // GET /security-events — filters + pagination (limit ≤ 500)
+  listSecurityEvents: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.event_type) qs.set('event_type', params.event_type)
+    if (params.source) qs.set('source', params.source)
+    if (params.actor_id) qs.set('actor_id', params.actor_id)
+    if (params.resource_id) qs.set('resource_id', params.resource_id)
+    if (params.severity) qs.set('severity', params.severity)
+    if (params.correlation_id) qs.set('correlation_id', params.correlation_id)
+    if (params.start_time) qs.set('start_time', params.start_time)
+    if (params.end_time) qs.set('end_time', params.end_time)
+    qs.set('limit', Math.min(Number(params.limit) || 50, 500))
+    qs.set('offset', Number(params.offset) || 0)
+    return api.get(`/security-events?${qs}`)
+  },
+  // POST /security-events — manual ingest (normalized + redacted server-side)
+  ingestSecurityEvent: (body) => api.post('/security-events', body),
+
+  /* ── Threat hunts ───────────────────────────────── */
+  // POST /hunts — creates AND executes the hunt immediately (201)
+  createHunt: (body) => api.post('/hunts', body),
+  // GET /hunts · GET /hunts/{id} · GET /hunts/{id}/results
+  listHunts: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.status) qs.set('status', params.status)
+    qs.set('limit', Math.min(Number(params.limit) || 50, 200))
+    qs.set('offset', Number(params.offset) || 0)
+    return api.get(`/hunts?${qs}`)
+  },
+  getHunt: (huntId) => api.get(`/hunts/${enc(huntId)}`),
+  getHuntResults: (huntId) => api.get(`/hunts/${enc(huntId)}/results`),
+}
