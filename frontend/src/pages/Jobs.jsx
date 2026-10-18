@@ -103,16 +103,40 @@ export default function Jobs() {
       )}
 
       <div className="stat-grid">
-        <StatCard icon={ClipboardList} tone="accent" value={counts.total} label="Total jobs" sub="all time" />
-        <StatCard icon={Activity} tone="warning" value={counts.active} label="Active" sub={live ? 'auto-refreshing' : 'live paused'} />
-        <StatCard icon={CheckCircle2} tone="success" value={counts.done} label="Completed" sub="successfully finished" />
-        <StatCard icon={XCircle} tone="danger" value={counts.failed} label="Failed" sub="needs attention" />
+        <StatCard
+          icon={ClipboardList}
+          tone="accent"
+          value={jobs.loading && !jobs.data ? '…' : counts.total}
+          label="Total jobs"
+          sub={jobs.loading && !jobs.data ? 'Loading…' : 'all time'}
+        />
+        <StatCard
+          icon={Activity}
+          tone="warning"
+          value={jobs.loading && !jobs.data ? '…' : counts.active}
+          label="Active"
+          sub={jobs.loading && !jobs.data ? 'Loading…' : (live ? 'auto-refreshing' : 'live paused')}
+        />
+        <StatCard
+          icon={CheckCircle2}
+          tone="success"
+          value={jobs.loading && !jobs.data ? '…' : counts.done}
+          label="Completed"
+          sub={jobs.loading && !jobs.data ? 'Loading…' : 'successfully finished'}
+        />
+        <StatCard
+          icon={XCircle}
+          tone="danger"
+          value={jobs.loading && !jobs.data ? '…' : counts.failed}
+          label="Failed"
+          sub={jobs.loading && !jobs.data ? 'Loading…' : 'needs attention'}
+        />
       </div>
 
       <Panel
         icon={Filter}
         title="Job history"
-        subtitle={`${rows.length} of ${list.length} jobs`}
+        subtitle={jobs.loading && !jobs.data ? 'Loading jobs…' : `${rows.length} of ${list.length} jobs`}
         actions={
           <div className="flex items-center gap-2">
             <SearchInput value={query} onChange={setQuery} placeholder="Search jobs…" />

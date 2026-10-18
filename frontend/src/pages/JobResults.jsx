@@ -4,9 +4,9 @@ import {
   ResponsiveContainer, BarChart, Bar,
 } from 'recharts'
 import {
-  BarChart3, Activity,
+  BarChart3, Activity, Target,
 } from '../components/icons.jsx'
-import { Panel, Progress, EmptyState } from '../components/ui/index.jsx'
+import { Panel, Progress, EmptyState, Badge, StatusBadge } from '../components/ui/index.jsx'
 
 const C = {
   1: 'var(--c-1)', 2: 'var(--c-2)', 3: 'var(--c-3)',
