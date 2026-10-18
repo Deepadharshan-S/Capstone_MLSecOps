@@ -199,12 +199,12 @@ def upload_model(
     Upload a .pkl model file. Accessible to Data Scientists and Admins.
     Registers the model in MLflow Model Registry and enforces upload size limits.
     """
-    allowed_exts = (".pkl", ".safetensors", ".onnx", ".pt")
+    allowed_exts = (".pkl", ".pickle", ".safetensors", ".onnx", ".pt")
     lower_fn = (file.filename or "").lower()
     if not any(lower_fn.endswith(ext) for ext in allowed_exts):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Allowed model artifact formats are: .safetensors, .onnx, .pkl, .pt",
+            detail="Allowed model artifact formats are: .pkl, .pickle, .onnx, .safetensors, .pt",
         )
 
     return registry_service.perform_model_upload(

@@ -58,15 +58,98 @@ class ModelGovernanceService:
             except Exception:
                 pass
 
-            # Pickle opcodes start with PROTO 0x80 or GLOBAL 'c'
-            if file_bytes[0] in (0x80, ord("c")):
+            if self.is_pickle_content(file_bytes):
                 return "pickle"
 
         return "unknown"
 
+    def is_pickle_content(self, data: bytes) -> bool:
+        """
+        Determines whether raw bytes represent or embed a Python pickle artifact across all protocols (0-5).
+        Uses static opcode inspection without unpickling.
+        Rigorously avoids false positives for Safetensors and ONNX.
+        """
+        if not data or len(data) < 2:
+            return False
+
+        # First verify if it is Safetensors (8-byte little endian header + JSON)
+        if len(data) >= 8:
+            try:
+                import struct, json
+                header_len = struct.unpack("<Q", data[:8])[0]
+                if 0 < header_len < len(data) - 8:
+                    candidate = data[8 : 8 + header_len]
+                    if candidate.startswith(b"{") and candidate.endswith(b"}"):
+                        json.loads(candidate.decode("utf-8", errors="ignore"))
+                        return False
+            except Exception:
+                pass
+
+        # First verify if it is ONNX protobuf
+        if len(data) >= 16:
+            try:
+                import onnx
+                m = onnx.load_model_from_string(data if len(data) <= 50 * 1024 * 1024 else data[:65536])
+                if hasattr(m, "graph") and m.graph is not None and len(m.graph.node) > 0:
+                    return False
+            except Exception:
+                pass
+
+        # Protocol 2-5: check for PROTO opcode (0x80) followed by protocol version (0-5)
+        # Search for pattern anywhere in data (handles disguised pickles with prefix padding)
+        import re, pickletools
+        proto_pattern = re.compile(b"\x80[\x00-\x05]")
+        for match in proto_pattern.finditer(data):
+            offset = match.start()
+            try:
+                ops = []
+                for opcode, arg, pos in pickletools.genops(data[offset : offset + 131072]):
+                    ops.append(opcode.name)
+                    if opcode.name == "STOP":
+                        return True
+                    if len(ops) >= 8:
+                        if any(op in ("GLOBAL", "STACK_GLOBAL", "EMPTY_DICT", "EMPTY_LIST", "MARK", "PROTO", "STOP") for op in ops):
+                            return True
+                        break
+            except Exception:
+                pass
+
+        # Protocol 0/1 or arbitrary opcode stream: check from start or after standard markers
+        try:
+            ops = []
+            for opcode, arg, pos in pickletools.genops(data[:131072]):
+                ops.append(opcode.name)
+                if opcode.name == "STOP":
+                    return True
+                if len(ops) >= 8:
+                    break
+            if ops and any(op in ("GLOBAL", "STACK_GLOBAL", "EMPTY_DICT", "EMPTY_LIST", "MARK", "PROTO", "STOP") for op in ops):
+                return True
+        except Exception:
+            pass
+
+        p0_markers = re.compile(rb"(?:^|[\r\n\t ])([c(}\]])")
+        for match in p0_markers.finditer(data):
+            offset = match.start(1)
+            try:
+                ops = []
+                for opcode, arg, pos in pickletools.genops(data[offset : offset + 131072]):
+                    ops.append(opcode.name)
+                    if opcode.name == "STOP":
+                        return True
+                    if len(ops) >= 8:
+                        if any(op in ("GLOBAL", "STACK_GLOBAL", "EMPTY_DICT", "EMPTY_LIST", "MARK", "PROTO") for op in ops):
+                            return True
+                        break
+            except Exception:
+                pass
+
+        return False
+
     def is_safe_format(self, format_name: str) -> bool:
         """Returns True if the format is immune to arbitrary deserialization execution."""
         return format_name.lower() in SAFE_FORMATS
+
 
     def compute_sha256(self, file_path_or_bytes: Union[str, bytes]) -> str:
         """Computes SHA-256 digest of model artifact."""
@@ -362,9 +445,150 @@ class ModelGovernanceService:
         if not model_format and upload_filename:
             model_format = self.detect_format(upload_filename)
 
+        # Identify physical primary model file in artifact_path if provided
+        primary_model_file = None
+        has_pickle_in_dir = False
+        has_uninspectable_file = False
+        uninspectable_reason = ""
+
+        if artifact_path:
+            if not os.path.exists(artifact_path):
+                has_uninspectable_file = True
+                uninspectable_reason = f"Artifact path '{artifact_path}' does not exist on disk."
+            elif os.path.isfile(artifact_path):
+                primary_model_file = artifact_path
+                try:
+                    with open(artifact_path, "rb") as af:
+                        physical_data = af.read()
+                    if artifact_path.lower().endswith((".pkl", ".pickle", ".joblib", ".pt", ".pth", ".bin")) or self.is_pickle_content(physical_data):
+                        has_pickle_in_dir = True
+                except Exception as err:
+                    logger.warning(f"Unreadable artifact file '{artifact_path}': {err}")
+                    has_uninspectable_file = True
+                    uninspectable_reason = f"Artifact file '{os.path.basename(artifact_path)}' cannot be read: {err}"
+            elif os.path.isdir(artifact_path):
+                # Inspect explicit artifact manifest if present (MLmodel)
+                mlmodel_path = os.path.join(artifact_path, "MLmodel")
+                if os.path.exists(mlmodel_path):
+                    try:
+                        import yaml
+                        with open(mlmodel_path, "r", encoding="utf-8") as mf:
+                            manifest_data = yaml.safe_load(mf)
+                        if isinstance(manifest_data, dict):
+                            flavors = manifest_data.get("flavors", {})
+                            if "python_function" in flavors:
+                                pyfunc = flavors["python_function"]
+                                loader = str(pyfunc.get("loader_module", "")).lower()
+                                mpath = str(pyfunc.get("model_path", "")).lower()
+                                if any(bad in loader for bad in ["sklearn", "pickle", "pytorch", "joblib"]) or any(mpath.endswith(ext) for ext in [".pkl", ".pickle", ".joblib"]):
+                                    has_pickle_in_dir = True
+                                    primary_model_file = mlmodel_path
+                    except Exception as err:
+                        logger.warning(f"Failed to read/parse MLmodel manifest: {err}")
+                        has_uninspectable_file = True
+                        uninspectable_reason = f"MLmodel manifest cannot be parsed: {err}"
+
+                try:
+                    for root, _, files in os.walk(artifact_path):
+                        for fname in files:
+                            full_fpath = os.path.join(root, fname)
+                            lower_name = fname.lower()
+                            if lower_name.endswith((".pkl", ".pickle", ".joblib", ".pt", ".pth", ".bin")):
+                                has_pickle_in_dir = True
+                                primary_model_file = full_fpath
+                                break
+
+                            # Read full content of file to inspect without truncation
+                            try:
+                                with open(full_fpath, "rb") as check_f:
+                                    file_content = check_f.read()
+                            except Exception as err:
+                                # Fail closed: uninspectable or unreadable files must reject production promotion
+                                logger.warning(f"Unreadable artifact file '{full_fpath}' in production directory: {err}")
+                                has_uninspectable_file = True
+                                uninspectable_reason = f"Artifact file '{fname}' cannot be read: {err}"
+                                break
+
+                            # Check for embedded or disguised pickle opcodes across the entire file
+                            if file_content and self.is_pickle_content(file_content):
+                                has_pickle_in_dir = True
+                                primary_model_file = full_fpath
+                                break
+
+                            if lower_name.endswith((".onnx", ".safetensors")):
+                                primary_model_file = full_fpath
+
+                        if has_pickle_in_dir or has_uninspectable_file:
+                            break
+                except Exception as dir_err:
+                    has_uninspectable_file = True
+                    uninspectable_reason = f"Artifact directory '{artifact_path}' cannot be inspected: {dir_err}"
+
         # 1. Safe Format Enforcement (Production)
         if env == "production":
-            is_safe = self.is_safe_format(model_format) if model_format else False
+            if has_uninspectable_file:
+                is_safe = False
+                model_format = "uninspectable_artifact"
+            elif has_pickle_in_dir:
+                is_safe = False
+                model_format = "pickle"
+            else:
+                is_safe = self.is_safe_format(model_format) if model_format else False
+
+            # Anti-evasion & Positive Format Validation:
+            # Never trust metadata tag alone. Inspect physical bytes or artifact file.
+            if is_safe:
+                physical_data = model_bytes
+                if not physical_data and primary_model_file:
+                    try:
+                        with open(primary_model_file, "rb") as af:
+                            physical_data = af.read()
+                    except Exception as err:
+                        has_uninspectable_file = True
+                        uninspectable_reason = f"Primary model file '{primary_model_file}' cannot be read: {err}"
+                        is_safe = False
+                        model_format = "uninspectable_artifact"
+
+                if is_safe:
+                    if physical_data:
+                        if self.is_pickle_content(physical_data):
+                            is_safe = False
+                            model_format = "pickle"
+                        elif primary_model_file and primary_model_file.lower().endswith((".pkl", ".pickle", ".joblib", ".pt", ".pth", ".bin")):
+                            is_safe = False
+                            model_format = "pickle"
+                        else:
+                            # Positive validation against explicitly supported safe formats
+                            pos_valid = False
+                            if model_format == "onnx" or (primary_model_file and primary_model_file.lower().endswith(".onnx")):
+                                try:
+                                    import onnx
+                                    m = onnx.load_model_from_string(physical_data if len(physical_data) <= 50 * 1024 * 1024 else physical_data[:65536])
+                                    if hasattr(m, "graph") and m.graph is not None:
+                                        pos_valid = True
+                                except Exception:
+                                    pos_valid = False
+                            elif model_format == "safetensors" or (primary_model_file and primary_model_file.lower().endswith(".safetensors")):
+                                try:
+                                    import struct, json
+                                    if len(physical_data) >= 8:
+                                        h_len = struct.unpack("<Q", physical_data[:8])[0]
+                                        if 0 < h_len < len(physical_data) - 8:
+                                            cand = physical_data[8 : 8 + h_len]
+                                            h_dict = json.loads(cand.decode("utf-8", errors="ignore"))
+                                            if isinstance(h_dict, dict):
+                                                pos_valid = True
+                                except Exception:
+                                    pos_valid = False
+
+                            if not pos_valid:
+                                is_safe = False
+                                model_format = "unknown_or_corrupt"
+                    elif artifact_path and os.path.isdir(artifact_path) and not primary_model_file:
+                        # Directory provided but no ONNX or Safetensors model file was found
+                        is_safe = False
+                        model_format = "missing_safe_model_artifact"
+
             if not is_safe:
                 # Log audit event
                 log_audit_event(
@@ -405,17 +629,29 @@ class ModelGovernanceService:
 
                 enforce_safe = getattr(settings, "ENFORCE_SAFE_MODEL_FORMATS", True)
                 if enforce_safe:
+                    detail_str = (
+                        f"Safe Format Enforcement Violation: Model '{model_id}' uses legacy serialization format "
+                        f"'{model_format or 'pickle'}'. Production deployment strictly requires safe formats "
+                        f"like Safetensors (.safetensors) or ONNX (.onnx) to eliminate remote code execution vectors."
+                    )
+                    if uninspectable_reason:
+                        detail_str += f" Reason: {uninspectable_reason}"
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=(
-                            f"Safe Format Enforcement Violation: Model '{model_id}' uses legacy serialization format "
-                            f"'{model_format or 'pickle'}'. Production deployment strictly requires safe formats "
-                            f"like Safetensors (.safetensors) or ONNX (.onnx) to eliminate remote code execution vectors."
-                        ),
+                        detail=detail_str,
                     )
 
         # 2. Model Provenance & Attestation Check
-        valid, reason = self.verify_attestation(model_tags)
+        actual_sha256 = None
+        if model_bytes:
+            actual_sha256 = self.compute_sha256(model_bytes)
+        elif primary_model_file and os.path.exists(primary_model_file):
+            actual_sha256 = self.compute_sha256(primary_model_file)
+        elif artifact_path and os.path.exists(artifact_path) and os.path.isfile(artifact_path):
+            actual_sha256 = self.compute_sha256(artifact_path)
+
+
+        valid, reason = self.verify_attestation(model_tags, expected_sha256=actual_sha256)
         if not valid:
             is_tampering = "tampering" in reason or "digest mismatch" in reason
             event_type = "model.tampering_detected" if is_tampering else "model.unattested_promotion"

@@ -87,7 +87,8 @@ class ModelPickleSecurityScanner:
                 if len(stack) > 500:
                     stack = stack[-50:]
         except Exception as e:
-            logger.debug(f"Opcode disassembly warning: {e}")
+            logger.warning(f"Opcode disassembly error: {e}")
+            violations.append(f"Scanner bytecode parsing error: {e}")
 
         # Engine 2: AST Disassembly via Fickling
         try:

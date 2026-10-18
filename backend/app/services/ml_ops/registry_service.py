@@ -25,6 +25,59 @@ _models_cache_lock = threading.Lock()
 MODELS_CACHE_TTL_SECONDS = 15.0
 
 
+import mlflow.pyfunc
+
+class DeferredArtifactModel(mlflow.pyfunc.PythonModel):
+    """
+    Wraps an uploaded model artifact without deserializing it in the registration process.
+    The raw artifact file is packaged in the MLflow model and only loaded if predict()
+    is executed in an isolated worker/serving environment.
+    """
+    def __init__(self, artifact_filename: Optional[str] = None):
+        self.artifact_filename = artifact_filename
+
+    def load_context(self, context):
+        import os
+        model_path = context.artifacts.get("model_file")
+        if model_path and os.path.exists(model_path):
+            if model_path.lower().endswith(".onnx"):
+                try:
+                    import onnxruntime as ort
+                    self.session = ort.InferenceSession(model_path)
+                    self.is_onnx = True
+                except Exception:
+                    self.session = None
+                    self.is_onnx = False
+            else:
+                try:
+                    import cloudpickle
+                    with open(model_path, "rb") as f:
+                        self.model = cloudpickle.load(f)
+                except Exception:
+                    import pickle
+                    with open(model_path, "rb") as f:
+                        self.model = pickle.load(f)
+        else:
+            self.model = None
+
+    def predict(self, context, model_input):
+        if getattr(self, "is_onnx", False) and hasattr(self, "session") and self.session is not None:
+            import numpy as np
+            if hasattr(model_input, "to_numpy"):
+                inp_arr = model_input.to_numpy(dtype=np.float32)
+            else:
+                inp_arr = np.asarray(model_input, dtype=np.float32)
+            input_name = self.session.get_inputs()[0].name
+            inputs = {input_name: inp_arr}
+            raw_preds = self.session.run(None, inputs)[0]
+            if hasattr(raw_preds, "tolist"):
+                return raw_preds.tolist()
+            return list(raw_preds)
+        if hasattr(self, "model") and self.model is not None and hasattr(self.model, "predict"):
+            return self.model.predict(model_input)
+        return [0.0] * (len(model_input) if hasattr(model_input, "__len__") else 1)
+
+
 class ModelRegistryService:
     """
     Manages querying MLflow registered models and secure model artifact uploads (.pkl).
@@ -448,9 +501,10 @@ class ModelRegistryService:
                 )
 
         # 4. Stream and write file enforcing size limits
-        max_size = settings.MAX_MODEL_UPLOAD_SIZE_BYTES
-        temp_dir = tempfile.mkdtemp()
         safe_filename = os.path.basename(file.filename)
+        from app.services.ml_ops.onnx_validator import MAX_ONNX_FILE_SIZE_BYTES
+        max_size = MAX_ONNX_FILE_SIZE_BYTES if safe_filename.lower().endswith(".onnx") else settings.MAX_MODEL_UPLOAD_SIZE_BYTES
+        temp_dir = tempfile.mkdtemp()
         temp_file_path = os.path.join(temp_dir, safe_filename)
 
         total_bytes = 0
@@ -480,18 +534,35 @@ class ModelRegistryService:
                 )
 
             # 4b. Format Detection & Cryptographic Provenance Attestation
+            with open(temp_file_path, "rb") as f:
+                content_bytes = f.read()
+
             from app.services.ml_ops.model_governance_service import model_governance_service
 
-            model_format = model_governance_service.detect_format(safe_filename)
+            model_format = model_governance_service.detect_format(safe_filename, file_bytes=content_bytes)
             attestation_tags = model_governance_service.generate_attestation(
-                file_path_or_bytes=temp_file_path,
+                file_path_or_bytes=content_bytes,
                 filename=safe_filename,
                 signer_username=user.username,
             )
 
             wrapped_model = None
+            onnx_model_obj = None
+            model_artifacts = None
 
             if model_format == "pickle":
+                import pickletools
+                # Static opcode validation without object instantiation or bytecode execution
+                try:
+                    ops = list(pickletools.genops(content_bytes))
+                    if not ops:
+                        raise ValueError("No valid pickle opcodes found in artifact.")
+                except Exception as parse_err:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to deserialize model file as a valid pickle object: {str(parse_err)}",
+                    )
+
                 # Pickle Deserialization RCE Gatekeeper (Fickling & Bytecode Opcode Scan)
                 from app.services.ml_ops.pickle_scanner import pickle_scanner
 
@@ -512,21 +583,30 @@ class ModelRegistryService:
                         ),
                     )
 
-                # 5. Load the model using cloudpickle or pickle
-                try:
-                    with open(temp_file_path, "rb") as f:
-                        model = cloudpickle.load(f)
-                except Exception:
-                    try:
-                        with open(temp_file_path, "rb") as f:
-                            model = pickle.load(f)
-                    except Exception as load_err:
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Failed to deserialize model file as a valid pickle object: {str(load_err)}",
-                        )
+                # Safe non-deserializing wrapper: artifact file is tracked as MLflow artifact
+                wrapped_model = DeferredArtifactModel(safe_filename)
+                model_artifacts = {"model_file": temp_file_path}
 
-                wrapped_model = ModelWrapper(model)
+            elif model_format == "onnx":
+                # Safe Format: Strictly validate ONNX protobuf, checker, and operator limits
+                from app.services.ml_ops.onnx_validator import validate_onnx_artifact_bytes
+                try:
+                    onnx_model_obj, onnx_meta = validate_onnx_artifact_bytes(content_bytes)
+                except ValueError as val_err:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Security Gatekeeper Violation: Invalid ONNX artifact: {str(val_err)}",
+                    )
+                attestation_tags.update({
+                    "model.format": "onnx",
+                    "onnx.status": "validated",
+                    "onnx.sha256": onnx_meta["sha256"],
+                    "onnx.ir_version": str(onnx_meta["ir_version"]),
+                    "onnx.node_count": str(onnx_meta["node_count"]),
+                })
+                wrapped_model = DeferredArtifactModel(safe_filename)
+                model_artifacts = {"model_file": temp_file_path}
+
             elif model_format == "safetensors":
                 # Safe Format: load tensor tensors safely using safetensors without executing arbitrary bytecode
                 try:
@@ -555,13 +635,14 @@ class ModelRegistryService:
                         detail=f"Failed to parse model as valid safetensors archive: {str(st_err)}",
                     )
             else:
-                wrapped_model = ModelWrapper(None)
+                wrapped_model = DeferredArtifactModel(safe_filename)
+                model_artifacts = {"model_file": temp_file_path}
 
             # 5b. Pre-registration Backdoor & Trojan Trigger Gatekeeper
             backdoor_scan = model_governance_service.scan_weights_for_backdoors(
-                file_path_or_bytes=temp_file_path,
+                file_path_or_bytes=content_bytes,
                 filename=safe_filename,
-                model_obj=getattr(wrapped_model, "model", None) or getattr(wrapped_model, "tensors", None),
+                model_obj=getattr(wrapped_model, "tensors", None) if model_format == "safetensors" else None,
                 model_tags=parsed_metadata,
             )
             if backdoor_scan["is_backdoored"]:
@@ -602,22 +683,43 @@ class ModelRegistryService:
             with mlflow.start_run(run_name=upload_run_name) as run:
                 run_id = run.info.run_id
 
-                tags_to_set = {"uploaded_by": user.username, "upload_filename": file.filename}
-                tags_to_set.update(attestation_tags)
+                tags_to_set = {}
                 if parsed_metadata:
-                    tags_to_set.update(parsed_metadata)
+                    protected_prefixes = ("attestation.", "onnx.")
+                    protected_keys = {"uploaded_by", "upload_filename", "model.format"}
+                    for k, v in parsed_metadata.items():
+                        if not any(str(k).startswith(p) for p in protected_prefixes) and k not in protected_keys:
+                            tags_to_set[k] = v
+                tags_to_set["uploaded_by"] = user.username
+                tags_to_set["upload_filename"] = file.filename
+                tags_to_set.update(attestation_tags)
                 mlflow.set_tags(tags_to_set)
 
                 if parsed_metrics:
                     for k, v in parsed_metrics.items():
                         mlflow.log_metric(k, float(v))
 
-                mlflow.pyfunc.log_model(
-                    artifact_path="model",
-                    python_model=wrapped_model,
-                    registered_model_name=final_model_name,
-                    pip_requirements=["mlflow", "scikit-learn", "pandas", "cloudpickle", "safetensors"],
-                )
+                logged_via_onnx = False
+                if model_format == "onnx" and onnx_model_obj is not None:
+                    try:
+                        import mlflow.onnx
+                        mlflow.onnx.log_model(
+                            onnx_model=onnx_model_obj,
+                            artifact_path="model",
+                            registered_model_name=final_model_name,
+                        )
+                        logged_via_onnx = True
+                    except Exception as onnx_log_err:
+                        logger.debug(f"mlflow.onnx.log_model fallback to pyfunc packaging: {onnx_log_err}")
+
+                if not logged_via_onnx:
+                    mlflow.pyfunc.log_model(
+                        artifact_path="model",
+                        python_model=wrapped_model,
+                        artifacts=model_artifacts,
+                        registered_model_name=final_model_name,
+                        pip_requirements=["mlflow", "scikit-learn", "pandas", "cloudpickle", "safetensors", "onnx"],
+                    )
 
             client = MlflowClient()
             model_version = None

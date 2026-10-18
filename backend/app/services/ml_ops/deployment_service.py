@@ -151,6 +151,12 @@ class ModelDeploymentService:
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             # 1b. Enforce MLSecOps Model Governance (Safe Format & Attestation Gatekeeper)
+            if environment.lower() == "production" and not registered:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Production Gatekeeper Violation: Model '{model_id}' is not registered in the model registry. Unregistered models cannot be deployed to production.",
+                )
+
             if registered:
                 model_tags = {}
                 try:
@@ -161,14 +167,34 @@ class ModelDeploymentService:
 
                 from app.services.ml_ops.model_governance_service import model_governance_service
 
+                downloaded_artifact_path = None
+                if environment.lower() == "production" and getattr(settings, "ENFORCE_SAFE_MODEL_FORMATS", True):
+                    try:
+                        import mlflow.artifacts
+                        downloaded_artifact_path = mlflow.artifacts.download_artifacts(
+                            artifact_uri=f"models:/{model_id}/{target_version}"
+                        )
+                    except Exception as dl_err:
+                        logger.warning(f"Could not retrieve physical artifact from storage for {model_id}:{target_version}: {dl_err}")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                f"Production Gatekeeper Violation: Failed to retrieve physical model artifact "
+                                f"from storage for model '{model_id}' (v{target_version}). Artifact storage must be available "
+                                f"to verify format safety and cryptographic digest integrity."
+                            ),
+                        )
+
                 model_governance_service.evaluate_deployment_governance(
                     model_id=model_id,
                     version=target_version,
                     environment=environment,
                     user_username=user.username,
                     model_tags=model_tags,
+                    artifact_path=downloaded_artifact_path,
                     db=db,
                 )
+
 
             # 2. Update MLflow Model Version Tags, Stages & Aliases
             if registered:
@@ -838,6 +864,36 @@ class ModelDeploymentService:
                 except Exception:
                     env = "staging"
                 alias = "production" if (env or "staging").lower() == "production" else "staging"
+
+                if alias == "production":
+                    from app.services.ml_ops.model_governance_service import model_governance_service
+                    prev_obj = mlflow_client.get_model_version(m_name, prev)
+                    prev_tags = dict(getattr(prev_obj, "tags", {}) or {})
+                    dl_path = None
+                    if getattr(settings, "ENFORCE_SAFE_MODEL_FORMATS", True):
+                        try:
+                            import mlflow.artifacts
+                            dl_path = mlflow.artifacts.download_artifacts(
+                                artifact_uri=f"models:/{m_name}/{prev}"
+                            )
+                        except Exception as dl_err:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=(
+                                    f"Production Gatekeeper Violation: Failed to retrieve physical model artifact "
+                                    f"for rollback version '{m_name}' (v{prev}): {dl_err}"
+                                ),
+                            )
+                    model_governance_service.evaluate_deployment_governance(
+                        model_id=m_name,
+                        version=prev,
+                        environment="production",
+                        user_username=user.username,
+                        model_tags=prev_tags,
+                        artifact_path=dl_path,
+                        db=db,
+                    )
+
                 mlflow_client.set_registered_model_alias(name=m_name, alias=alias, version=prev)
                 mlflow_client.set_model_version_tag(m_name, str(m_ver), "deployment.status", "stopped")
                 mlflow_client.set_model_version_tag(
