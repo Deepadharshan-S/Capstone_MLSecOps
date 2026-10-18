@@ -47,6 +47,55 @@ def clean_k8s_ray_environment():
     _cleanup()
 
 
+def commit_dataset_version_via_staging(client, dataset_name: str, file_tuple: tuple, commit_message: str, headers: dict) -> None:
+    """
+    Enforces the documented branch-protection workflow:
+    Direct commits to main are blocked (400), so changes must be committed
+    on a feature/staging branch and merged into main through the validation gate.
+    """
+    # 1. Verify direct commit to main is blocked
+    direct_commit_resp = client.post(
+        f"/api/datasets/{dataset_name}/commit?branch=main",
+        json={"message": commit_message},
+        headers=headers,
+    )
+    assert direct_commit_resp.status_code == 400
+    assert "protected against direct writes" in direct_commit_resp.json()["detail"]
+
+    # 2. Create staging branch
+    staging_branch = f"staging-{uuid.uuid4().hex[:6]}"
+    branch_resp = client.post(
+        f"/api/datasets/{dataset_name}/branches",
+        json={"branch_name": staging_branch, "source_branch": "main"},
+        headers=headers,
+    )
+    assert branch_resp.status_code == 201
+
+    # 3. Upload file to staging branch
+    upload_resp = client.post(
+        f"/api/datasets/{dataset_name}/upload?branch={staging_branch}",
+        files={"file": file_tuple},
+        headers=headers,
+    )
+    assert upload_resp.status_code == 200
+
+    # 4. Commit on staging branch
+    commit_resp = client.post(
+        f"/api/datasets/{dataset_name}/commit?branch={staging_branch}",
+        json={"message": commit_message, "metadata": {"author": "ds_user"}},
+        headers=headers,
+    )
+    assert commit_resp.status_code == 200
+
+    # 5. Merge staging branch into main
+    merge_resp = client.post(
+        f"/api/datasets/{dataset_name}/merge",
+        json={"source_branch": staging_branch, "destination_branch": "main"},
+        headers=headers,
+    )
+    assert merge_resp.status_code == 200
+
+
 def test_model_training_flow(user_tokens):
     ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
 
@@ -66,17 +115,10 @@ def test_model_training_flow(user_tokens):
     )
     assert resp.status_code == 201
 
-    # Commit the dataset so it represents a committed version in lakeFS
-    commit_payload = {
-        "message": "Initial dataset commit for training",
-        "metadata": {"author": "ds_user"},
-    }
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
-        json=commit_payload,
-        headers=ds_headers,
+    # Branch-protection workflow: staging commit followed by merge into main
+    commit_dataset_version_via_staging(
+        client, dataset_name, dummy_file, "Initial dataset commit for training", ds_headers
     )
-    assert resp.status_code == 200
 
     # 2. Submit model training with custom code
     training_code = """
@@ -173,17 +215,10 @@ def test_model_training_flow_json_invalid(user_tokens):
     )
     assert resp.status_code == 201
 
-    # Commit the dataset so it represents a committed version in lakeFS
-    commit_payload = {
-        "message": "Initial JSON dataset commit for training",
-        "metadata": {"author": "ds_user"},
-    }
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
-        json=commit_payload,
-        headers=ds_headers,
+    # Branch-protection workflow: staging commit followed by merge into main
+    commit_dataset_version_via_staging(
+        client, dataset_name, dummy_json_file, "Initial JSON dataset commit for training", ds_headers
     )
-    assert resp.status_code == 200
 
     # 2. Submit model training with custom code
     training_code = """
@@ -249,17 +284,10 @@ def test_pipeline_training_flow(user_tokens):
     )
     assert resp.status_code == 201
 
-    # Commit the dataset
-    commit_payload = {
-        "message": "Initial commit for pipeline training",
-        "metadata": {"author": "ds_user"},
-    }
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
-        json=commit_payload,
-        headers=ds_headers,
+    # Branch-protection workflow: staging commit followed by merge into main
+    commit_dataset_version_via_staging(
+        client, dataset_name, dummy_file, "Initial commit for pipeline training", ds_headers
     )
-    assert resp.status_code == 200
 
     # 2. Submit pipeline model training
     train_payload = {
@@ -342,17 +370,10 @@ def test_custom_experiment_tracking_flow(user_tokens):
     )
     assert resp.status_code == 201
 
-    # Commit the dataset
-    commit_payload = {
-        "message": "Initial commit for experiment training",
-        "metadata": {"author": "ds_user"},
-    }
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
-        json=commit_payload,
-        headers=ds_headers,
+    # Branch-protection workflow: staging commit followed by merge into main
+    commit_dataset_version_via_staging(
+        client, dataset_name, dummy_file, "Initial commit for experiment training", ds_headers
     )
-    assert resp.status_code == 200
 
     # 2. Submit pipeline model training with a custom experiment name
     custom_exp_name = f"custom-exp-{uuid.uuid4().hex[:8]}"
@@ -430,12 +451,10 @@ def test_multimodel_nested_runs_and_custom_model_name(user_tokens):
     )
     assert resp.status_code == 201
 
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
-        json={"message": "Commit multi-model dataset"},
-        headers=ds_headers,
+    # Branch-protection workflow: staging commit followed by merge into main
+    commit_dataset_version_via_staging(
+        client, dataset_name, ("data.csv", dummy_csv), "Commit multi-model dataset", ds_headers
     )
-    assert resp.status_code == 200
 
     # 2. Submit multi-model training with custom model_name
     custom_model_name = f"champion-churn-{uuid.uuid4().hex[:8]}"
@@ -540,12 +559,10 @@ def test_xgboost_and_lightgbm_pipeline_training(user_tokens):
     )
     assert resp.status_code == 201
 
-    resp = client.post(
-        f"/api/datasets/{dataset_name}/commit?branch=main",
-        json={"message": "Commit xgb-lgb dataset"},
-        headers=ds_headers,
+    # Branch-protection workflow: staging commit followed by merge into main
+    commit_dataset_version_via_staging(
+        client, dataset_name, ("data.csv", dummy_csv), "Commit xgb-lgb dataset", ds_headers
     )
-    assert resp.status_code == 200
 
     # 2. Submit multi-model pipeline training for xgboost and lightgbm
     custom_model_name = f"xgb-lgb-champ-{uuid.uuid4().hex[:8]}"

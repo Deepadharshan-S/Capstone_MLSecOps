@@ -39,7 +39,7 @@ def cleanup_after_tests():
             config=Config(signature_version='s3v4'),
             region_name='us-east-1'
         )
-        bucket = s3.Bucket('lakefs')
+        bucket = s3.Bucket(getattr(settings, "LAKEFS_BLOCKSTORE_BUCKET", "lakefs"))
 
         test_repo_names = {"iris-dataset-admin", "iris-dataset-ds", "iris-dataset-2"}
 
@@ -174,16 +174,18 @@ def cleanup_after_tests():
         core_api = client.CoreV1Api()
         net_api = client.NetworkingV1Api()
 
+        ns = getattr(settings, "KUBERNETES_NAMESPACE", "default")
+
         # Delete test RayServices (only those created by test runs, e.g. raysvc-test-)
         try:
             svcs = custom_api.list_namespaced_custom_object(
-                group="ray.io", version="v1", namespace="default", plural="rayservices"
+                group="ray.io", version="v1", namespace=ns, plural="rayservices"
             )
             for item in svcs.get("items", []):
                 name = item.get("metadata", {}).get("name", "")
                 if name.startswith("raysvc-test-") or "test" in name:
                     custom_api.delete_namespaced_custom_object(
-                        group="ray.io", version="v1", namespace="default", plural="rayservices", name=name
+                        group="ray.io", version="v1", namespace=ns, plural="rayservices", name=name
                     )
         except Exception:
             pass
@@ -191,14 +193,14 @@ def cleanup_after_tests():
         # Delete test RayJobs (only those created by test runs, e.g. rayjob-test-)
         try:
             jobs = custom_api.list_namespaced_custom_object(
-                group="ray.io", version="v1", namespace="default", plural="rayjobs"
+                group="ray.io", version="v1", namespace=ns, plural="rayjobs"
             )
             for item in jobs.get("items", []):
                 name = item.get("metadata", {}).get("name", "")
                 if name.startswith("rayjob-test-") or name.startswith("rayjob-") or "test" in name:
                     try:
                         custom_api.delete_namespaced_custom_object(
-                            group="ray.io", version="v1", namespace="default", plural="rayjobs", name=name
+                            group="ray.io", version="v1", namespace=ns, plural="rayjobs", name=name
                         )
                     except Exception:
                         pass
@@ -207,12 +209,12 @@ def cleanup_after_tests():
 
         # Delete test ConfigMaps
         try:
-            cms = core_api.list_namespaced_config_map(namespace="default")
+            cms = core_api.list_namespaced_config_map(namespace=ns)
             for cm in cms.items:
                 name = cm.metadata.name
                 if name.startswith("rayjob-code-") or name.startswith("rayservice-code-"):
                     try:
-                        core_api.delete_namespaced_config_map(name=name, namespace="default")
+                        core_api.delete_namespaced_config_map(name=name, namespace=ns)
                     except Exception:
                         pass
         except Exception:
@@ -220,12 +222,12 @@ def cleanup_after_tests():
 
         # Delete test NetworkPolicies
         try:
-            nps = net_api.list_namespaced_network_policy(namespace="default")
+            nps = net_api.list_namespaced_network_policy(namespace=ns)
             for np in nps.items:
                 name = np.metadata.name
                 if name.startswith("rayjob-netpol-"):
                     try:
-                        net_api.delete_namespaced_network_policy(name=name, namespace="default")
+                        net_api.delete_namespaced_network_policy(name=name, namespace=ns)
                     except Exception:
                         pass
         except Exception:
