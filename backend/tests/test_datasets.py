@@ -187,17 +187,14 @@ def test_dataset_lifecycle(user_tokens):
     )
     assert resp.status_code == 403
 
-    # DS commits
+    # DS direct commit to protected main is blocked (400 Bad Request)
     resp = client.post(
         f"/api/datasets/{dataset_name}/commit?branch=main",
         json=commit_payload,
         headers=ds_headers
     )
-    assert resp.status_code == 200
-    commit1 = resp.json()
-    assert commit1["message"] == commit_payload["message"]
-    assert commit1["metadata"]["framework"] == "pytest"
-    assert "id" in commit1
+    assert resp.status_code == 400
+    assert "protected against direct writes" in resp.json()["detail"]
 
     # 5. Create branch & List branches (using data_service directly since HTTP endpoints are removed)
     from app.services.dataset import data_service
@@ -336,7 +333,7 @@ def test_dataset_lifecycle(user_tokens):
     commits_list = resp.json()
     assert len(commits_list) > 0
     commit_msgs = [c["message"] for c in commits_list]
-    assert "Initial dataset commit" in commit_msgs
+    assert any("Initial" in m for m in commit_msgs)
 
     # 12. Deletions: tag, branch, dataset
     db = TestingSessionLocal()
@@ -385,14 +382,19 @@ def test_dataset_compare_types(user_tokens):
     resp = client.post("/api/datasets", data=reg_payload, files={"file": dummy_file}, headers=ds_headers)
     assert resp.status_code == 201
 
-    # Commit initial state
-    resp = client.post(
+    # Verify direct commit to protected main is rejected with 400
+    direct_commit_resp = client.post(
         f"/api/datasets/{dataset_name}/commit?branch=main",
         json={"message": "Initial commit"},
         headers=ds_headers
     )
-    assert resp.status_code == 200
-    commit1_id = resp.json()["id"]
+    assert direct_commit_resp.status_code == 400
+    assert "protected against direct writes" in direct_commit_resp.json()["detail"]
+
+    # Retrieve initial baseline commit ID from main
+    commits_resp = client.get(f"/api/datasets/{dataset_name}/commits?ref=main", headers=ds_headers)
+    assert commits_resp.status_code == 200
+    commit1_id = commits_resp.json()[0]["id"]
 
     # 2. Create branch, upload second file, and commit to establish second reference point
     resp = client.post(
@@ -510,7 +512,8 @@ def test_dataset_branching_and_tagging_lifecycle(user_tokens):
 
     commit_payload = {"message": "Initial commit on main", "metadata": {"author": "ds_user"}}
     resp = client.post(f"/api/datasets/{dataset_name}/commit?branch=main", json=commit_payload, headers=ds_headers)
-    assert resp.status_code == 200
+    assert resp.status_code == 400
+    assert "protected against direct writes" in resp.json()["detail"]
 
     # 2. List branches: 'main' must be present
     resp = client.get(f"/api/datasets/{dataset_name}/branches", headers=ds_headers)

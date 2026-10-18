@@ -1,9 +1,9 @@
 name: StatisticalPoisoningGate
-description: Synchronous statistical data poisoning gate for merges into main
+description: Synchronous statistical data poisoning gate for merges into {{ default_branch }}
 on:
   pre-merge:
     branches:
-      - main
+      - "{{ default_branch }}"
 hooks:
   - id: poisoning_gate
     type: webhook

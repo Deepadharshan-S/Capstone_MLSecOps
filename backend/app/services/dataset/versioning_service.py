@@ -327,6 +327,28 @@ class DatasetVersioningService:
             except Exception as e:
                 err_status = getattr(e, "status_code", None) or getattr(e, "status", None)
                 err_msg = str(e)
+                if "no changes" in err_msg.lower():
+                    # LakeFS returns 400 when source and destination branches have no differences.
+                    # Prune the staging branch if applicable and treat the merge as complete/already up to date.
+                    if source_branch.startswith("staging-"):
+                        try:
+                            self.version_control_service.delete_branch(sanitized_repo_name, branch_name=source_branch)
+                            log_audit_event(
+                                "dataset_branch_delete",
+                                username,
+                                None,
+                                f"Pruned merged staging branch '{source_branch}' for dataset '{dataset_name}'.",
+                                db=db,
+                            )
+                        except Exception:
+                            pass
+                    return {
+                        "dataset_name": dataset_name,
+                        "source_branch": source_branch,
+                        "destination_branch": destination_branch,
+                        "merge_commit_id": "up-to-date",
+                        "status": "merged",
+                    }
                 if (err_status == 412) or ("412" in err_msg) or ("pre-merge hook aborted" in err_msg.lower()):
                     log_audit_event(
                         "dataset_merge_rejected",
@@ -391,10 +413,17 @@ class DatasetVersioningService:
     def get_branch_protection(self, db: Session, dataset_name: str) -> list[str]:
         """
         Retrieves active branch protection patterns for the dataset repository.
+        Always enforces protection on the default baseline branch (e.g. 'main').
         """
         dataset, sanitized_repo_name = get_dataset_or_404(db, dataset_name)
+        default_branch = dataset.default_branch or "main"
         try:
-            return self.version_control_service.get_branch_protection_rules(sanitized_repo_name)
+            rules = list(self.version_control_service.get_branch_protection_rules(sanitized_repo_name))
+            if not rules:
+                return [default_branch]
+            if default_branch not in rules:
+                rules.append(default_branch)
+            return rules
         except Exception as e:
             logger.debug(f"Failed to get branch protection rules for '{dataset_name}': {e}")
-            return []
+            return [default_branch]

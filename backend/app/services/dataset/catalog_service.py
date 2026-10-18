@@ -12,6 +12,52 @@ from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dataset.utils import get_repo_name, get_dataset_or_404
 from app.core.telemetry import trace_ml_operation
 
+def derive_storage_deletion_target(
+    storage_namespace: Optional[str],
+    sanitized_repo_name: str,
+    default_bucket: str,
+) -> tuple[str, str]:
+    """
+    Parses storage namespace URI (e.g. s3://bucket/prefix/repo) into (bucket_name, prefix)
+    for safe object storage deletion.
+    Handles:
+      - s3://bucket -> (bucket, f"{sanitized_repo_name}/")
+      - s3://bucket/prefix -> (bucket, "prefix/")
+      - s3://bucket/prefix/repository -> (bucket, "prefix/repository/")
+    Guarantees that broad bucket deletion with an empty or root prefix is strictly rejected.
+    """
+    clean_repo = (sanitized_repo_name or "").strip().strip("/")
+    if not clean_repo:
+        raise ValueError("Invalid deletion target: repository name cannot be empty.")
+
+    bucket_name = default_bucket
+    target_prefix = None
+
+    if storage_namespace and storage_namespace.startswith("s3://"):
+        raw_path = storage_namespace[5:].strip("/")
+        if not raw_path:
+            raise ValueError("Invalid storage namespace: S3 URI has no bucket.")
+
+        if "/" in raw_path:
+            bucket_name, subpath = raw_path.split("/", 1)
+            subpath = subpath.strip("/")
+            if subpath:
+                target_prefix = f"{subpath}/"
+        else:
+            bucket_name = raw_path
+
+    if not target_prefix:
+        target_prefix = f"{clean_repo}/"
+
+    # Strict invariant safety checks: reject empty or root prefixes
+    clean_prefix = target_prefix.strip()
+    if not bucket_name or not clean_prefix or clean_prefix in ("/", ""):
+        raise ValueError(
+            f"Refusing to delete storage with broad/empty prefix (bucket='{bucket_name}', prefix='{target_prefix}')."
+        )
+
+    return bucket_name, target_prefix
+
 
 class DatasetCatalogService:
     """
@@ -82,7 +128,7 @@ class DatasetCatalogService:
             )
 
         sanitized_repo_name = get_repo_name(dataset_name)
-        storage_ns = f"s3://lakefs/{sanitized_repo_name}"
+        storage_ns = f"s3://{settings.LAKEFS_BLOCKSTORE_BUCKET}/{sanitized_repo_name}"
 
         repo_created = False
         try:
@@ -215,7 +261,10 @@ class DatasetCatalogService:
 
         # 1. Delete matching objects under the repository prefix in MinIO
         try:
-            self.storage_service.delete_objects_with_prefix("lakefs", f"{sanitized_repo_name}/")
+            bucket_name, deletion_prefix = derive_storage_deletion_target(
+                dataset.storage_namespace, sanitized_repo_name, settings.LAKEFS_BLOCKSTORE_BUCKET
+            )
+            self.storage_service.delete_objects_with_prefix(bucket_name, deletion_prefix)
         except Exception as e:
             log_audit_event(
                 "dataset_delete_warning",

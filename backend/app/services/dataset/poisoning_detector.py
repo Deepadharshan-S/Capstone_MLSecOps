@@ -1,3 +1,4 @@
+import io
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, Union
@@ -77,42 +78,131 @@ class StatisticalPoisoningDetector:
             self.max_sample_rows = max_sample_rows if max_sample_rows is not None else 50000
             self.allow_new_columns = allow_new_columns if allow_new_columns is not None else False
 
+    @staticmethod
+    def inspect_raw_csv_headers(csv_bytes: bytes) -> list[str]:
+        """
+        Extracts raw column headers directly from CSV bytes before pandas
+        normalizes or mangles duplicate columns (e.g. '.1' suffixing).
+        """
+        import csv
+        text_stream = io.StringIO(csv_bytes[:65536].decode("utf-8", errors="replace"))
+        reader = csv.reader(text_stream)
+        for row in reader:
+            if row:
+                return [str(cell) for cell in row]
+        return []
+
+    @staticmethod
+    def inspect_raw_parquet_headers(parquet_bytes: bytes) -> list[str]:
+        """
+        Extracts field names directly from Parquet schema metadata.
+        """
+        import pyarrow.parquet as pq
+        reader = pq.ParquetFile(io.BytesIO(parquet_bytes))
+        return [str(name) for name in reader.schema.names]
+
     def validate_schemas(
         self,
         baseline_df: pd.DataFrame,
         candidate_df: pd.DataFrame,
         allow_new_columns: Optional[bool] = None,
+        allowed_new_columns: Optional[Union[list[str], set[str]]] = None,
+        target_column: Optional[str] = None,
+        raw_candidate_headers: Optional[list[str]] = None,
     ) -> list[ValidationViolation]:
         """
-        Enforces strict schema consistency:
-        - Rejects candidate if any baseline columns are missing or renamed.
-        - Rejects newly added columns unless explicitly permitted by policy.
+        Enforces strict schema consistency and detects tabular schema injection attacks (P2):
+        - Rejects malformed schemas or empty dataframes.
+        - Rejects candidate if duplicate column names exist (in raw input or dataframe).
+        - Rejects non-printable or illegal control characters in column headers.
+        - Rejects whitespace padding or normalization collisions in column names.
+        - Rejects column case-folding collisions.
+        - Rejects candidate if any baseline columns are missing or renamed (reports likely renames).
+        - Rejects newly added columns unless explicitly permitted by policy or allowlist.
         - Rejects column data type incompatibilities (e.g. numeric vs object/string).
+        - Rejects target/label schema tampering (type changes, domain shifts).
         """
         allow_new = allow_new_columns if allow_new_columns is not None else self.allow_new_columns
         violations: list[ValidationViolation] = []
 
-        base_cols = list(baseline_df.columns)
-        cand_cols = list(candidate_df.columns)
-
-        # 1. Missing columns
-        missing_cols = set(base_cols) - set(cand_cols)
-        for col in sorted(missing_cols):
+        # 0. Malformed / empty dataframe check
+        if len(baseline_df.columns) == 0 or len(candidate_df.columns) == 0:
             violations.append(
                 ValidationViolation(
-                    feature=col,
+                    feature="schema",
                     test_type="schema_validation",
                     statistic=1.0,
                     p_value=None,
                     threshold=0.0,
-                    message=f"Required baseline column '{col}' is missing in candidate dataset schema.",
+                    message="Malformed or empty schema: dataset contains 0 columns.",
                 )
             )
+            return violations
 
-        # 2. Unexpected newly added columns
-        if not allow_new:
-            new_cols = set(cand_cols) - set(base_cols)
-            for col in sorted(new_cols):
+        if len(candidate_df) == 0:
+            violations.append(
+                ValidationViolation(
+                    feature="dataset",
+                    test_type="schema_validation",
+                    statistic=1.0,
+                    p_value=None,
+                    threshold=0.0,
+                    message="Candidate dataset contains 0 rows.",
+                )
+            )
+            return violations
+
+        base_cols = [str(c) for c in baseline_df.columns]
+        cand_cols = [str(c) for c in candidate_df.columns]
+        header_check_cols = [str(c) for c in raw_candidate_headers] if raw_candidate_headers is not None else cand_cols
+
+        # 1. Suspicious column names: Duplicates, control chars, whitespace padding, and case collisions
+        # 1a. Duplicate headers
+        seen_cand = set()
+        dup_cand = set()
+        for c in header_check_cols:
+            if c in seen_cand:
+                dup_cand.add(c)
+            seen_cand.add(c)
+        for dup in sorted(dup_cand):
+            violations.append(
+                ValidationViolation(
+                    feature=dup,
+                    test_type="schema_validation",
+                    statistic=1.0,
+                    p_value=None,
+                    threshold=0.0,
+                    message=f"Candidate schema contains duplicate column name '{dup}'.",
+                )
+            )
+        if dup_cand:
+            return violations
+
+        # Also detect if pandas mangled duplicate columns (e.g. "feat.1" when "feat" exists)
+        if raw_candidate_headers is None:
+            import re
+            mangled_dups = set()
+            for c in cand_cols:
+                m = re.match(r"^(.*?)\.\d+$", c)
+                if m and m.group(1) in cand_cols:
+                    mangled_dups.add(m.group(1))
+            for m_dup in sorted(mangled_dups):
+                violations.append(
+                    ValidationViolation(
+                        feature=m_dup,
+                        test_type="schema_validation",
+                        statistic=1.0,
+                        p_value=None,
+                        threshold=0.0,
+                        message=f"Candidate schema contains duplicate column header derived from '{m_dup}'.",
+                    )
+                )
+            if mangled_dups:
+                return violations
+
+        # 1b. Control characters and illegal non-printable characters
+        for col in header_check_cols:
+            if any(ord(ch) < 32 and ch not in ("\t",) for ch in col):
                 violations.append(
                     ValidationViolation(
                         feature=col,
@@ -120,11 +210,113 @@ class StatisticalPoisoningDetector:
                         statistic=1.0,
                         p_value=None,
                         threshold=0.0,
-                        message=f"Candidate dataset contains unexpected new column '{col}' not present in baseline schema.",
+                        message=f"Column name '{repr(col)}' contains illegal control or non-printable characters.",
                     )
                 )
 
-        # 3. Data type compatibility for common columns
+        # 1c. Whitespace padding & normalization collisions
+        stripped_cand = [c.strip() for c in header_check_cols]
+        for orig, stripped in zip(header_check_cols, stripped_cand):
+            if orig != stripped or "  " in orig:
+                violations.append(
+                    ValidationViolation(
+                        feature=orig,
+                        test_type="schema_validation",
+                        statistic=1.0,
+                        p_value=None,
+                        threshold=0.0,
+                        message=f"Column name '{orig}' contains leading or trailing whitespace padding.",
+                    )
+                )
+        if len(stripped_cand) != len(set(stripped_cand)):
+            for col in sorted(set(header_check_cols)):
+                matching = [c for c in header_check_cols if c.strip() == col.strip()]
+                if len(matching) > 1:
+                    violations.append(
+                        ValidationViolation(
+                            feature=col,
+                            test_type="schema_validation",
+                            statistic=1.0,
+                            p_value=None,
+                            threshold=0.0,
+                            message=f"Column normalization collision: multiple columns normalize to '{col.strip()}'.",
+                        )
+                    )
+                    break
+
+        # 1d. Case collisions (e.g. 'feature' and 'Feature')
+        lowered_cand = [c.lower() for c in header_check_cols]
+        if len(lowered_cand) != len(set(lowered_cand)):
+            for col in sorted(set(header_check_cols)):
+                matching = [c for c in header_check_cols if c.lower() == col.lower()]
+                if len(matching) > 1:
+                    violations.append(
+                        ValidationViolation(
+                            feature=col,
+                            test_type="schema_validation",
+                            statistic=1.0,
+                            p_value=None,
+                            threshold=0.0,
+                            message=f"Candidate schema contains case collision: '{col}' conflicts with multiple variants.",
+                        )
+                    )
+                    break
+
+        # 1e. Case mismatch against baseline
+        base_lowered = {b.lower(): b for b in base_cols}
+        for col in cand_cols:
+            if col not in base_cols and col.lower() in base_lowered:
+                base_match = base_lowered[col.lower()]
+                violations.append(
+                    ValidationViolation(
+                        feature=col,
+                        test_type="schema_validation",
+                        statistic=1.0,
+                        p_value=None,
+                        threshold=0.0,
+                        message=f"Column '{col}' collides with baseline column '{base_match}' with conflicting case.",
+                    )
+                )
+
+        # 2. Missing columns and likely rename detection
+        missing_cols = set(base_cols) - set(cand_cols)
+        new_cols = set(cand_cols) - set(base_cols)
+
+        for col in sorted(missing_cols):
+            # If 1 missing and 1 new, report likely rename
+            if len(missing_cols) == 1 and len(new_cols) == 1:
+                likely_rename = list(new_cols)[0]
+                msg = f"Required baseline column '{col}' is missing in candidate dataset schema (likely renamed to '{likely_rename}')."
+            else:
+                msg = f"Required baseline column '{col}' is missing in candidate dataset schema."
+            violations.append(
+                ValidationViolation(
+                    feature=col,
+                    test_type="schema_validation",
+                    statistic=1.0,
+                    p_value=None,
+                    threshold=0.0,
+                    message=msg,
+                )
+            )
+
+        # 3. Unexpected newly added columns (respecting allowlist)
+        if not allow_new:
+            allowed_set = set(allowed_new_columns or [])
+            for col in sorted(new_cols):
+                if col not in allowed_set:
+                    violations.append(
+                        ValidationViolation(
+                            feature=col,
+                            test_type="schema_validation",
+                            statistic=1.0,
+                            p_value=None,
+                            threshold=0.0,
+                            message=f"Candidate dataset contains unexpected new column '{col}' not present in baseline schema.",
+                        )
+                    )
+
+        # 4. Data type compatibility for common columns
         common_cols = [c for c in base_cols if c in cand_cols]
         for col in common_cols:
             b_is_num = pd.api.types.is_numeric_dtype(baseline_df[col])
@@ -143,6 +335,50 @@ class StatisticalPoisoningDetector:
                         ),
                     )
                 )
+            # Check boolean stability
+            b_is_bool = pd.api.types.is_bool_dtype(baseline_df[col])
+            c_is_bool = pd.api.types.is_bool_dtype(candidate_df[col])
+            if b_is_bool != c_is_bool:
+                violations.append(
+                    ValidationViolation(
+                        feature=col,
+                        test_type="type_incompatibility",
+                        statistic=1.0,
+                        p_value=None,
+                        threshold=0.0,
+                        message=(
+                            f"Column '{col}' boolean type mismatch: baseline is {baseline_df[col].dtype}, "
+                            f"candidate is {candidate_df[col].dtype}."
+                        ),
+                    )
+                )
+
+        # 5. Target / Label column stability check
+        target = target_column
+        if not target:
+            for cand in ["target", "label", "class", "churn", "is_fraud", "fraud"]:
+                if cand in base_cols and cand in cand_cols:
+                    target = cand
+                    break
+
+        if target and target in base_cols and target in cand_cols:
+            b_target = baseline_df[target].dropna()
+            c_target = candidate_df[target].dropna()
+            if len(b_target) > 0 and len(c_target) > 0:
+                # Type stability on target
+                b_num = pd.api.types.is_numeric_dtype(b_target)
+                c_num = pd.api.types.is_numeric_dtype(c_target)
+                if b_num != c_num:
+                    violations.append(
+                        ValidationViolation(
+                            feature=target,
+                            test_type="target_schema_tampering",
+                            statistic=1.0,
+                            p_value=None,
+                            threshold=0.0,
+                            message=f"Target column '{target}' type mismatch: baseline is {b_target.dtype}, candidate is {c_target.dtype}.",
+                        )
+                    )
 
         return violations
 
@@ -347,6 +583,8 @@ class StatisticalPoisoningDetector:
         chi2_alpha: Optional[float] = None,
         psi_threshold: Optional[float] = None,
         allow_new_columns: Optional[bool] = None,
+        allowed_new_columns: Optional[Union[list[str], set[str]]] = None,
+        raw_candidate_headers: Optional[list[str]] = None,
     ) -> ValidationResult:
         """
         Comprehensive statistical and schema gating entry point comparing candidate dataset to baseline.
@@ -359,7 +597,12 @@ class StatisticalPoisoningDetector:
 
         # 1. Strict schema validation
         schema_violations = self.validate_schemas(
-            baseline_df, candidate_df, allow_new_columns=allow_new_columns
+            baseline_df,
+            candidate_df,
+            allow_new_columns=allow_new_columns,
+            allowed_new_columns=allowed_new_columns,
+            target_column=target_column,
+            raw_candidate_headers=raw_candidate_headers,
         )
         if schema_violations:
             violations.extend(schema_violations)
