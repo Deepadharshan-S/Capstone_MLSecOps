@@ -63,8 +63,8 @@ def _fetch_mlflow_metrics(experiment_name: Optional[str], job_id: str, include_a
         import mlflow
         from app.core.config import settings
 
-        os.environ["AWS_ACCESS_KEY_ID"] = settings.MINIO_ROOT_USER
-        os.environ["AWS_SECRET_ACCESS_KEY"] = settings.MINIO_ROOT_PASSWORD
+        os.environ["AWS_ACCESS_KEY_ID"] = settings.minio_app_user
+        os.environ["AWS_SECRET_ACCESS_KEY"] = settings.minio_app_password
         os.environ["MLFLOW_S3_ENDPOINT_URL"] = settings.MINIO_ENDPOINT
         os.environ["MLFLOW_S3_IGNORE_TLS"] = "true"
 

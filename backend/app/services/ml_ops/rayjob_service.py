@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from typing import Optional, Any
+from app.core.config import settings
 from app.services.ml_ops.utils import submit_rayjob_to_k8s
 
 logger = logging.getLogger("rayjob_service")
@@ -78,11 +79,12 @@ class RayJobService:
         except Exception:
             return None
 
-    def list_rayjobs(self, namespace: str = "default") -> list[dict]:
+    def list_rayjobs(self, namespace: Optional[str] = None) -> list[dict]:
         """
         Fetches all RayJob custom resources in the namespace in a single batch query.
         Returns empty list if Kubernetes cluster is offline or unreachable.
         """
+        namespace = namespace or settings.KUBERNETES_NAMESPACE
         try:
             custom_api, _ = self._get_apis()
             resp = custom_api.list_namespaced_custom_object(
@@ -96,11 +98,12 @@ class RayJobService:
             print(f"Notice: Could not list RayJobs from Kubernetes ({e}).")
             return []
 
-    def get_rayjob(self, rayjob_name: str, namespace: str = "default") -> Optional[dict]:
+    def get_rayjob(self, rayjob_name: str, namespace: Optional[str] = None) -> Optional[dict]:
         """
         Fetches a single RayJob custom resource by name.
         Returns None if not found or if cluster is unreachable.
         """
+        namespace = namespace or settings.KUBERNETES_NAMESPACE
         try:
             custom_api, _ = self._get_apis()
             return custom_api.get_namespaced_custom_object(
@@ -114,11 +117,12 @@ class RayJobService:
             print(f"Notice: Could not get RayJob '{rayjob_name}' from Kubernetes ({e}).")
             return None
 
-    def get_head_pod(self, job_id: str, namespace: str = "default") -> Optional[tuple[str, str]]:
+    def get_head_pod(self, job_id: str, namespace: Optional[str] = None) -> Optional[tuple[str, str]]:
         """
         Finds the Ray head pod corresponding to a given job_id.
         Returns (pod_name, pod_phase) or None if not found.
         """
+        namespace = namespace or settings.KUBERNETES_NAMESPACE
         try:
             _, core_api = self._get_apis()
             clean_id = job_id.removeprefix("rayjob-")
@@ -144,7 +148,7 @@ class RayJobService:
     def get_head_pod_logs(
         self,
         pod_name: str,
-        namespace: str = "default",
+        namespace: Optional[str] = None,
         tail_lines: Optional[int] = None,
         container: str = "ray-head",
     ) -> Optional[str]:
@@ -152,6 +156,7 @@ class RayJobService:
         Reads live logs from the specified pod container via CoreV1Api.
         Returns log content string or None on failure.
         """
+        namespace = namespace or settings.KUBERNETES_NAMESPACE
         try:
             _, core_api = self._get_apis()
             kwargs = {"name": pod_name, "namespace": namespace, "container": container}
@@ -177,7 +182,7 @@ class RayJobService:
             mode_description=mode_description,
         )
 
-    def cleanup_job_resources(self, job_id: str, namespace: str = "default") -> None:
+    def cleanup_job_resources(self, job_id: str, namespace: Optional[str] = None) -> None:
         """
         Comprehensively cleans up all Kubernetes and local resources associated with a completed RayJob:
         - ConfigMap (rayjob-code-{job_id} and labeled collection)
@@ -189,6 +194,7 @@ class RayJobService:
         """
         import os
         import tempfile
+        namespace = namespace or settings.KUBERNETES_NAMESPACE
         clean_id = job_id.removeprefix("rayjob-")
         rayjob_name = f"rayjob-{clean_id}"
 
@@ -288,11 +294,12 @@ class RayJobService:
         except Exception as tmp_err:
             logger.debug(f"Temp file cleanup note for {clean_id}: {tmp_err}")
 
-    def sweep_orphaned_job_resources(self, namespace: str = "default") -> dict:
+    def sweep_orphaned_job_resources(self, namespace: Optional[str] = None) -> dict:
         """
         Sweeps and garbage-collects completed/failed RayJobs, orphaned ConfigMaps,
         NetworkPolicies, and RayClusters from past training jobs and deployments.
         """
+        namespace = namespace or settings.KUBERNETES_NAMESPACE
         cleaned_jobs = []
         cleaned_cms = []
         cleaned_nps = []

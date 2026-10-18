@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: rayservice-code-{{deployment_id}}
-  namespace: default
+  namespace: {{namespace}}
   labels:
     app.kubernetes.io/name: sentinelml-rayservice
     deployment_id: "{{deployment_id}}"
@@ -14,7 +14,7 @@ apiVersion: ray.io/v1
 kind: RayService
 metadata:
   name: {{rayservice_name}}
-  namespace: default
+  namespace: {{namespace}}
   labels:
     app.kubernetes.io/name: sentinelml-rayservice
     deployment_id: "{{deployment_id}}"
@@ -51,7 +51,7 @@ spec:
               emptyDir: {}
           containers:
             - name: ray-head
-              image: sentinelml-ray:latest
+              image: {{ray_image}}
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false

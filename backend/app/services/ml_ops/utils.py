@@ -31,9 +31,9 @@ def get_scoped_training_credentials(job_id: str) -> dict:
     """
     creds = {
         "aws_access_key_id": settings.MINIO_TRAINING_ACCESS_KEY_ID
-        or os.getenv("AWS_ACCESS_KEY_ID", settings.MINIO_ROOT_USER),
+        or os.getenv("AWS_ACCESS_KEY_ID", settings.minio_app_user),
         "aws_secret_access_key": settings.MINIO_TRAINING_SECRET_ACCESS_KEY
-        or os.getenv("AWS_SECRET_ACCESS_KEY", settings.MINIO_ROOT_PASSWORD),
+        or os.getenv("AWS_SECRET_ACCESS_KEY", settings.minio_app_password),
         "aws_session_token": "",
         "lakefs_access_key_id": settings.LAKEFS_TRAINING_ACCESS_KEY_ID
         or settings.LAKEFS_ACCESS_KEY_ID,
@@ -153,6 +153,8 @@ def render_rayjob_manifest(
         "{{lakefs_secret_access_key}}": scoped_creds["lakefs_secret_access_key"],
         "{{lakefs_default_branch}}": settings.LAKEFS_DEFAULT_BRANCH,
         "{{minio_endpoint}}": settings.MINIO_INTERNAL_ENDPOINT or to_k8s_endpoint(settings.MINIO_ENDPOINT),
+        "{{namespace}}": settings.KUBERNETES_NAMESPACE,
+        "{{ray_image}}": settings.RAY_IMAGE,
     }
     rendered_yaml = template_content
     for key, val in replacements.items():
@@ -173,17 +175,18 @@ def render_rayjob_manifest(
 _rayjob_submission_lock = threading.Lock()
 
 
-def get_active_rayjobs_count(custom_api, core_api, namespace: str = "default") -> int:
+def get_active_rayjobs_count(custom_api, core_api, namespace: Optional[str] = None) -> int:
     """
     Counts active RayJobs and active Ray head pods in Kubernetes.
     Returns the maximum of active RayJob CRDs and active head pods.
     """
+    ns = namespace or settings.KUBERNETES_NAMESPACE
     active_jobs = 0
     try:
         jobs = custom_api.list_namespaced_custom_object(
             group="ray.io",
             version="v1",
-            namespace=namespace,
+            namespace=ns,
             plural="rayjobs",
         ).get("items", [])
         for item in jobs:
@@ -202,7 +205,7 @@ def get_active_rayjobs_count(custom_api, core_api, namespace: str = "default") -
     active_pods = 0
     try:
         pods = core_api.list_namespaced_pod(
-            namespace=namespace,
+            namespace=ns,
             label_selector="ray.io/node-type=head",
         ).items
         for p in pods:
@@ -218,7 +221,7 @@ def get_active_rayjobs_count(custom_api, core_api, namespace: str = "default") -
 def wait_for_rayjob_capacity(
     custom_api,
     core_api,
-    namespace: str = "default",
+    namespace: Optional[str] = None,
     max_concurrent: Optional[int] = None,
     timeout_seconds: Optional[float] = None,
     poll_interval: float = 2.0,
@@ -231,9 +234,15 @@ def wait_for_rayjob_capacity(
     import time
     from app.services.ml_ops.rayjob_service import RayJobService
 
+    ns = namespace or settings.KUBERNETES_NAMESPACE
+
     if max_concurrent is None:
         try:
-            max_concurrent = int(os.getenv("MAX_CONCURRENT_RAYJOBS", str(getattr(settings, "MAX_CONCURRENT_RAYJOBS", 2))))
+            env_val = os.getenv("MAX_CONCURRENT_RAYJOBS")
+            if env_val is not None:
+                max_concurrent = int(env_val)
+            else:
+                max_concurrent = int(settings.MAX_CONCURRENT_RAYJOBS)
         except (ValueError, TypeError):
             max_concurrent = 2
 
@@ -242,12 +251,11 @@ def wait_for_rayjob_capacity(
 
     if timeout_seconds is None:
         try:
-            timeout_seconds = float(
-                os.getenv(
-                    "RAYJOB_CONCURRENCY_TIMEOUT",
-                    str(getattr(settings, "RAYJOB_CONCURRENCY_TIMEOUT_SECONDS", 300.0)),
-                )
-            )
+            env_val = os.getenv("RAYJOB_CONCURRENCY_TIMEOUT") or os.getenv("RAYJOB_CONCURRENCY_TIMEOUT_SECONDS")
+            if env_val is not None:
+                timeout_seconds = float(env_val)
+            else:
+                timeout_seconds = float(settings.RAYJOB_CONCURRENCY_TIMEOUT_SECONDS)
         except (ValueError, TypeError):
             timeout_seconds = 300.0
 
@@ -255,7 +263,7 @@ def wait_for_rayjob_capacity(
 
     # Initial sweep to clean any already completed jobs
     try:
-        ray_svc.sweep_orphaned_job_resources(namespace=namespace)
+        ray_svc.sweep_orphaned_job_resources(namespace=ns)
     except Exception as sweep_err:
         logger.debug(f"Pre-check sweep note: {sweep_err}")
 
@@ -334,7 +342,7 @@ def submit_rayjob_to_k8s(
             raise ValueError("No RayJob manifest found in rendered YAML.")
 
         rayjob_name = rayjob_doc.get("metadata", {}).get("name", f"rayjob-{job_id}")
-        namespace = rayjob_doc.get("metadata", {}).get("namespace", "default")
+        namespace = rayjob_doc.get("metadata", {}).get("namespace", settings.KUBERNETES_NAMESPACE)
 
         with _rayjob_submission_lock:
             # 0. Enforce RayJob concurrency limit (at most 2 concurrent RayJobs during tests / by default)
@@ -455,7 +463,8 @@ def spawn_local_ray_subprocess(
             try:
                 from app.services.dataset.s3_storage_service import S3StorageService
                 s3_svc = S3StorageService()
-                s3_svc.put_log_content("mlflow", f"logs/{job_id}/training.log", output_log)
+                mlflow_bucket = getattr(settings, "MLFLOW_ARTIFACT_BUCKET", "mlflow")
+                s3_svc.put_log_content(mlflow_bucket, f"logs/{job_id}/training.log", output_log)
             except Exception as log_err:
                 logger.warning(f"Failed to upload local training log for {job_id}: {log_err}")
 
