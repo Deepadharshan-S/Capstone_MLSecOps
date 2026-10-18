@@ -228,3 +228,23 @@ def test_api_upload_rejects_malicious_pickle_and_quarantines():
     detail = response.json()["detail"]
     assert "Security Gatekeeper Violation" in detail
     assert "quarantined" in detail
+
+
+def test_pickle_scanner_fails_closed_on_corrupt_bytecode():
+    """
+    Verifies that if pickle opcode parsing encounters corrupt or unparseable
+    bytecode, the scanner fails closed (is_safe=False) rather than silently
+    passing uninspected bytes.
+    """
+    scanner = ModelPickleSecurityScanner()
+    with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
+        tf.write(b"\x80\x04\xff\xff\xff\xff-corrupt-opcode-sequence")
+        temp_path = tf.name
+
+    try:
+        res = scanner.scan_file(temp_path)
+        assert res["is_safe"] is False
+        assert len(res["violations"]) > 0
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)

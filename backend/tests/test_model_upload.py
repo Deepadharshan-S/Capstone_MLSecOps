@@ -326,3 +326,226 @@ def test_upload_model_viewer_forbidden(user_tokens):
         headers=viewer_headers,
     )
     assert response.status_code == 403
+
+
+@patch("mlflow.set_tracking_uri")
+@patch("mlflow.set_experiment")
+@patch("mlflow.start_run")
+@patch("mlflow.pyfunc.log_model")
+@patch("mlflow.tracking.MlflowClient")
+def test_upload_model_pickle_extension_success(
+    mock_mlflow_client_cls,
+    mock_log_model,
+    mock_start_run,
+    mock_set_experiment,
+    mock_set_tracking_uri,
+    user_tokens,
+):
+    """Verify successful upload of .pickle extension (synonym of .pkl)."""
+    mock_run = MagicMock()
+    mock_run.info.run_id = "test-run-pickle-ext"
+    mock_start_run.return_value.__enter__.return_value = mock_run
+
+    mock_client = MagicMock()
+    mock_version = MagicMock()
+    mock_version.version = "1"
+    mock_client.get_latest_versions.return_value = [mock_version]
+    mock_client.search_model_versions.return_value = [mock_version]
+    mock_mlflow_client_cls.return_value = mock_client
+
+    model_bytes = pickle.dumps(DummyModel())
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    files = {"file": ("iris_classifier.pickle", model_bytes, "application/octet-stream")}
+
+    response = client.post(
+        "/api/models/upload",
+        files=files,
+        headers=ds_headers,
+    )
+    assert response.status_code == 201
+    res = response.json()
+    assert res["model_name"] == "iris_classifier"
+    assert res["status"] == "uploaded"
+    mock_log_model.assert_called_once()
+
+
+@patch("mlflow.set_tracking_uri")
+@patch("mlflow.set_experiment")
+@patch("mlflow.start_run")
+@patch("mlflow.onnx.log_model")
+@patch("mlflow.tracking.MlflowClient")
+def test_upload_model_onnx_success(
+    mock_mlflow_client_cls,
+    mock_onnx_log_model,
+    mock_start_run,
+    mock_set_experiment,
+    mock_set_tracking_uri,
+    user_tokens,
+):
+    """Verify successful upload and registration of an ONNX format model."""
+    import onnx
+    from onnx import helper, TensorProto
+
+    mock_run = MagicMock()
+    mock_run.info.run_id = "test-onnx-run-12345"
+    mock_start_run.return_value.__enter__.return_value = mock_run
+
+    mock_client = MagicMock()
+    mock_version = MagicMock()
+    mock_version.version = "1"
+    mock_client.get_latest_versions.return_value = [mock_version]
+    mock_client.search_model_versions.return_value = [mock_version]
+    mock_mlflow_client_cls.return_value = mock_client
+
+    node = helper.make_node("Relu", ["X"], ["Y"])
+    graph = helper.make_graph(
+        [node],
+        "test-graph",
+        [helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 2])],
+        [helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 2])],
+    )
+    model = helper.make_model(graph, producer_name="test_onnx")
+    onnx_bytes = model.SerializeToString()
+
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    files = {"file": ("onnx_relu_model.onnx", onnx_bytes, "application/octet-stream")}
+
+    response = client.post(
+        "/api/models/upload",
+        data={"model_name": "valid_onnx_model"},
+        files=files,
+        headers=ds_headers,
+    )
+    assert response.status_code == 201
+    res = response.json()
+    assert res["model_name"] == "valid_onnx_model"
+    assert res["status"] == "uploaded"
+    mock_onnx_log_model.assert_called_once()
+
+
+def test_upload_model_onnx_checker_validation_fails(user_tokens):
+    """Verify that uploading corrupt or invalid ONNX protobuf is rejected by gatekeeper."""
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    files = {"file": ("broken.onnx", b"invalid-onnx-bytes-data", "application/octet-stream")}
+
+    response = client.post(
+        "/api/models/upload",
+        files=files,
+        headers=ds_headers,
+    )
+    assert response.status_code == 400
+    assert "Invalid ONNX artifact" in response.json()["detail"]
+
+
+@patch("mlflow.set_tracking_uri")
+@patch("mlflow.set_experiment")
+@patch("mlflow.start_run")
+@patch("mlflow.pyfunc.log_model")
+@patch("mlflow.tracking.MlflowClient")
+def test_upload_model_zero_pickle_deserialization(
+    mock_mlflow_client_cls,
+    mock_log_model,
+    mock_start_run,
+    mock_set_experiment,
+    mock_set_tracking_uri,
+    user_tokens,
+    monkeypatch,
+):
+    """Verify that .pkl upload validation never invokes pickle/cloudpickle deserialization in FastAPI."""
+    mock_run = MagicMock()
+    mock_run.info.run_id = "test-run-zero-deser"
+    mock_start_run.return_value.__enter__.return_value = mock_run
+
+    mock_client = MagicMock()
+    mock_version = MagicMock()
+    mock_version.version = "1"
+    mock_client.get_latest_versions.return_value = [mock_version]
+    mock_client.search_model_versions.return_value = [mock_version]
+    mock_mlflow_client_cls.return_value = mock_client
+
+    model_bytes = pickle.dumps(DummyModel())
+
+    # Monkeypatch pickle.load and pickle.loads to fail if called
+    def fail_load(*args, **kwargs):
+        raise AssertionError("pickle.load was called during upload! Zero deserialization violated!")
+
+    def fail_loads(*args, **kwargs):
+        raise AssertionError("pickle.loads was called during upload! Zero deserialization violated!")
+
+    monkeypatch.setattr(pickle, "load", fail_load)
+    monkeypatch.setattr(pickle, "loads", fail_loads)
+
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    files = {"file": ("zero_deser.pkl", model_bytes, "application/octet-stream")}
+
+    response = client.post(
+        "/api/models/upload",
+        files=files,
+        headers=ds_headers,
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "uploaded"
+
+
+@patch("mlflow.set_tracking_uri")
+@patch("mlflow.set_experiment")
+@patch("mlflow.start_run")
+@patch("mlflow.set_tags")
+@patch("mlflow.pyfunc.log_model")
+@patch("mlflow.tracking.MlflowClient")
+def test_upload_cannot_spoof_attestation_tags(
+    mock_mlflow_client_cls,
+    mock_log_model,
+    mock_set_tags,
+    mock_start_run,
+    mock_set_experiment,
+    mock_set_tracking_uri,
+    user_tokens,
+):
+    """
+    Verifies that client-supplied metadata cannot overwrite or spoof server-generated
+    attestation provenance tags, model format tags, or uploaded_by identity.
+    """
+    mock_run = MagicMock()
+    mock_run.info.run_id = "test-run-anti-spoof"
+    mock_start_run.return_value.__enter__.return_value = mock_run
+
+    mock_client = MagicMock()
+    mock_version = MagicMock()
+    mock_version.version = "1"
+    mock_client.get_latest_versions.return_value = [mock_version]
+    mock_client.search_model_versions.return_value = [mock_version]
+    mock_mlflow_client_cls.return_value = mock_client
+
+    model_bytes = pickle.dumps(DummyModel())
+    ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
+    files = {"file": ("test_model.pkl", model_bytes, "application/octet-stream")}
+
+    # Adversary attempts to spoof attestation signer and model format
+    malicious_metadata = {
+        "attestation.signer": "spoofed_admin",
+        "attestation.signature": "forged_signature_token",
+        "model.format": "onnx",
+        "uploaded_by": "root_adversary",
+        "legit_user_tag": "safe_value",
+    }
+    payload = {"metadata": json.dumps(malicious_metadata)}
+
+    response = client.post(
+        "/api/models/upload",
+        data=payload,
+        files=files,
+        headers=ds_headers,
+    )
+    assert response.status_code == 201
+
+    mock_set_tags.assert_called_once()
+    applied_tags = mock_set_tags.call_args[0][0]
+
+    # Verify protected tags were NOT overwritten by attacker metadata
+    assert applied_tags["uploaded_by"] == "ds_user"
+    assert applied_tags["attestation.signer"] == "ds_user"
+    assert applied_tags["model.format"] == "pickle"
+    assert applied_tags["legit_user_tag"] == "safe_value"
+    assert applied_tags["attestation.signature"] != "forged_signature_token"
+
