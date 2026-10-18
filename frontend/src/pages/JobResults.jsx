@@ -7,6 +7,7 @@ import {
   BarChart3, Activity, Target,
 } from '../components/icons.jsx'
 import { Panel, Progress, EmptyState, Badge, StatusBadge } from '../components/ui/index.jsx'
+import { formatAccuracy } from '../lib/models.js'
 
 const C = {
   1: 'var(--c-1)', 2: 'var(--c-2)', 3: 'var(--c-3)',
