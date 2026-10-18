@@ -219,7 +219,7 @@ def test_upload_model_defaults_name_from_filename(
 
 
 def test_upload_model_non_pkl_rejected(user_tokens):
-    """Verify that uploading non-.pkl files is rejected with HTTP 400."""
+    """Verify that uploading unsupported format files is rejected with HTTP 400."""
     ds_headers = {"Authorization": f"Bearer {user_tokens['ds_user']}"}
     files = {"file": ("model.h5", b"fake h5 bytes", "application/octet-stream")}
 
@@ -229,7 +229,7 @@ def test_upload_model_non_pkl_rejected(user_tokens):
         headers=ds_headers,
     )
     assert response.status_code == 400
-    assert "Only .pkl files are allowed." in response.json()["detail"]
+    assert "Allowed model artifact formats are" in response.json()["detail"]
 
 
 def test_upload_model_size_limit_exceeded(user_tokens, monkeypatch):

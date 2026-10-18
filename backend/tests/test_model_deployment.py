@@ -83,8 +83,9 @@ def test_model_deploy_success(user_tokens, deployed_model_name):
     assert version_obj.tags.get("deployment.deployed_by") == "mle_user"
 
 
-def test_model_deploy_production_alias(user_tokens, deployed_model_name):
+def test_model_deploy_production_alias(user_tokens, deployed_model_name, monkeypatch):
     """Verifies that deploying to Production sets Production stage and @production / @champion aliases."""
+    monkeypatch.setattr(settings, "ENFORCE_SAFE_MODEL_FORMATS", False)
     admin_headers = {"Authorization": f"Bearer {user_tokens['admin_user']}"}
 
     payload = {

@@ -296,6 +296,8 @@ class ModelDeploymentService:
                 "rayservice_name": rayservice_name,
                 "deployment_id": deployment_id,
             }
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Error during perform_model_deploy: {e}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
