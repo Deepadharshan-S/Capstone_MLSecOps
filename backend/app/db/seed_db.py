@@ -1,8 +1,10 @@
+import os
 import logging
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.repositories import UserRepository
-from app.core.security import hash_password
+from app.core.security import hash_password, validate_password_strength
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("seed_db")
@@ -16,6 +18,34 @@ def seed():
         users_count = user_repo.count()
         if users_count > 0:
             logger.info("Database already seeded with users.")
+            return
+
+        is_production = settings.ENVIRONMENT.lower() in ("production", "prod")
+        if is_production:
+            admin_password = os.getenv("SEED_ADMIN_PASSWORD")
+            if not admin_password:
+                logger.warning(
+                    "Database seeding with default development credentials skipped in production. "
+                    "Set SEED_ADMIN_PASSWORD to provision an initial administrator safely."
+                )
+                return
+
+            valid, err = validate_password_strength(admin_password)
+            if not valid:
+                raise ValueError(f"SEED_ADMIN_PASSWORD does not meet password policy: {err}")
+
+            admin_user = os.getenv("SEED_ADMIN_USERNAME", "admin_user")
+            admin_email = os.getenv("SEED_ADMIN_EMAIL", "admin@sentinelml.com")
+            user = User(
+                username=admin_user,
+                email=admin_email,
+                password_hash=hash_password(admin_password),
+                role="admin",
+                is_active=True,
+            )
+            db.add(user)
+            db.commit()
+            logger.info(f"Production database seeded with admin user '{admin_user}'.")
             return
 
         logger.info("Seeding database with default users for each role...")
