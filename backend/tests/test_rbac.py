@@ -331,11 +331,28 @@ def test_rbac_permissions_matrix():
     assert client.get("/api/models", headers=viewer_headers).status_code == 200
 
     # 6. Model Deployment (Admin, ML Engineer, and Data Scientist)
-    deploy_payload = {"model_id": "model-uuid-1", "environment": "production"}
-    assert client.post("/api/models/deploy", json=deploy_payload, headers=admin_headers).status_code == 201
-    assert client.post("/api/models/deploy", json=deploy_payload, headers=mle_headers).status_code == 201
-    assert client.post("/api/models/deploy", json=deploy_payload, headers=ds_headers).status_code == 201
-    assert client.post("/api/models/deploy", json=deploy_payload, headers=viewer_headers).status_code == 403
+    # 6a. Authorization assertions: Authorized roles can deploy models to staging (HTTP 201), unauthorized roles are blocked by RBAC (HTTP 403)
+    deploy_payload_staging = {"model_id": "model-uuid-1", "environment": "staging"}
+    assert client.post("/api/models/deploy", json=deploy_payload_staging, headers=admin_headers).status_code == 201
+    assert client.post("/api/models/deploy", json=deploy_payload_staging, headers=mle_headers).status_code == 201
+    assert client.post("/api/models/deploy", json=deploy_payload_staging, headers=ds_headers).status_code == 201
+    assert client.post("/api/models/deploy", json=deploy_payload_staging, headers=viewer_headers).status_code == 403
+
+    # 6b. Governance enforcement: Authorized deployment requests to production still fail closed (HTTP 400)
+    # when governance rejects unregistered/unverified models, while unauthorized users are blocked by RBAC (HTTP 403)
+    deploy_payload_prod = {"model_id": "model-uuid-1", "environment": "production"}
+    resp_admin = client.post("/api/models/deploy", json=deploy_payload_prod, headers=admin_headers)
+    assert resp_admin.status_code == 400
+    assert "Production Gatekeeper Violation" in resp_admin.json()["detail"] or "Safe Format" in resp_admin.json()["detail"]
+
+    resp_mle = client.post("/api/models/deploy", json=deploy_payload_prod, headers=mle_headers)
+    assert resp_mle.status_code == 400
+
+    resp_ds = client.post("/api/models/deploy", json=deploy_payload_prod, headers=ds_headers)
+    assert resp_ds.status_code == 400
+
+    resp_viewer = client.post("/api/models/deploy", json=deploy_payload_prod, headers=viewer_headers)
+    assert resp_viewer.status_code == 403
 
     # 7. Deployment Management (Admin, ML Engineer, and Data Scientist)
     manage_payload = {"deployment_id": "deploy-uuid-1", "action": "restart"}
