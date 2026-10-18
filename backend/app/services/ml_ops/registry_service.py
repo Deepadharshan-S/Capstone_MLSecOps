@@ -6,6 +6,9 @@ import tempfile
 import shutil
 import re
 import logging
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from app.models.user import User
@@ -17,11 +20,22 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger("registry_service")
 
+_models_cache = {"timestamp": 0.0, "data": None}
+_models_cache_lock = threading.Lock()
+MODELS_CACHE_TTL_SECONDS = 15.0
+
 
 class ModelRegistryService:
     """
     Manages querying MLflow registered models and secure model artifact uploads (.pkl).
     """
+
+    @classmethod
+    def invalidate_cache(cls) -> None:
+        """Invalidates the in-memory cached model list."""
+        with _models_cache_lock:
+            _models_cache["timestamp"] = 0.0
+            _models_cache["data"] = None
 
     def retrieve_models(self, user: User) -> dict:
         """Logs model viewing request and returns list of registered models in MLflow."""
@@ -31,12 +45,17 @@ class ModelRegistryService:
             None,
             "Viewed models list.",
         )
-        mlflow, MlflowClient = load_mlflow()
 
+        # 1. Fast path: Check in-memory TTL cache (sub-millisecond)
+        now = time.time()
+        with _models_cache_lock:
+            if _models_cache["data"] is not None and (now - _models_cache["timestamp"]) < MODELS_CACHE_TTL_SECONDS:
+                return _models_cache["data"]
+
+        mlflow, MlflowClient = load_mlflow()
         mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
         client = MlflowClient()
 
-        models_list = []
         try:
             registered_models = client.search_registered_models()
         except Exception as e:
@@ -47,62 +66,82 @@ class ModelRegistryService:
                     "Check MLFLOW_TRACKING_URI and that the mlflow container is running."
                 ),
             ) from e
-        try:
-            for rm in registered_models:
-                created_at_str = "unknown"
-                run_id = "unknown"
-                accuracy = 0.0
-                precision = 0.0
-                recall = 0.0
-                f1_score = 0.0
-                experiment_name = "unknown"
 
-                if rm.latest_versions:
-                    latest_v = rm.latest_versions[-1]
-                    # creation_timestamp is in milliseconds since epoch
-                    dt = datetime.datetime.fromtimestamp(
-                        latest_v.creation_timestamp / 1000.0, datetime.timezone.utc
-                    )
-                    created_at_str = dt.isoformat()
-                    run_id = latest_v.run_id
-                    run_params = {}
-                    run_tags = {}
+        # 2. Parallel run fetching and experiment metadata caching to eliminate N+1 latency
+        exp_cache = {}
+        exp_lock = threading.Lock()
 
-                    try:
-                        run = client.get_run(run_id)
-                        run_metrics = run.data.metrics
-                        accuracy = run_metrics.get("accuracy", 0.0)
-                        precision = run_metrics.get("precision", 0.0)
-                        recall = run_metrics.get("recall", 0.0)
-                        f1_score = run_metrics.get("f1_score", 0.0)
-                        run_params = run.data.params or {}
-                        run_tags = run.data.tags or {}
-                        try:
-                            exp = client.get_experiment(run.info.experiment_id)
-                            experiment_name = exp.name
-                        except Exception as ee:
-                            print(f"Error retrieving experiment details: {str(ee)}")
-                    except Exception as e:
-                        print(f"Error retrieving run details from MLflow: {str(e)}")
+        def _fetch_single_model(rm):
+            created_at_str = "unknown"
+            run_id = "unknown"
+            accuracy = 0.0
+            precision = 0.0
+            recall = 0.0
+            f1_score = 0.0
+            experiment_name = "unknown"
+            run_params = {}
+            run_tags = {}
 
-                models_list.append(
-                    {
-                        "id": run_id,
-                        "name": rm.name,
-                        "accuracy": accuracy,
-                        "precision": precision,
-                        "recall": recall,
-                        "f1_score": f1_score,
-                        "created_at": created_at_str,
-                        "experiment_name": experiment_name,
-                        "parameters": run_params,
-                        "tags": run_tags,
-                    }
+            if rm.latest_versions:
+                latest_v = rm.latest_versions[-1]
+                dt = datetime.datetime.fromtimestamp(
+                    latest_v.creation_timestamp / 1000.0, datetime.timezone.utc
                 )
-        except Exception as e:
-            print(f"Error fetching from MLflow registry: {str(e)}")
+                created_at_str = dt.isoformat()
+                run_id = latest_v.run_id
 
-        return {"models": models_list}
+                try:
+                    run = client.get_run(run_id)
+                    run_metrics = run.data.metrics or {}
+                    accuracy = run_metrics.get("accuracy", 0.0)
+                    precision = run_metrics.get("precision", 0.0)
+                    recall = run_metrics.get("recall", 0.0)
+                    f1_score = run_metrics.get("f1_score", 0.0)
+                    run_params = run.data.params or {}
+                    run_tags = run.data.tags or {}
+
+                    exp_id = getattr(run.info, "experiment_id", None)
+                    if exp_id:
+                        with exp_lock:
+                            cached_name = exp_cache.get(exp_id)
+                        if cached_name:
+                            experiment_name = cached_name
+                        else:
+                            try:
+                                exp = client.get_experiment(exp_id)
+                                experiment_name = exp.name
+                                with exp_lock:
+                                    exp_cache[exp_id] = exp.name
+                            except Exception as ee:
+                                logger.debug(f"Error retrieving experiment details: {ee}")
+                except Exception as e:
+                    logger.debug(f"Error retrieving run details from MLflow: {e}")
+
+            return {
+                "id": run_id,
+                "name": rm.name,
+                "accuracy": accuracy,
+                "precision": precision,
+                "recall": recall,
+                "f1_score": f1_score,
+                "created_at": created_at_str,
+                "experiment_name": experiment_name,
+                "parameters": run_params,
+                "tags": run_tags,
+            }
+
+        models_list = []
+        if registered_models:
+            max_workers = min(10, len(registered_models))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                models_list = list(executor.map(_fetch_single_model, registered_models))
+
+        result = {"models": models_list}
+        with _models_cache_lock:
+            _models_cache["timestamp"] = time.time()
+            _models_cache["data"] = result
+
+        return result
 
     def retrieve_model_detail(self, model_name: str, user: User) -> dict:
         """
@@ -614,6 +653,7 @@ class ModelRegistryService:
                 None,
                 f"Successfully uploaded and registered model '{final_model_name}' (version: {model_version}) to experiment '{exp_name}'.",
             )
+            self.invalidate_cache()
             return {
                 "message": "Model uploaded and registered successfully.",
                 "model_id": run_id,
