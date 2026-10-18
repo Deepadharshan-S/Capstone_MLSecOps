@@ -171,6 +171,18 @@ AUDIT_ACTION_MAP = {
         "source": "lakefs_validator",
         "resource_type": "dataset",
     },
+    "dataset_schema_injection_detected": {
+        "event_type": "dataset.schema_injection",
+        "severity": "HIGH",
+        "source": "lakefs_validator",
+        "resource_type": "dataset",
+    },
+    "storage_mutation_detected": {
+        "event_type": "storage.unversioned_mutation",
+        "severity": "HIGH",
+        "source": "minio_notification",
+        "resource_type": "s3_object",
+    },
     # Inference Security
     "model_inference_spike": {
         "event_type": "inference.request_burst",
@@ -295,16 +307,21 @@ class SecurityEventService:
         if username and username.lower() == "detection_engine":
             return None
 
-        # INT-01: Prevent duplicate ingestion for dataset poisoning
+        # INT-01: Prevent duplicate ingestion for dataset poisoning and schema injection
         # Direct webhook ingestion already records the authoritative SecurityEvent with complete violation payload
-        if action_lower == "dataset_poisoning_detected" and db is not None:
+        if action_lower in ("dataset_poisoning_detected", "dataset_schema_injection_detected") and db is not None:
             m_repo = re.search(r"repository '([^']+)'", details or "", re.IGNORECASE)
             repo_id = m_repo.group(1) if m_repo else None
             if repo_id:
+                target_ev_type = (
+                    "dataset.schema_injection"
+                    if action_lower == "dataset_schema_injection_detected"
+                    else "dataset.poisoning_suspected"
+                )
                 recent_existing = db.execute(
                     select(SecurityEvent).where(
                         SecurityEvent.resource_id == repo_id,
-                        SecurityEvent.event_type == "dataset.poisoning_suspected",
+                        SecurityEvent.event_type == target_ev_type,
                     ).order_by(SecurityEvent.created_at.desc())
                 ).scalars().first()
                 if recent_existing:

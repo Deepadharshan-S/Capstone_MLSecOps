@@ -1703,7 +1703,9 @@ def test_defect_7_advisory_locking_contention_and_exception(monkeypatch):
     and return connections to the pool.
     """
     from sqlalchemy import text
-    from app.services.threat_hunting.worker import DETECTION_WORKER_ADVISORY_LOCK_ID
+
+    test_lock_id = 88291999
+    monkeypatch.setattr("app.services.threat_hunting.worker.DETECTION_WORKER_ADVISORY_LOCK_ID", test_lock_id)
 
     with SessionLocal() as s:
         bind = s.get_bind()
@@ -1712,8 +1714,9 @@ def test_defect_7_advisory_locking_contention_and_exception(monkeypatch):
             external_conn = bind.connect()
             try:
                 locked = external_conn.execute(
-                    text(f"SELECT pg_try_advisory_lock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
+                    text(f"SELECT pg_try_advisory_lock({test_lock_id})")
                 ).scalar()
+                external_conn.commit()
                 assert locked is True
 
                 # Worker sweep must detect lock contention, skip sweep, and not hang
@@ -1723,8 +1726,9 @@ def test_defect_7_advisory_locking_contention_and_exception(monkeypatch):
             finally:
                 # Release external lock
                 external_conn.execute(
-                    text(f"SELECT pg_advisory_unlock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
+                    text(f"SELECT pg_advisory_unlock({test_lock_id})")
                 )
+                external_conn.commit()
                 external_conn.close()
 
             # 2. Worker can now acquire lock and execute sweep successfully
@@ -1747,12 +1751,14 @@ def test_defect_7_advisory_locking_contention_and_exception(monkeypatch):
             check_conn = bind.connect()
             try:
                 can_lock = check_conn.execute(
-                    text(f"SELECT pg_try_advisory_lock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
+                    text(f"SELECT pg_try_advisory_lock({test_lock_id})")
                 ).scalar()
+                check_conn.commit()
                 assert can_lock is True
                 check_conn.execute(
-                    text(f"SELECT pg_advisory_unlock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
+                    text(f"SELECT pg_advisory_unlock({test_lock_id})")
                 )
+                check_conn.commit()
             finally:
                 check_conn.close()
 

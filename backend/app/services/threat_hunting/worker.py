@@ -80,6 +80,7 @@ def run_detection_sweep_once(
                     raw_conn.execute(
                         text(f"SELECT pg_advisory_unlock({DETECTION_WORKER_ADVISORY_LOCK_ID})")
                     )
+                    raw_conn.commit()
             except Exception:
                 pass
             finally:

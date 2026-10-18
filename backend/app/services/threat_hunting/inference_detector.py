@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.logging_config import log_audit_event
 from app.models.threat_hunting import InferenceRateRecord, SecurityEvent
 
@@ -39,12 +40,12 @@ class InferenceRateDetector:
         win_sec = int(
             window_seconds
             if window_seconds is not None
-            else os.getenv("INFERENCE_BURST_WINDOW_SECONDS", "60")
+            else os.getenv("INFERENCE_BURST_WINDOW_SECONDS", settings.INFERENCE_BURST_WINDOW_SECONDS)
         )
         thresh = int(
             threshold
             if threshold is not None
-            else os.getenv("INFERENCE_BURST_THRESHOLD", "50")
+            else os.getenv("INFERENCE_BURST_THRESHOLD", settings.INFERENCE_BURST_THRESHOLD)
         )
 
         clean_actor = str(actor_id or "anonymous").strip()
