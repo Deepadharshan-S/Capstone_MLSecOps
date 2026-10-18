@@ -112,6 +112,26 @@ class ModelDeploymentService:
             endpoint_url = f"/api/deployments/{deployment_id}/predict"
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+            # 1b. Enforce MLSecOps Model Governance (Safe Format & Attestation Gatekeeper)
+            if registered:
+                model_tags = {}
+                try:
+                    mv_obj = mlflow_client.get_model_version(model_id, target_version)
+                    model_tags = dict(getattr(mv_obj, "tags", {}) or {})
+                except Exception as tag_fetch_err:
+                    logger.debug(f"Could not fetch tags for model version {model_id}:{target_version}: {tag_fetch_err}")
+
+                from app.services.ml_ops.model_governance_service import model_governance_service
+
+                model_governance_service.evaluate_deployment_governance(
+                    model_id=model_id,
+                    version=target_version,
+                    environment=environment,
+                    user_username=user.username,
+                    model_tags=model_tags,
+                    db=db,
+                )
+
             # 2. Update MLflow Model Version Tags, Stages & Aliases
             if registered:
                 stage = "Production" if environment.lower() == "production" else "Staging"

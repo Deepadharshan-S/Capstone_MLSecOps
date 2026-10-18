@@ -196,6 +196,111 @@ AUDIT_ACTION_MAP = {
         "source": "model_inference",
         "resource_type": "model",
     },
+    # Model Artifact Security & RCE Gatekeeper
+    "model_rce_payload_detected": {
+        "event_type": "model.rce_payload_detected",
+        "severity": "CRITICAL",
+        "source": "pickle_scanner",
+        "resource_type": "model",
+    },
+    "model_pickle_unsafe": {
+        "event_type": "model.rce_payload_detected",
+        "severity": "CRITICAL",
+        "source": "pickle_scanner",
+        "resource_type": "model",
+    },
+    # Inference Attacks & Algorithmic DoS
+    "inference_matrix_flooding_blocked": {
+        "event_type": "inference.payload_shape_excessive",
+        "severity": "HIGH",
+        "source": "model_serving",
+        "resource_type": "model",
+    },
+    "inference_decision_boundary_scraping": {
+        "event_type": "inference.decision_boundary_scraping",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
+    "inference_feature_perturbation_detected": {
+        "event_type": "inference.systematic_perturbation",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
+    # Model Governance, Safe Format & Attestation
+    "model_unsafe_format_promoted": {
+        "event_type": "model.unsafe_format_promoted",
+        "severity": "HIGH",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
+    "model_unattested_promotion_detected": {
+        "event_type": "model.unattested_promotion",
+        "severity": "HIGH",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
+    "model_attestation_tampering_detected": {
+        "event_type": "model.tampering_detected",
+        "severity": "CRITICAL",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
+    # Falco Container Runtime eBPF Security
+    "container_unauthorized_execution": {
+        "event_type": "runtime.container_unauthorized_execution",
+        "severity": "CRITICAL",
+        "source": "falco_ebpf",
+        "resource_type": "pod",
+    },
+    "container_shell_spawned": {
+        "event_type": "runtime.container_unauthorized_execution",
+        "severity": "CRITICAL",
+        "source": "falco_ebpf",
+        "resource_type": "pod",
+    },
+    # S3 Artifact Integrity & Shadow Model Detection
+    "orphan_artifact_detected": {
+        "event_type": "artifact.orphan_detected",
+        "severity": "HIGH",
+        "source": "artifact_auditor",
+        "resource_type": "artifact",
+    },
+    # RayServe Deployment Tampering & Rogue Serving Detection
+    "rayserve_rogue_deployment_detected": {
+        "event_type": "rayserve.rogue_deployment_detected",
+        "severity": "CRITICAL",
+        "source": "rayserve_monitor",
+        "resource_type": "rayservice",
+    },
+    # Model Behavioral Drift & Inference Latency Anomalies
+    "model_confidence_drift_detected": {
+        "event_type": "inference.confidence_drift_detected",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
+    "inference_latency_spike_detected": {
+        "event_type": "inference.latency_spike_anomaly",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
+    # Model Trojan & Backdoor Trigger Detection
+    "model_backdoor_detected": {
+        "event_type": "model.backdoor_detected",
+        "severity": "CRITICAL",
+        "source": "model_governance",
+        "resource_type": "model",
+    },
+    # Adversarial Input Perturbation (FGSM / PGD Noise Detection)
+    "adversarial_perturbation_detected": {
+        "event_type": "inference.adversarial_perturbation",
+        "severity": "HIGH",
+        "source": "inference_detector",
+        "resource_type": "model",
+    },
 }
 
 

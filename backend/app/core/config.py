@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     # Upload limits
     MAX_MODEL_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024  # 100MB default limit
 
+    # Safe Format & Attestation Governance
+    ENFORCE_SAFE_MODEL_FORMATS: bool = True
+    ENFORCE_MODEL_ATTESTATION: bool = False
+
     # Training Execution & Sandboxing
     ALLOW_LOCAL_RAY_FALLBACK: bool = False
     MAX_CONCURRENT_RAYJOBS: int = 2

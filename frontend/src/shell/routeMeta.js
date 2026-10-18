@@ -12,6 +12,7 @@ export function routeMeta(pathname) {
     deployments: 'Deployments',
     predict: 'Predict',
     experiments: 'Experiments',
+    security: 'Security Center',
     admin: 'Admin',
   }
   const title = TITLES[base] || 'SentinelML'

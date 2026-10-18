@@ -137,6 +137,9 @@ export const api = {
   get: (path, opts = {}) => request(path, opts),
   post: (path, body, opts = {}) => request(path, { method: 'POST', body, ...opts }),
   put: (path, body, opts = {}) => request(path, { method: 'PUT', body, ...opts }),
+  // PATCH is distinct from PUT on this API: alert lifecycle updates and
+  // detection-rule edits are partial updates declared as PATCH routes.
+  patch: (path, body, opts = {}) => request(path, { method: 'PATCH', body, ...opts }),
   del: (path, opts = {}) => request(path, { method: 'DELETE', ...opts }),
   upload: (path, formData) => uploadRequest(path, formData),
   // Authenticated binary download (file exports) — returns a Blob so the
