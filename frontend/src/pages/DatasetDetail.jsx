@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { datasetsApi } from '../api/endpoints.js'
 import { useFetch } from '../hooks/useFetch.js'
 import { fmtUnixDate } from '../lib/models.js'
+import { parseCsvTable } from '../lib/csv.js'
+import { sortRows } from '../lib/sort.js'
 import { api } from '../api/client.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
@@ -205,42 +207,26 @@ function serializeMeta(dbMeta) {
 const PREVIEW_ROWS = 20
 const PREVIEW_BYTES = 512 * 1024
 
-// Minimal CSV splitter (handles quoted commas + doubled quotes) — enough
-// for a first-N-rows preview without pulling in a parser dependency.
-function splitCsvLine(line) {
-  const out = []
-  let cur = ''
-  let inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++ } else { inQuotes = false }
-      } else { cur += ch }
-    } else if (ch === '"') {
-      inQuotes = true
-    } else if (ch === ',') {
-      out.push(cur); cur = ''
-    } else { cur += ch }
-  }
-  out.push(cur)
-  return out.map((c) => c.trim())
+// CSV splitting/parsing lives in ../lib/csv.js — the Testing page reads the
+// same files, so the parser is shared rather than duplicated here.
+function parsePreview(text, byteTruncated) {
+  const parsed = parseCsvTable(text, { maxRows: PREVIEW_ROWS })
+  if (parsed.empty) return { empty: true, byteTruncated }
+  if (parsed.isText) return { isText: true, text: parsed.text.slice(0, 2000), byteTruncated }
+  return { ...parsed, byteTruncated }
 }
 
-function parsePreview(text, byteTruncated) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '')
-  if (lines.length === 0) return { empty: true, byteTruncated }
-  if (!lines[0].includes(',')) {
-    return { isText: true, text: text.slice(0, 2000), byteTruncated }
-  }
-  const columns = splitCsvLine(lines[0])
-  const dataLines = lines.slice(1)
-  return {
-    columns,
-    rows: dataLines.slice(0, PREVIEW_ROWS).map(splitCsvLine),
-    rowTruncated: dataLines.length > PREVIEW_ROWS,
-    byteTruncated,
-  }
+// lakeFS reports object size in bytes; raw counts are unreadable in the
+// files table. `size_bytes` is optional in the API, hence the "—" fallback.
+function fmtBytes(n) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—'
+  const b = Number(n)
+  if (b < 1024) return `${b} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = b / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1 }
+  return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`
 }
 
 /* ══════════════════════════════════════════════════════
@@ -286,7 +272,7 @@ function OverviewTab({ meta, dbMeta, lfMeta }) {
 }
 
 /* ══════════════════════════════════════════════════════
-   Files — upload + download
+   Files — listing + upload + download
    ══════════════════════════════════════════════════════ */
 function FilesTab({ name, defaultBranch, branches, canUpload }) {
   const toast = useToast()
@@ -300,12 +286,20 @@ function FilesTab({ name, defaultBranch, branches, canUpload }) {
   const [pvBusy, setPvBusy] = useState(false)
   const [pvError, setPvError] = useState(null)
   const [pvResult, setPvResult] = useState(null)
+  // Column sorting for the file listing below.
+  const [fileSort, setFileSort] = useState({ key: 'path', dir: 'asc' })
 
   // Objects stored on the selected branch — drives the preview picker so no
   // path typing is needed. Refetches automatically on branch switch.
   const files = useFetch(() => datasetsApi.files(name, branch), [name, branch])
-  const fileList = Array.isArray(files.data) ? files.data : files.data?.files || []
-  const filePaths = fileList.map((f) => f?.path).filter(Boolean)
+  // Memoized: `files.data` is the only input that changes, and the effect
+  // that auto-selects a preview file compares `filePaths` for identity.
+  const fileList = useMemo(() => {
+    const raw = Array.isArray(files.data) ? files.data : files.data?.files || []
+    return Array.isArray(raw) ? raw.filter((f) => f?.path) : []
+  }, [files.data])
+  const filePaths = useMemo(() => fileList.map((f) => f.path), [fileList])
+  const sortedFiles = useMemo(() => sortRows(fileList, fileSort), [fileList, fileSort])
 
   async function upload(file) {
     if (!file) return
@@ -389,6 +383,76 @@ function FilesTab({ name, defaultBranch, branches, canUpload }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+      <Panel
+        icon={FolderTree}
+        title="Files"
+        subtitle={`${fileList.length} object${fileList.length === 1 ? '' : 's'} in ${name} @ ${branch}`}
+        actions={
+          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={files.refetch} loading={files.loading}>
+            Refresh
+          </Button>
+        }
+        bodyClass="tight"
+      >
+        {files.loading && fileList.length === 0 ? (
+          <LoadingState label="Listing files…" />
+        ) : files.error ? (
+          <ErrorState error={files.error} title="Could not list files" onRetry={files.refetch} />
+        ) : fileList.length === 0 ? (
+          <EmptyState
+            icon={FolderTree}
+            title="No files on this ref yet"
+            desc={canUpload
+              ? `Upload a file below and it will be staged on ${branch}, then listed here.`
+              : `Nothing has been committed to ${branch}.`}
+          />
+        ) : (
+          <DataTable
+            caption={`Files stored in ${name} on ${branch}`}
+            keyOf={(f) => f.path}
+            rows={sortedFiles}
+            pageSize={10}
+            sort={fileSort}
+            onSortChange={setFileSort}
+            columns={[
+              {
+                key: 'path', strong: true, sortKey: 'path', header: 'File',
+                render: (f) => {
+                  const cut = f.path.lastIndexOf('/')
+                  const dir = cut >= 0 ? f.path.slice(0, cut + 1) : ''
+                  const base = cut >= 0 ? f.path.slice(cut + 1) : f.path
+                  return (
+                    <span className="flex items-center gap-2">
+                      <span className="row-glyph is-accent sm"><FileText size={13} /></span>
+                      <span className="truncate" style={{ maxWidth: 360 }} title={f.path}>
+                        {dir && <span className="muted">{dir}</span>}{base}
+                      </span>
+                    </span>
+                  )
+                },
+              },
+              {
+                key: 'size_bytes', width: 130, sortKey: 'size_bytes', header: 'Size',
+                render: (f) => <span className="text-xs muted">{fmtBytes(f.size_bytes)}</span>,
+              },
+              {
+                key: 'actions', actions: true, width: 190, header: 'Actions',
+                render: (f) => (
+                  <span className="flex items-center" style={{ justifyContent: 'flex-end' }}>
+                    <Button variant="ghost" size="xs" icon={FileText} onClick={() => { setPvFile(f.path); preview(f.path) }}>
+                      Preview
+                    </Button>
+                    <Button variant="ghost" size="xs" icon={Download} onClick={() => download(f.path)}>
+                      Download
+                    </Button>
+                  </span>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Panel>
+
       <Panel icon={Upload} title="Upload a file" subtitle="Staged on the selected branch until you commit">
         <div className="field-row field-row-2 mb-3">
           <Field label="Branch" htmlFor="up-branch">

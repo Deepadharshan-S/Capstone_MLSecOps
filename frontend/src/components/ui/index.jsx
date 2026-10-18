@@ -176,9 +176,9 @@ export function Tabs({ tabs, active, onChange, variant = 'pill', className = '' 
   )
 }
 
-export function Segmented({ options, value, onChange }) {
+export function Segmented({ options, value, onChange, className = '' }) {
   return (
-    <div className="seg">
+    <div className={`seg ${className}`.trim()}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -398,25 +398,36 @@ export function Alert({ tone = 'info', children, actions, icon: Icon }) {
 /* ══════════════════════════════════════════════════════
    Progress
    ══════════════════════════════════════════════════════ */
-export function Progress({ value = 0, label, tone, showValue = true }) {
+export function Progress({ value = 0, label, tone, showValue = true, indeterminate = false, status }) {
   const v = Math.max(0, Math.min(100, Number(value) || 0))
+  // Indeterminate = "the backend only reports a stage, not a percentage".
+  // ARIA: aria-valuenow must be omitted for an indeterminate progressbar,
+  // and aria-valuemin/max are ignored without it — so none of the three.
+  const valueAria = indeterminate
+    ? {}
+    : { 'aria-valuenow': Math.round(v), 'aria-valuemin': 0, 'aria-valuemax': 100 }
   return (
     <div>
       {(label || showValue) && (
         <div className="prog-header">
           <span>{label}</span>
-          {showValue && <span className="prog-value tnum">{Math.round(v)}%</span>}
+          {showValue && (
+            <span className="prog-value tnum">
+              {indeterminate ? (status || 'In progress') : `${Math.round(v)}%`}
+            </span>
+          )}
         </div>
       )}
       <div
         className="prog-track"
         role="progressbar"
         aria-label={label || 'Progress'}
-        aria-valuenow={Math.round(v)}
-        aria-valuemin={0}
-        aria-valuemax={100}
+        {...valueAria}
       >
-        <div className={`prog-fill ${tone ? `is-${tone}` : ''}`} style={{ width: `${v}%` }} />
+        <div
+          className={`prog-fill ${indeterminate ? 'is-indeterminate ' : ''}${tone ? `is-${tone}` : ''}`}
+          style={indeterminate ? undefined : { width: `${v}%` }}
+        />
       </div>
     </div>
   )
@@ -506,19 +517,24 @@ function humanizeHeader(key) {
    ══════════════════════════════════════════════════════ */
 export function DataTable({
   columns, rows, keyOf, onRowClick, sort, onSortChange,
-  pageSize = 0, page = 0, onPageChange, empty, caption,
+  pageSize = 0, page = 0, onPageChange, empty, caption, wrapClass,
 }) {
   // Internal fallback pagination when the caller doesn't control it.
   const [internalPage, setInternalPage] = useState(0)
-  const effectivePage = pageSize ? (onPageChange ? page : internalPage) : 0
   const pageCount = pageSize ? Math.max(1, Math.ceil((rows?.length || 0) / pageSize)) : 1
+  // Clamp the requested page to the last available one: filtering/searching
+  // shrinks `rows` while the page index stays put, which used to render an
+  // empty tbody and a footer reading "25–36 of 3".
+  const requestedPage = pageSize ? (onPageChange ? page : internalPage) : 0
+  const effectivePage = Math.min(Math.max(0, requestedPage), pageCount - 1)
   const visible = pageSize
     ? (rows || []).slice(effectivePage * pageSize, effectivePage * pageSize + pageSize)
     : (rows || [])
 
   const setPage = (p) => {
-    if (onPageChange) onPageChange(p)
-    else setInternalPage(p)
+    const clamped = Math.min(Math.max(0, p), pageCount - 1)
+    if (onPageChange) onPageChange(clamped)
+    else setInternalPage(clamped)
   }
 
   if (!rows?.length && empty) return empty
@@ -531,7 +547,7 @@ export function DataTable({
 
   return (
     <>
-      <div className="table-wrap">
+      <div className={wrapClass ? `table-wrap ${wrapClass}` : 'table-wrap'}>
         <table className="data-table">
           {caption && <caption className="sr-only">{caption}</caption>}
           <thead>

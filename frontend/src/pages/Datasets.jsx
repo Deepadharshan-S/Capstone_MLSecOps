@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { datasetsApi } from '../api/endpoints.js'
 import { useFetch, useDebounced } from '../hooks/useFetch.js'
 import { toRepoName } from '../lib/models.js'
+import { sortRows } from '../lib/sort.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
   PageHeader, Panel, Button, DataTable, Field, TextInput, TextArea, Modal,
@@ -26,14 +27,21 @@ export default function Datasets() {
   const [query, setQuery] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [deleting, setDeleting] = useState(null)
+  // Column sorting: the catalog columns already declare `sortKey`, which only
+  // renders a sortable header once `onSortChange` is wired up here.
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' })
 
   const debounced = useDebounced(query, 200)
   const all = Array.isArray(list.data) ? list.data : list.data?.datasets || []
 
-  const rows = all.filter((d) => {
-    const q = debounced.toLowerCase()
-    return !q || (d.name || '').toLowerCase().includes(q) || (d.description || '').toLowerCase().includes(q)
-  })
+  const rows = sortRows(
+    all.filter((d) => {
+      const q = debounced.toLowerCase()
+      return !q || (d.name || '').toLowerCase().includes(q) || (d.description || '').toLowerCase().includes(q)
+    }),
+    sort,
+    { created_at: (d) => (d.created_at ? Date.parse(d.created_at) : null) },
+  )
 
   async function handleDelete(d) {
     const ok = await confirm({
@@ -140,6 +148,8 @@ export default function Datasets() {
             keyOf={(d) => d.id || d.name}
             rows={rows}
             pageSize={10}
+            sort={sort}
+            onSortChange={setSort}
             onRowClick={(d) => navigate(`/datasets/${encodeURIComponent(d.name)}`)}
             columns={[
               {

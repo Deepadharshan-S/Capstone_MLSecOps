@@ -18,6 +18,7 @@ const DatasetDetail = lazy(() => import('./pages/DatasetDetail.jsx'))
 const Registry = lazy(() => import('./pages/Registry.jsx'))
 const Deployments = lazy(() => import('./pages/Deployments.jsx'))
 const Predict = lazy(() => import('./pages/Predict.jsx'))
+const Testing = lazy(() => import('./pages/Testing.jsx'))
 const Jobs = lazy(() => import('./pages/Jobs.jsx'))
 const Experiments = lazy(() => import('./pages/Experiments.jsx'))
 const Security = lazy(() => import('./pages/Security.jsx'))
@@ -138,6 +139,7 @@ export default function App() {
             <Route path="/registry" element={<Registry />} />
             <Route path="/deployments" element={<Deployments />} />
             <Route path="/predict" element={<Predict />} />
+            <Route path="/testing" element={<Testing />} />
             <Route path="/experiments" element={<Experiments />} />
             <Route
               path="/security"

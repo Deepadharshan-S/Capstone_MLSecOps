@@ -183,32 +183,39 @@ export default function Deployments() {
               },
               {
                 key: 'predict', actions: true, width: 250, header: <span className="sr-only">Actions</span>,
-                render: (d) => (
-                  <span className="flex items-center" style={{ justifyContent: 'flex-end' }}>
-                    <Link
-                      className="btn btn-ghost btn-xs"
-                      to={`/predict?deployment=${encodeURIComponent(d.deployment_id)}`}
-                    >
-                      <Terminal size={12} /> Predict
-                    </Link>
-                    {canManage && [
-                      { id: 'restart', label: 'Restart', icon: RotateCcw },
-                      { id: 'rollback', label: 'Roll back', icon: Layers },
-                      { id: 'stop', label: 'Stop', icon: Square },
-                    ].map((a) => (
-                      <Button
-                        key={a.id}
-                        variant={a.id === 'stop' ? 'danger-ghost' : 'ghost'}
-                        size="xs"
-                        icon={a.icon}
-                        loading={acting === `${d.deployment_id}:${a.id}`}
-                        onClick={() => manage(d.deployment_id, a.id)}
+                render: (d) => {
+                  // Stopping is one-way: it deletes the RayService outright, and
+                  // "restart" only bounces the head pod of a cluster that still
+                  // exists — it cannot bring a stopped deployment back. Offering
+                  // Stop on one already stopped invited a second, no-op delete.
+                  const isStopped = String(d.status).toLowerCase() === 'stopped'
+                  return (
+                    <span className="flex items-center" style={{ justifyContent: 'flex-end' }}>
+                      <Link
+                        className="btn btn-ghost btn-xs"
+                        to={`/predict?deployment=${encodeURIComponent(d.deployment_id)}`}
                       >
-                        {a.label}
-                      </Button>
-                    ))}
-                  </span>
-                ),
+                        <Terminal size={12} /> Predict
+                      </Link>
+                      {canManage && [
+                        { id: 'restart', label: 'Restart', icon: RotateCcw },
+                        { id: 'rollback', label: 'Roll back', icon: Layers },
+                        { id: 'stop', label: 'Stop', icon: Square, hidden: isStopped },
+                      ].filter((a) => !a.hidden).map((a) => (
+                        <Button
+                          key={a.id}
+                          variant={a.id === 'stop' ? 'danger-ghost' : 'ghost'}
+                          size="xs"
+                          icon={a.icon}
+                          loading={acting === `${d.deployment_id}:${a.id}`}
+                          onClick={() => manage(d.deployment_id, a.id)}
+                        >
+                          {a.label}
+                        </Button>
+                      ))}
+                    </span>
+                  )
+                },
               },
             ]}
           />

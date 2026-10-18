@@ -37,6 +37,36 @@ class ModelDeploymentService:
             config.load_kube_config()
         return client.CustomObjectsApi(), client.CoreV1Api()
 
+    def _existing_deployment_id(self, rayservice_name: str, db: Optional[Session] = None) -> Optional[str]:
+        """
+        The deployment_id already tracking this RayService, if any.
+
+        The RayService name is derived from model + version, so it is the
+        natural key: re-deploying a version applies the same manifest with a
+        409-replace rather than standing up a second cluster. Minting a fresh
+        deployment_id anyway left two PostgreSQL rows — and two table entries —
+        pointing at one service, of which only the newest could ever be
+        stopped.
+
+        Returns just the id (a plain string) so it is safe to read after the
+        lookup session closes; the record itself is re-fetched by id inside
+        the persistence block below.
+        """
+        from sqlalchemy import select
+        from app.models.deployment import Deployment
+        from app.db.session import SessionLocal
+
+        stmt = (
+            select(Deployment.deployment_id)
+            .where(Deployment.rayservice_name == rayservice_name)
+            .order_by(Deployment.created_at.desc())
+            .limit(1)
+        )
+        if db is not None:
+            return db.execute(stmt).scalar_one_or_none()
+        with SessionLocal() as db_session:
+            return db_session.execute(stmt).scalar_one_or_none()
+
     def perform_model_deploy(
         self,
         model_id: str,
@@ -108,6 +138,14 @@ class ModelDeploymentService:
 
             sanitized_name = get_repo_name(model_id)[:16].rstrip("-")
             rayservice_name = f"raysvc-{sanitized_name}-v{target_version}"
+
+            # Same model version ⇒ same RayService ⇒ same deployment. Reuse
+            # the existing record rather than minting a second id for a
+            # cluster that is about to be replaced in place.
+            reused_deployment_id = self._existing_deployment_id(rayservice_name, db)
+            if reused_deployment_id:
+                deployment_id = reused_deployment_id
+
             internal_endpoint_url = f"http://{rayservice_name}-serve-svc.{settings.KUBERNETES_NAMESPACE}.svc.cluster.local:8000/predict"
             endpoint_url = f"/api/deployments/{deployment_id}/predict"
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -253,40 +291,65 @@ class ModelDeploymentService:
                 except Exception as k8s_err:
                     print(f"Notice: Could not apply RayService manifest to Kubernetes via SDK: {k8s_err}")
 
-            # Persist deployment record to PostgreSQL via DeploymentRepository
+            # Persist deployment record to PostgreSQL via DeploymentRepository.
+            # A re-deploy of the same version updates the row that already
+            # tracks this RayService — including flipping a stopped one back
+            # to "deployed" — rather than adding a second entry for a cluster
+            # that was never duplicated.
+            reused = False
             try:
                 from app.models.deployment import Deployment
                 from app.repositories.deployment_repository import DeploymentRepository
                 from app.db.session import SessionLocal
 
-                dep_record = Deployment(
-                    deployment_id=deployment_id,
-                    model_name=model_id,
-                    version=str(target_version),
-                    environment=environment,
-                    rayservice_name=rayservice_name,
-                    endpoint_url=endpoint_url,
-                    status="deployed",
-                    created_by_id=getattr(user, "id", None) or uuid.uuid4(),
-                    created_by_username=getattr(user, "username", "unknown"),
-                )
+                def _upsert(repo):
+                    existing = repo.get_by_deployment_id(deployment_id)
+                    if existing is None:
+                        repo.create(Deployment(
+                            deployment_id=deployment_id,
+                            model_name=model_id,
+                            version=str(target_version),
+                            environment=environment,
+                            rayservice_name=rayservice_name,
+                            endpoint_url=endpoint_url,
+                            status="deployed",
+                            created_by_id=getattr(user, "id", None) or uuid.uuid4(),
+                            created_by_username=getattr(user, "username", "unknown"),
+                        ))
+                        return False
+                    existing.environment = environment
+                    existing.endpoint_url = endpoint_url
+                    existing.status = "deployed"
+                    if getattr(user, "id", None):
+                        existing.created_by_id = user.id
+                    if getattr(user, "username", None):
+                        existing.created_by_username = user.username
+                    repo.save(existing)
+                    return True
+
                 if db is not None:
-                    DeploymentRepository(db).create(dep_record)
+                    reused = _upsert(DeploymentRepository(db))
                 else:
                     with SessionLocal() as db_session:
-                        DeploymentRepository(db_session).create(dep_record)
+                        reused = _upsert(DeploymentRepository(db_session))
             except Exception as db_err:
                 print(f"Notice: Could not persist Deployment to PostgreSQL ({db_err}).")
 
+            verb = "Re-deployed" if reused else "Deployed"
             log_audit_event(
                 "model_deploy",
                 user.username,
                 None,
-                f"Deployed model '{model_id}' (v{target_version}) to '{environment}' as RayService '{rayservice_name}' (ID: {deployment_id}).",
+                f"{verb} model '{model_id}' (v{target_version}) to '{environment}' as RayService '{rayservice_name}' (ID: {deployment_id}).",
             )
 
             return {
-                "message": f"Model '{model_id}' (version {target_version}) deployed successfully to '{environment}'.",
+                "message": (
+                    f"Model '{model_id}' (version {target_version}) re-deployed to '{environment}' — "
+                    f"existing deployment '{deployment_id}' was refreshed rather than duplicated."
+                    if reused
+                    else f"Model '{model_id}' (version {target_version}) deployed successfully to '{environment}'."
+                ),
                 "model_id": model_id,
                 "version": target_version,
                 "environment": environment,
@@ -367,6 +430,20 @@ class ModelDeploymentService:
                 })
         except Exception as db_err:
             logger.warning(f"Failed to fetch deployments from DB: {db_err}")
+
+        # One row per RayService. Re-deploys performed before this was made
+        # idempotent left several PostgreSQL rows sharing a RayService name —
+        # they all describe the same cluster, so the list shows the newest and
+        # not one entry per leftover record.
+        seen_rayservices = set()
+        deduped = []
+        for d in deployments:
+            svc = d.get("rayservice_name")
+            if not svc or svc not in seen_rayservices:
+                deduped.append(d)
+            if svc:
+                seen_rayservices.add(svc)
+        deployments = deduped
 
         # Apply optional filtering
         if active_only:

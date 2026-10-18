@@ -22,6 +22,8 @@ export default function EventsTab() {
   const [selected, setSelected] = useState(null)
   const debounced = useDebounced(query, 200)
 
+  // `deps` refetches the moment a filter changes rather than leaving the
+  // previous result on screen until the next 30s tick.
   const events = usePolling(
     () => threatHuntingApi.listSecurityEvents({
       source: sourceFilter || undefined,
@@ -29,7 +31,7 @@ export default function EventsTab() {
       limit: LOAD_WINDOW,
     }),
     EVENT_POLL_MS,
-    { immediate: true },
+    { immediate: true, deps: [sourceFilter, severityFilter] },
   )
 
   const items = events.data?.items || []

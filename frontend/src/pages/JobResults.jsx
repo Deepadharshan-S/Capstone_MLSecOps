@@ -177,7 +177,7 @@ function MetricTiles({ results }) {
    JobResults — metrics, curves, matrix, importance.
    Used by Pipeline (live) and Jobs (historical).
    ══════════════════════════════════════════════════════ */
-export default function JobResults({ results, isTraining = false, progress = 0, jobId }) {
+export default function JobResults({ results, isTraining = false, jobId }) {
   if (isTraining) {
     return (
       <Panel icon={Activity} title="Metrics" subtitle="Waiting for the run to produce metrics">
@@ -189,7 +189,10 @@ export default function JobResults({ results, isTraining = false, progress = 0, 
             as soon as the estimator finishes fitting.
           </div>
           <div style={{ width: 'min(420px, 100%)', marginTop: 'var(--sp-3)' }}>
-            <Progress value={progress} label="Overall progress" />
+            {/* No numeric bar: while a job runs the backend only reports a
+                stage (job_service.py hardcodes 50), so any percentage drawn
+                here would be a number that never changes. */}
+            <Progress indeterminate label="Stage" status="In progress" />
           </div>
         </div>
       </Panel>

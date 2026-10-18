@@ -306,6 +306,10 @@
 }
 .seg-btn:hover { color: var(--text-primary); }
 .seg-btn.is-active { background: var(--bg-surface); color: var(--text-primary); font-weight: var(--fw-semibold); box-shadow: var(--sh-xs); }
+/* Opt-in: split the track evenly instead of letting each label size its own
+   button, which leaves the pair looking lopsided. */
+.seg.is-even { display: flex; width: 100%; }
+.seg.is-even .seg-btn { flex: 1 1 0; justify-content: center; }
 
 /* ── Modal / drawer ─────────────────────────────────── */
 .overlay {
@@ -463,6 +467,20 @@
   flex-wrap: wrap;
 }
 .table-wrap { width: 100%; overflow-x: auto; }
+/* Drawer-scoped tables. The card is a fixed ~720px while a run row carries
+   long metrics/params strings; under auto layout those push the table past
+   the card, so the wrap scrolls sideways — which clips the leading Run
+   column and scrolls its header clean out of view, leaving every row
+   looking misaligned. Fixed layout with percentage column widths keeps all
+   of them on screen instead. */
+.table-wrap.is-fixed { overflow-x: hidden; }
+.table-wrap.is-fixed .data-table { table-layout: fixed; }
+.table-wrap.is-fixed .data-table th,
+.table-wrap.is-fixed .data-table td {
+  padding-left: var(--sp-3);
+  padding-right: var(--sp-3);
+}
+.table-wrap.is-fixed .data-table td { overflow-wrap: break-word; }
 .data-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
 .data-table thead th {
   position: sticky;
@@ -577,6 +595,13 @@
 }
 .prog-fill.is-success { background: var(--success); }
 .prog-fill.is-danger { background: var(--danger); }
+/* Indeterminate: no percentage exists yet (the backend only knows the stage),
+   so the bar sweeps instead of sitting on an invented number. */
+.prog-fill.is-indeterminate {
+  width: 34%;
+  transition: none;
+  animation: prog-slide 1.5s var(--ease-in-out, ease-in-out) infinite;
+}
 
 /* ── Key/value ──────────────────────────────────────── */
 .kv-list { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }

@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext.jsx'
 import {
   LayoutDashboard, Route, Database, ClipboardList, Boxes, Rocket,
   FlaskConical, Terminal, Shield, ShieldCheck, PanelLeftClose, PanelLeftOpen,
+  Scale,
 } from '../components/icons.jsx'
 
 const NAV_GROUPS = [
@@ -26,6 +27,7 @@ const NAV_GROUPS = [
       { to: '/registry', icon: Boxes, label: 'Registry' },
       { to: '/deployments', icon: Rocket, label: 'Deployments' },
       { to: '/predict', icon: Terminal, label: 'Predict' },
+      { to: '/testing', icon: Scale, label: 'Testing' },
       { to: '/experiments', icon: FlaskConical, label: 'Experiments' },
     ],
   },

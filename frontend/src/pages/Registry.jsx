@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { mlOpsApi } from '../api/endpoints.js'
 import { useFetch, useDebounced } from '../hooks/useFetch.js'
 import { formatAccuracy, formatRatio, resolveModelPreset } from '../lib/models.js'
+import { sortRows } from '../lib/sort.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
   PageHeader, Panel, Button, DataTable, Modal, Field, TextInput,
@@ -24,6 +25,9 @@ export default function Registry() {
   const [query, setQuery] = useState('')
   const [showUpload, setShowUpload] = useState(false)
   const [deployTarget, setDeployTarget] = useState(null) // { name, version }
+  // Column sorting. The metric columns already render "—" for models that
+  // have no value — sortRows sinks those to the bottom in both directions.
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' })
   const debounced = useDebounced(query, 200)
 
   const models = useFetch(() => mlOpsApi.listModels(), [])
@@ -39,10 +43,14 @@ export default function Registry() {
     { enabled: !!selected },
   )
 
-  const rows = list.filter((m) =>
-    !debounced
-    || String(m.name).toLowerCase().includes(debounced.toLowerCase())
-    || String(m.experiment_name || '').toLowerCase().includes(debounced.toLowerCase()),
+  const rows = sortRows(
+    list.filter((m) =>
+      !debounced
+      || String(m.name).toLowerCase().includes(debounced.toLowerCase())
+      || String(m.experiment_name || '').toLowerCase().includes(debounced.toLowerCase()),
+    ),
+    sort,
+    { created_at: (m) => (m.created_at && m.created_at !== 'unknown' ? Date.parse(m.created_at) : null) },
   )
 
   const avgAcc = list.length && list.some((m) => m.accuracy != null)
@@ -115,6 +123,8 @@ export default function Registry() {
             keyOf={(m) => m.id || m.name}
             rows={rows}
             pageSize={10}
+            sort={sort}
+            onSortChange={setSort}
             onRowClick={open}
             columns={[
               {
@@ -127,18 +137,18 @@ export default function Registry() {
                 ),
               },
               {
-                key: 'experiment_name', header: 'Experiment',
+                key: 'experiment_name', sortKey: 'experiment_name', header: 'Experiment',
                 render: (m) => m.experiment_name && m.experiment_name !== 'unknown'
                   ? <Badge tone="outline">{m.experiment_name}</Badge>
                   : <span className="muted">uploaded</span>,
               },
               {
-                key: 'precision', width: 110, header: 'Precision',
+                key: 'precision', width: 110, sortKey: 'precision', header: 'Precision',
                 // `!= null`, not truthiness: a legitimate 0.0 score rendered as "—".
                 render: (m) => <span className="tnum">{m.precision != null ? Number(m.precision).toFixed(3) : '—'}</span>,
               },
               {
-                key: 'recall', width: 100, header: 'Recall',
+                key: 'recall', width: 100, sortKey: 'recall', header: 'Recall',
                 render: (m) => <span className="tnum">{m.recall != null ? Number(m.recall).toFixed(3) : '—'}</span>,
               },
               {
@@ -146,11 +156,11 @@ export default function Registry() {
                 render: (m) => <span className="tnum">{formatAccuracy(m.accuracy)}</span>,
               },
               {
-                key: 'f1_score', width: 100, header: 'F1',
+                key: 'f1_score', width: 100, sortKey: 'f1_score', header: 'F1',
                 render: (m) => <span className="tnum">{formatRatio(m.f1_score)}</span>,
               },
               {
-                key: 'created_at', width: 170, header: 'Registered',
+                key: 'created_at', width: 170, sortKey: 'created_at', header: 'Registered',
                 render: (m) => (
                   <span className="text-xs muted">
                     {m.created_at && m.created_at !== 'unknown' ? new Date(m.created_at).toLocaleString() : '—'}

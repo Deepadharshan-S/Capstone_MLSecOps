@@ -98,6 +98,7 @@ code, pre, .mono { font-family: var(--font-mono); font-variant-ligatures: none; 
 @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes prog-slide { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -105,4 +106,7 @@ code, pre, .mono { font-family: var(--font-mono); font-variant-ligatures: none; 
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
+  /* The sweep would otherwise snap to its end frame and park off-screen,
+     leaving an empty track. Hold a static, visible bar instead. */
+  .prog-fill.is-indeterminate { animation: none !important; transform: none !important; }
 }

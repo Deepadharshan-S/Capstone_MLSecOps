@@ -65,6 +65,13 @@ export const mlOpsApi = {
   // GET /jobs/{job_id} · GET /jobs
   getJob: (jobId) => api.get(`/jobs/${enc(jobId)}`),
   listJobs: (limit = 20) => api.get(`/jobs?limit=${Number(limit) || 20}`),
+  // GET /models/jobs/{job_id}/logs — the dedicated log source, which
+  // /jobs/{job_id}'s embedded `logs` is not a substitute for. It reads the
+  // live Ray head pod while the job is active and the MinIO archive once it
+  // is done, and reports which via `source` ("kubernetes" | "minio" |
+  // "unavailable"). Response `logs` is one opaque string, not entries.
+  jobLogs: (jobId, tailLines = 1000) =>
+    api.get(`/models/jobs/${enc(jobId)}/logs?tail_lines=${Number(tailLines) || 1000}`),
 
   /* ── Registry ───────────────────────────────────── */
   // GET /models/supported · GET /models · GET /models/{name}/versions

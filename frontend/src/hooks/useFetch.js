@@ -61,7 +61,7 @@ export function useFetch(fetcher, deps = [], { enabled = true, initial = null } 
  * usePolling — repeat a fetcher on an interval while `enabled`.
  * Pauses automatically when the tab is hidden.
  */
-export function usePolling(fetcher, intervalMs, { enabled = true, onData, immediate = true } = {}) {
+export function usePolling(fetcher, intervalMs, { enabled = true, onData, immediate = true, deps = [] } = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -73,6 +73,11 @@ export function usePolling(fetcher, intervalMs, { enabled = true, onData, immedi
   cbRef.current = onData
   const mountedRef = useRef(true)
   const timerRef = useRef(null)
+  // Monotonic request id: filter changes now fire a fetch while an older one
+  // may still be in flight, and the interval can overlap both. Without this a
+  // slower response could land last and overwrite fresher rows — which reads
+  // exactly like "the filter didn't apply".
+  const seqRef = useRef(0)
 
   useEffect(() => {
     mountedRef.current = true
@@ -81,18 +86,22 @@ export function usePolling(fetcher, intervalMs, { enabled = true, onData, immedi
 
   const tick = useCallback(async () => {
     if (typeof document !== 'undefined' && document.hidden) return
+    const seq = ++seqRef.current
     setLoading(true)
     try {
       const result = await fetcherRef.current()
-      if (!mountedRef.current) return
+      if (!mountedRef.current || seq !== seqRef.current) return
       setData(result)
       setError(null)
       setLastUpdated(new Date())
       cbRef.current?.(result)
     } catch (err) {
-      if (mountedRef.current) setError(err)
+      if (!mountedRef.current || seq !== seqRef.current) return
+      setError(err)
     } finally {
-      if (mountedRef.current) setLoading(false)
+      // Only the newest request owns the spinner; an older one finishing must
+      // not clear the loading flag the newer request is still using.
+      if (mountedRef.current && seq === seqRef.current) setLoading(false)
     }
   }, [])
 
@@ -101,8 +110,11 @@ export function usePolling(fetcher, intervalMs, { enabled = true, onData, immedi
     if (immediate) tick()
     timerRef.current = setInterval(tick, intervalMs)
     return () => clearInterval(timerRef.current)
+    // `deps` are the values a caller passes so the poll re-arms when a filter
+    // changes — without them this effect only ever runs on mount, and the
+    // fetcher's new closure would not be picked up until the next tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, intervalMs, immediate])
+  }, [enabled, intervalMs, immediate, ...deps])
 
   return { data, loading, error, lastUpdated, refresh: tick, setData }
 }

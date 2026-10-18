@@ -200,7 +200,7 @@ export default function Experiments() {
           ) : runList.length === 0 ? (
             <EmptyState icon={Play} title="No runs in this experiment" desc="Training a model against this experiment will populate it." />
           ) : (
-            <RunsTable rows={runList} />
+            <RunsTable rows={runList} compact />
           )}
         </div>
       </Drawer>
@@ -208,53 +208,78 @@ export default function Experiments() {
   )
 }
 
-function RunsTable({ rows }) {
+function RunsTable({ rows, compact = false }) {
+  const columns = [
+    {
+      key: 'run', strong: true, header: 'Run',
+      width: compact ? '26%' : undefined,
+      render: (r) => (
+        <span className="flex items-center gap-2">
+          <span className="truncate" style={{ maxWidth: compact ? 120 : 150 }}>{r.run_name || String(r.run_id).slice(0, 8)}</span>
+          <CopyButton text={r.run_id} />
+        </span>
+      ),
+    },
+    {
+      key: 'status', header: 'Status', width: compact ? '14%' : undefined,
+      render: (r) => <StatusBadge status={r.status} sm />,
+    },
+    // Only the "All runs" tab needs this: inside the drawer every row is the
+    // one experiment the drawer is about, so the column just rendered "—".
+    ...(compact ? [] : [{
+      key: 'experiment', header: 'Experiment',
+      render: (r) => (r._experiment ? <Badge tone="outline" sm>{r._experiment}</Badge> : <span className="muted">—</span>),
+    }]),
+    {
+      key: 'metrics', header: 'Metrics', width: compact ? '24%' : undefined,
+      render: (r) => {
+        const entries = Object.entries(r.metrics || {}).slice(0, 4)
+        if (!entries.length) return <span className="muted">—</span>
+        const text = entries.map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join(' · ')
+        // Left to wrap, "accuracy=1.000 · precision=1.000 · …" stacks five
+        // lines tall in a narrow card and drags every other cell down with
+        // it. One line plus the full string in a tooltip reads better here.
+        return compact
+          ? <span className="mono text-xs truncate" style={{ maxWidth: 150 }} title={text}>{text}</span>
+          : <span className="mono text-xs">{text}</span>
+      },
+    },
+    {
+      key: 'params', header: 'Params', width: compact ? '20%' : undefined,
+      render: (r) => {
+        const entries = Object.entries(r.params || {}).slice(0, 3)
+        if (!entries.length) return <span className="muted">—</span>
+        const text = entries.map(([k, v]) => `${k}=${v}`).join(', ')
+        return compact
+          ? <span className="muted text-xs truncate" style={{ maxWidth: 130 }} title={text}>{text}</span>
+          : <span className="muted text-xs">{text}</span>
+      },
+    },
+    {
+      key: 'start_time',
+      width: compact ? '16%' : 170,
+      header: 'Started',
+      render: (r) => (
+        <span className="text-xs muted">
+          {r.start_time
+            ? new Date(r.start_time).toLocaleString(undefined, compact
+              // "Oct 18, 2:38 PM" fits the column; the seconds are noise here.
+              ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+              : undefined)
+            : '—'}
+        </span>
+      ),
+    },
+  ]
+
   return (
     <DataTable
       caption="MLflow runs"
       keyOf={(r) => r.run_id}
       rows={rows}
       pageSize={10}
-      columns={[
-        {
-          key: 'run', strong: true, header: 'Run',
-          render: (r) => (
-            <span className="flex items-center gap-2">
-              <span className="truncate" style={{ maxWidth: 150 }}>{r.run_name || String(r.run_id).slice(0, 8)}</span>
-              <CopyButton text={r.run_id} />
-            </span>
-          ),
-        },
-        { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} sm /> },
-        {
-          key: 'experiment', header: 'Experiment',
-          render: (r) => r._experiment ? <Badge tone="outline" sm>{r._experiment}</Badge> : <span className="muted">—</span>,
-        },
-        {
-          key: 'metrics', header: 'Metrics',
-          render: (r) => {
-            const entries = Object.entries(r.metrics || {}).slice(0, 4)
-            return entries.length
-              ? <span className="mono text-xs">{entries.map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join(' · ')}</span>
-              : <span className="muted">—</span>
-          },
-        },
-        {
-          key: 'params', header: 'Params',
-          render: (r) => {
-            const entries = Object.entries(r.params || {}).slice(0, 3)
-            return entries.length
-              ? <span className="muted text-xs">{entries.map(([k, v]) => `${k}=${v}`).join(', ')}</span>
-              : <span className="muted">—</span>
-          },
-        },
-        {
-          key: 'start_time',
-          width: 170,
-          header: 'Started',
-          render: (r) => <span className="text-xs muted">{r.start_time ? new Date(r.start_time).toLocaleString() : '—'}</span>,
-        },
-      ]}
+      columns={columns}
+      wrapClass={compact ? 'is-fixed' : undefined}
     />
   )
 }

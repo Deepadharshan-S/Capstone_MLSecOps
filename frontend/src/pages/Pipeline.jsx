@@ -293,6 +293,59 @@ function VersionStep({ dataset, ref, onRefChange }) {
   // what stops the panel flashing on every ref change.
   const showCommitsLoading = commits.loading && commitList.length === 0
 
+  // ── hide commits that carry no data ──────────────────────────────
+  // A freshly created lakeFS repo starts with setup commits — "Repository
+  // created", a workflow install — that contain no objects at all, so pinning
+  // one as the training ref reads an empty tree and the run has nothing to
+  // train on. lakeFS exposes no per-commit file list, so we ask the one
+  // endpoint that answers it: `files()` strips the .lakefs/ bookkeeping
+  // prefix, which is exactly why both of those commits come back empty.
+  //
+  // Probe oldest → newest and stop at the first commit that has objects: a
+  // mature repo costs one request, a fresh repo one per setup commit. The
+  // index of that commit is the cutoff — everything older is dropped from the
+  // ref dropdown and from the copy-ref button in Recent commits.
+  //
+  // Any error leaves the cutoff unset, which fails open and shows every
+  // commit: hiding a usable ref would be worse than offering one extra row.
+  const commitKey = commitList.map((c) => c.id).join('|')
+  const commitListRef = useRef(commitList)
+  commitListRef.current = commitList
+  const [dataCutoff, setDataCutoff] = useState(null)
+
+  useEffect(() => {
+    if (!name || !commitKey) { setDataCutoff(null); return undefined }
+    let cancelled = false
+    setDataCutoff(null)
+
+    async function probe() {
+      const offered = commitListRef.current.slice(0, 20)
+      for (let i = offered.length - 1; i >= 0; i -= 1) {
+        let files
+        try {
+          files = await datasetsApi.files(name, offered[i].id)
+        } catch {
+          return // unprovable → leave the cutoff null → show everything
+        }
+        const objs = Array.isArray(files) ? files : files?.files || []
+        if (objs.length > 0) {
+          if (!cancelled) setDataCutoff(i)
+          return
+        }
+      }
+      // Not one of the offered commits holds a file.
+      if (!cancelled) setDataCutoff(-1)
+    }
+
+    probe()
+    return () => { cancelled = true }
+  }, [name, commitKey])
+
+  // null = still probing, or the probe failed → render the full list.
+  const visibleCommits = dataCutoff === null
+    ? commitList
+    : commitList.filter((_, i) => i <= dataCutoff)
+
   if (!name) {
     return <EmptyState icon={GitBranch} title="Pick a dataset first" desc="A dataset is required before choosing a version ref." />
   }
@@ -311,7 +364,7 @@ function VersionStep({ dataset, ref, onRefChange }) {
       meta: branchList.find((b) => (typeof b === 'string' ? b : b?.name) === v)?.head_commit_id,
     })),
     ...tagList.map((t) => ({ kind: 'tag', value: t.name, meta: t.commit_id })),
-    ...commitList.slice(0, 20).map((c) => ({ kind: 'commit', value: c.id, meta: c.message })),
+    ...visibleCommits.slice(0, 20).map((c) => ({ kind: 'commit', value: c.id, meta: c.message })),
   ]
   const values = options.map((o) => o.value)
   // A ref typed by hand (or restored from a draft) may not be in the list —
@@ -383,15 +436,21 @@ function VersionStep({ dataset, ref, onRefChange }) {
         )}
       </Panel>
 
-      <Panel icon={GitCommitHorizontal} title="Recent commits" subtitle={`On ref "${commitsRef}"`} bodyClass={commitList.length ? 'tight' : ''}>
+      <Panel icon={GitCommitHorizontal} title="Recent commits" subtitle={`On ref "${commitsRef}"`} bodyClass={visibleCommits.length ? 'tight' : ''}>
         {showCommitsLoading ? (
           <LoadingState label="Loading commits…" />
-        ) : commitList.length === 0 ? (
-          <EmptyState icon={GitCommitHorizontal} title="No commits" desc="Commit your data to create a version." />
+        ) : visibleCommits.length === 0 ? (
+          <EmptyState
+            icon={GitCommitHorizontal}
+            title={commitList.length === 0 ? 'No commits' : 'No data yet'}
+            desc={commitList.length === 0
+              ? 'Commit your data to create a version.'
+              : `Nothing committed to "${commitsRef}" contains a data file — upload a CSV and commit it to pin a version.`}
+          />
         ) : (
           <div style={{ padding: 'var(--sp-4) var(--sp-5)' }}>
             <div className="row-list">
-              {commitList.slice(0, 8).map((c) => (
+              {visibleCommits.slice(0, 8).map((c) => (
                 <div key={c.id} className="row-item">
                   <span className="row-glyph"><GitCommitHorizontal size={15} /></span>
                   <span className="row-info">
@@ -666,7 +725,11 @@ export default function Pipeline() {
 
   const [job, setJob] = useState(() => draft?.job ?? null)        // { job_id, status }
   const [progress, setProgress] = useState(() => draft?.progress ?? 0)
-  const [logs, setLogs] = useState([])
+  const [headLogs, setHeadLogs] = useState([])
+  const [streamLogs, setStreamLogs] = useState([])
+  // Stable identity: TrainingConsole's follow-the-tail effect keys off this
+  // array, and a fresh one every render would re-scroll on unrelated updates.
+  const logs = useMemo(() => [...headLogs, ...streamLogs], [headLogs, streamLogs])
   const [results, setResults] = useState(() => draft?.results ?? null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
@@ -749,10 +812,24 @@ export default function Pipeline() {
   // their restored results without re-polling.
   const resumedJob = useRef(false)
 
-  /* ── log helper ───────────────────────────────── */
+  /* ── log helpers ───────────────────────────────── */
+  // The console renders two sources in one ordered list. `addLog` writes the
+  // pre-submit diagnostics (payload, endpoint, job id) that belong at the
+  // head; `addStreamLog` appends after the run's own output, which is where
+  // lifecycle lines belong once the job owns the tail of the console.
   const addLog = useCallback((level, msg) => {
     const time = new Date().toLocaleTimeString('en', { hour12: false })
-    setLogs((p) => [...p, { level, msg, time }])
+    setHeadLogs((p) => [...p, { level, msg, time }])
+  }, [])
+
+  const addStreamLog = useCallback((level, msg) => {
+    const time = new Date().toLocaleTimeString('en', { hour12: false })
+    setStreamLogs((p) => [...p, { level, msg, time }])
+  }, [])
+
+  const clearLogs = useCallback(() => {
+    setHeadLogs([])
+    setStreamLogs([])
   }, [])
 
   /* ── job polling ──────────────────────────────── */
@@ -773,10 +850,16 @@ export default function Pipeline() {
         if (err?.status === 404 || pollFails.current >= 15) {
           stopPolling()
           setSubmitting(false)
-          addLog('error', `Training failed: ${err?.message || 'Job not found.'}`)
+          addStreamLog('error', `Training failed: ${err?.message || 'Job not found.'}`)
         }
         return
       }
+      // GET /jobs/{id} hydrates `logs` — list rows deliberately do not — as
+      // the last 200 lines of the run's output. Swap the block in wholesale:
+      // appending would reprint the same tail every 2 seconds. A null/empty
+      // payload means the log source isn't reachable yet, so keep what the
+      // previous tick produced instead of blanking the console.
+      if (Array.isArray(j.logs) && j.logs.length) setStreamLogs(j.logs)
       setProgress(j.progress || 0)
       if (j.status === 'completed') {
         stopPolling()
@@ -784,20 +867,20 @@ export default function Pipeline() {
         setProgress(100)
         setResults(j)
         setJob({ ...j, status: 'completed' })
-        addLog('success', 'Training complete — model registered in MLflow.')
+        addStreamLog('success', 'Training complete — model registered in MLflow.')
         toast.success('Training complete', 'Metrics are ready in the Results step.')
         registered.refetch()
         setStep(4); setMaxReached((m) => Math.max(m, 4))
       } else if (j.status === 'failed') {
         stopPolling()
         setSubmitting(false)
-        addLog('error', `Training failed: ${j.error_message || 'Unknown error'}`)
+        addStreamLog('error', `Training failed: ${j.error_message || 'Unknown error'}`)
         toast.error('Training failed', j.error_message || 'See the console for details.')
       } else {
         setJob((prev) => ({ ...(prev || {}), ...j }))
       }
     }, 2000)
-  }, [addLog, registered, stopPolling, toast])
+  }, [addStreamLog, registered, stopPolling, toast])
 
   useEffect(() => () => stopPolling(), [stopPolling])
 
@@ -837,7 +920,7 @@ export default function Pipeline() {
     if (!selectedDs) return
     setSubmitting(true)
     setSubmitError(null)
-    setLogs([])
+    clearLogs()
     setProgress(0)
     setResults(null)
     setJob(null)
@@ -902,7 +985,7 @@ export default function Pipeline() {
     setSelectedDs(null); setRef('')
     setModelId(''); setHyperparams({})
     setMeta({ experiment_name: '', model_name: '', target_column: 'label' })
-    setJob(null); setResults(null); setLogs([]); setProgress(0)
+    setJob(null); setResults(null); clearLogs(); setProgress(0)
     setSubmitError(null); setSubmitting(false)
   }
 

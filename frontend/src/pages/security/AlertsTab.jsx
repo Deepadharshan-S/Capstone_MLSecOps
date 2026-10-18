@@ -337,6 +337,9 @@ export default function AlertsTab() {
 
   // Live feed: newest 200 alerts, refreshed on the poll interval so alerts
   // surface in the UI as the backend detection worker generates them.
+  // `deps` makes the feed refetch the moment a filter changes — otherwise the
+  // new closure is only picked up on the next 20s tick, and switching
+  // severity/status looked like it needed a manual Refresh.
   const alerts = usePolling(
     () => threatHuntingApi.listAlerts({
       status: statusFilter || undefined,
@@ -344,7 +347,7 @@ export default function AlertsTab() {
       limit: 200,
     }),
     ALERT_POLL_MS,
-    { immediate: true },
+    { immediate: true, deps: [statusFilter, severityFilter] },
   )
 
   // Exact counts from the server (limit=1 requests that only read `total`).

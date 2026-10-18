@@ -11,6 +11,7 @@ export function routeMeta(pathname) {
     registry: 'Model Registry',
     deployments: 'Deployments',
     predict: 'Predict',
+    testing: 'Model testing',
     experiments: 'Experiments',
     security: 'Security Center',
     admin: 'Admin',
