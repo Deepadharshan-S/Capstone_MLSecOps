@@ -64,6 +64,14 @@ def download_dataset(repo_name: str, ref_id: str, dest_dir: str) -> str:
     if not downloaded_files:
         raise ValueError(f"No files found in lakeFS repository '{repo_name}' at reference '{ref_id}'")
 
+    # Exclude internal action and metadata paths (e.g. _lakefs_actions/poisoning_gate.yaml, hidden files)
+    data_files = [
+        f for f in downloaded_files
+        if not any(part.startswith(("_", ".")) for part in os.path.relpath(f, dest_dir).split(os.sep))
+    ]
+    if data_files:
+        return data_files[0]
+
     return downloaded_files[0]
 
 

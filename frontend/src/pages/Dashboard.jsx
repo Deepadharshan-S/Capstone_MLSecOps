@@ -57,11 +57,8 @@ export default function Dashboard() {
   const deployments = useFetch(() => mlOpsApi.listDeployments(), [])
   const experiments = useFetch(() => mlOpsApi.listExperiments(), [])
 
-  // Skeleton only while *nothing* has arrived yet. The previous `&&` across
-  // four fetches meant the first response to land painted the whole page with
-  // 0s, and a manual Refresh blanked it back to skeletons.
-  const anyData = datasets.data || models.data || jobs.data || deployments.data || experiments.data
-  const loading = !anyData && [datasets, models, jobs, deployments, experiments].some((f) => f.loading)
+  // Wait for initial load of core workspace data before replacing skeletons with numbers
+  const initialLoading = (datasets.loading && !datasets.data) || (models.loading && !models.data) || (jobs.loading && !jobs.data)
   const firstError = datasets.error || models.error || jobs.error || deployments.error || experiments.error
 
   const dsList = asList(datasets.data, 'datasets')
@@ -76,7 +73,7 @@ export default function Dashboard() {
 
   const counts = { datasets: dsList.length, models: modelList.length, jobs: jobList.length, deployments: depList.length }
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="page">
         <PageHeader icon={Activity} title="Dashboard" subtitle="Loading workspace overview…" />
@@ -121,26 +118,26 @@ export default function Dashboard() {
       <div className="stat-grid">
         <StatCard
           icon={Database} tone="accent"
-          value={counts.datasets} label="Datasets"
-          sub={dsList.length ? `${dsList.length} lakeFS repositor${dsList.length === 1 ? 'y' : 'ies'}` : 'No data registered yet'}
+          value={datasets.loading && !datasets.data ? '…' : counts.datasets} label="Datasets"
+          sub={datasets.loading && !datasets.data ? 'Loading repositories…' : (dsList.length ? `${dsList.length} lakeFS repositor${dsList.length === 1 ? 'y' : 'ies'}` : 'No data registered yet')}
           onClick={() => navigate('/datasets')}
         />
         <StatCard
           icon={Boxes} tone="info"
-          value={counts.models} label="Registered models"
-          sub={hasPermission('models:view') ? 'Open the registry' : 'View-only access'}
+          value={models.loading && !models.data ? '…' : counts.models} label="Registered models"
+          sub={models.loading && !models.data ? 'Fetching models…' : (hasPermission('models:view') ? 'Open the registry' : 'View-only access')}
           onClick={() => navigate('/registry')}
         />
         <StatCard
           icon={ClipboardList} tone="purple"
-          value={counts.jobs} label="Training jobs"
-          sub={`${runningJobs.length} running · ${succeeded.length} succeeded`}
+          value={jobs.loading && !jobs.data ? '…' : counts.jobs} label="Training jobs"
+          sub={jobs.loading && !jobs.data ? 'Fetching jobs…' : `${runningJobs.length} running · ${succeeded.length} succeeded`}
           onClick={() => navigate('/jobs')}
         />
         <StatCard
           icon={Rocket} tone="success"
-          value={activeDeps.length} label="Active deployments"
-          sub={`${depList.length} total tracked`}
+          value={deployments.loading && !deployments.data ? '…' : activeDeps.length} label="Active deployments"
+          sub={deployments.loading && !deployments.data ? 'Fetching deployments…' : `${depList.length} total tracked`}
           onClick={() => navigate('/deployments')}
         />
       </div>
@@ -181,7 +178,9 @@ export default function Dashboard() {
           actions={<Button variant="ghost" size="sm" icon={ArrowRight} onClick={() => navigate('/jobs')}>All jobs</Button>}
           bodyClass={jobList.length ? 'tight' : ''}
         >
-          {jobList.length === 0 ? (
+          {jobs.loading && !jobs.data ? (
+            <div className="skeleton" style={{ height: 160, borderRadius: 'var(--r-md)' }} />
+          ) : jobList.length === 0 ? (
             <EmptyState
               icon={ClipboardList}
               title="No training jobs yet"
@@ -231,7 +230,9 @@ export default function Dashboard() {
           actions={<Button variant="ghost" size="sm" icon={ArrowRight} onClick={() => navigate('/registry')}>Open registry</Button>}
           bodyClass={modelList.length ? 'tight-padded' : ''}
         >
-          {modelList.length === 0 ? (
+          {models.loading && !models.data ? (
+            <div className="skeleton" style={{ height: 160, borderRadius: 'var(--r-md)' }} />
+          ) : modelList.length === 0 ? (
             <EmptyState
               icon={Boxes}
               title="Registry is empty"

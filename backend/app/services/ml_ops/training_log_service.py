@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 from app.services.interfaces import ObjectStorageService
 from app.services.ml_ops.rayjob_service import RayJobService
+from app.core.config import settings
 
 logger = logging.getLogger("training_log_service")
 
@@ -20,6 +21,7 @@ class TrainingLogService:
     ) -> None:
         self.storage_service = storage_service
         self.rayjob_service = rayjob_service
+        self.bucket = getattr(settings, "MLFLOW_ARTIFACT_BUCKET", "mlflow")
 
     def get_logs(
         self,
@@ -57,7 +59,7 @@ class TrainingLogService:
                     }
 
         # 2. MinIO persistent archive lookup for completed jobs or if head pod is absent
-        archived = self.storage_service.get_log_content("mlflow", log_key)
+        archived = self.storage_service.get_log_content(self.bucket, log_key)
         if archived is not None:
             lines = archived.splitlines()
             if tail_lines and len(lines) > tail_lines:
@@ -80,7 +82,7 @@ class TrainingLogService:
             logs = self.rayjob_service.get_head_pod_logs(pod_name=pod_name, tail_lines=tail_lines)
             if logs:
                 try:
-                    self.storage_service.put_log_content("mlflow", log_key, logs)
+                    self.storage_service.put_log_content(self.bucket, log_key, logs)
                 except Exception as put_err:
                     logger.debug(f"Failed to persist lingering pod logs to S3: {put_err}")
                 lines = logs.splitlines()
@@ -114,7 +116,7 @@ class TrainingLogService:
         clean_id = job_id.removeprefix("rayjob-")
         log_key = f"logs/{clean_id}/training.log"
 
-        if self.storage_service.get_log_content("mlflow", log_key) is not None:
+        if self.storage_service.get_log_content(self.bucket, log_key) is not None:
             return True
 
         head_pod = self.rayjob_service.get_head_pod(clean_id)
@@ -127,7 +129,7 @@ class TrainingLogService:
             return False
 
         try:
-            self.storage_service.put_log_content("mlflow", log_key, logs)
+            self.storage_service.put_log_content(self.bucket, log_key, logs)
             return True
         except Exception as e:
             print(f"Notice: Failed to archive pod logs to MinIO ({e}).")
@@ -137,10 +139,10 @@ class TrainingLogService:
         """Persists raw log text content directly to MinIO under the job's log key."""
         clean_id = job_id.removeprefix("rayjob-")
         log_key = f"logs/{clean_id}/training.log"
-        self.storage_service.put_log_content("mlflow", log_key, content)
+        self.storage_service.put_log_content(self.bucket, log_key, content)
 
     def has_archived_logs(self, job_id: str) -> bool:
         """Checks if persistent logs are available in MinIO for this job."""
         clean_id = job_id.removeprefix("rayjob-")
         log_key = f"logs/{clean_id}/training.log"
-        return self.storage_service.get_log_content("mlflow", log_key) is not None
+        return self.storage_service.get_log_content(self.bucket, log_key) is not None

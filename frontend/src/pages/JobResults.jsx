@@ -4,9 +4,10 @@ import {
   ResponsiveContainer, BarChart, Bar,
 } from 'recharts'
 import {
-  BarChart3, Activity,
+  BarChart3, Activity, Target,
 } from '../components/icons.jsx'
-import { Panel, Progress, EmptyState } from '../components/ui/index.jsx'
+import { Panel, Progress, EmptyState, Badge, StatusBadge } from '../components/ui/index.jsx'
+import { formatAccuracy } from '../lib/models.js'
 
 const C = {
   1: 'var(--c-1)', 2: 'var(--c-2)', 3: 'var(--c-3)',
@@ -176,7 +177,7 @@ function MetricTiles({ results }) {
    JobResults — metrics, curves, matrix, importance.
    Used by Pipeline (live) and Jobs (historical).
    ══════════════════════════════════════════════════════ */
-export default function JobResults({ results, isTraining = false, progress = 0 }) {
+export default function JobResults({ results, isTraining = false, progress = 0, jobId }) {
   if (isTraining) {
     return (
       <Panel icon={Activity} title="Metrics" subtitle="Waiting for the run to produce metrics">

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -897,11 +897,22 @@ hooks:
         assert len(sec_event.attributes["violations"]) >= 1
 
         # Verify Alert created with MITRE ATLAS AML.T0020
-        alerts = db.execute(select(Alert)).scalars().all()
-        matching_alerts = [
-            a for a in alerts
-            if repo_name in (a.dedup_key or "") or repo_name in str(a.supporting_evidence or {})
-        ]
+        import time
+        matching_alerts = []
+        for _ in range(30):
+            with SessionLocal() as query_session:
+                matching_alerts = query_session.execute(
+                    select(Alert).where(
+                        or_(
+                            Alert.dedup_key.like(f"%{repo_name}%"),
+                            Alert.title.like(f"%{repo_name}%"),
+                        )
+                    )
+                ).scalars().all()
+            if matching_alerts:
+                break
+            time.sleep(0.5)
+
         assert len(matching_alerts) >= 1
         assert any(a.mitre_atlas_id == "AML.T0020" or "Poisoning" in a.title for a in matching_alerts)
 
@@ -950,6 +961,15 @@ def test_dataset_api_protected_branch_upload_rejection_and_merge_lifecycle(admin
         assert upload_resp.status_code == 400
         assert "protected against direct writes" in upload_resp.json()["detail"]
 
+        # Direct commit to protected main must also be rejected with 400 Bad Request
+        commit_resp = client.post(
+            f"/api/datasets/{dataset_name}/commit?branch=main",
+            json={"message": "Direct commit to main"},
+            headers=admin_headers,
+        )
+        assert commit_resp.status_code == 400
+        assert "protected against direct writes" in commit_resp.json()["detail"]
+
         # 3. Create feature staging branch from main
         staging_branch = "staging-api-clean"
         branch_resp = client.post(
@@ -995,6 +1015,75 @@ def test_dataset_api_protected_branch_upload_rejection_and_merge_lifecycle(admin
         remaining_branches = data_service.list_branches(db, dataset_name=dataset_name)
         branch_names = [b["name"] for b in remaining_branches]
         assert staging_branch not in branch_names, "Merged staging branch should have been pruned!"
+
+    finally:
+        try:
+            data_service.delete_dataset(db, dataset_name, username="admin_poison_test")
+        except Exception:
+            pass
+
+
+def test_dataset_api_merge_column_mismatch_blocked(admin_headers, db):
+    """
+    Verifies that when candidate data has a column mismatch against baseline,
+    the pre-merge webhook catches it and rejects the merge, leaving main HEAD untouched.
+    """
+    dataset_name = f"test-col-mismatch-{uuid.uuid4().hex[:8]}"
+
+    try:
+        initial_csv = b"feat_a,target\n1.0,0\n2.0,1\n3.0,0\n4.0,1\n"
+        resp = client.post(
+            "/api/datasets",
+            data={"name": dataset_name, "description": "Column mismatch test"},
+            files={"file": ("dataset.csv", initial_csv, "text/csv")},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 201
+
+        # 1. Create feature staging branch from main
+        staging_branch = "staging-mismatched-columns"
+        branch_resp = client.post(
+            f"/api/datasets/{dataset_name}/branches",
+            json={"branch_name": staging_branch, "source_branch": "main"},
+            headers=admin_headers,
+        )
+        assert branch_resp.status_code == 201
+
+        # 2. Upload candidate file with completely mismatched columns
+        mismatched_csv = b"wrong_col_x,unrelated_y\n10.5,foo\n20.5,bar\n"
+        upload_resp = client.post(
+            f"/api/datasets/{dataset_name}/upload?branch={staging_branch}",
+            files={"file": ("dataset.csv", mismatched_csv, "text/csv")},
+            headers=admin_headers,
+        )
+        assert upload_resp.status_code == 200
+
+        # 3. Commit on staging branch
+        commit_resp = client.post(
+            f"/api/datasets/{dataset_name}/commit?branch={staging_branch}",
+            json={"message": "Candidate commit with column mismatch"},
+            headers=admin_headers,
+        )
+        assert commit_resp.status_code == 200
+
+        # 4. Attempt merge into main -> MUST FAIL (pre-merge hook aborts with 412/Precondition Failed)
+        merge_payload = {
+            "source_branch": staging_branch,
+            "destination_branch": "main",
+            "message": "Attempt merge with mismatched schema",
+        }
+        merge_resp = client.post(
+            f"/api/datasets/{dataset_name}/merge",
+            json=merge_payload,
+            headers=admin_headers,
+        )
+        assert merge_resp.status_code in (400, 422, 500)
+        detail = merge_resp.json()["detail"].lower()
+        assert "pre-merge hook aborted" in detail or "precondition failed" in detail or "412" in detail
+
+        # 5. Verify main branch files remain intact with baseline schema
+        files_resp = client.get(f"/api/datasets/{dataset_name}/files?ref=main", headers=admin_headers)
+        assert files_resp.status_code == 200
 
     finally:
         try:

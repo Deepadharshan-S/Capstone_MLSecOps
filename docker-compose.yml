@@ -48,6 +48,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_NOTIFY_WEBHOOK_ENABLE_SENTINEL: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_SENTINEL: "${MINIO_NOTIFY_WEBHOOK_ENDPOINT:-http://host.docker.internal:8001/api/webhooks/minio/storage-events}"
+      MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_SENTINEL: "${MINIO_WEBHOOK_SECRET:-sentinelml-dev-minio-webhook-secret-32b}"
 
     ports:
       - "9000:9000"
@@ -226,11 +229,14 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      LAKEFS_BLOCKSTORE_BUCKET: ${LAKEFS_BLOCKSTORE_BUCKET:-lakefs}
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
-      /usr/bin/mc mb --ignore-existing myminio/lakefs;
+      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc mb --ignore-existing myminio/$${LAKEFS_BLOCKSTORE_BUCKET};
       /usr/bin/mc mb --ignore-existing myminio/mlflow;
+      /usr/bin/mc event add myminio/$${LAKEFS_BLOCKSTORE_BUCKET} arn:minio:sqs::SENTINEL:webhook --event put,delete -p;
       exit 0;
       "
     networks:

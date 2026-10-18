@@ -89,8 +89,8 @@ def create_refresh_token(
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        # Default refresh token expiration to 7 days
-        expire = datetime.now(timezone.utc) + timedelta(days=7)
+        # Configurable refresh token expiration (default: 7 days)
+        expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
     token_id = secrets.token_hex(16)
     to_encode = {

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: rayjob-code-{{job_id}}
-  namespace: default
+  namespace: {{namespace}}
   labels:
     ray.io/job-id: "{{job_id}}"
     app.kubernetes.io/name: "sentinelml-rayjob"
@@ -56,7 +56,7 @@ apiVersion: ray.io/v1
 kind: RayJob
 metadata:
   name: rayjob-{{job_id}}
-  namespace: default
+  namespace: {{namespace}}
   labels:
     ray.io/job-id: "{{job_id}}"
     app.kubernetes.io/name: "sentinelml-rayjob"
@@ -88,7 +88,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: ray-head
-              image: sentinelml-ray:latest
+              image: {{ray_image}}
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -161,7 +161,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: rayjob-netpol-{{job_id}}
-  namespace: default
+  namespace: {{namespace}}
   labels:
     ray.io/job-id: "{{job_id}}"
     app.kubernetes.io/name: "sentinelml-rayjob"

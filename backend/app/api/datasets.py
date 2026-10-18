@@ -111,7 +111,13 @@ def register_dataset(
             target_url = f"{webhook_url}?secret={webhook_secret}" if "?" not in webhook_url else f"{webhook_url}&secret={webhook_secret}"
         else:
             target_url = webhook_url
-        action_yaml = action_yaml.replace("{{ webhook_url }}", target_url).replace("{{ webhook_secret }}", webhook_secret)
+        target_default_branch = db_dataset.default_branch or getattr(settings, "LAKEFS_DEFAULT_BRANCH", "main")
+        action_yaml = (
+            action_yaml
+            .replace("{{ default_branch }}", target_default_branch)
+            .replace("{{ webhook_url }}", target_url)
+            .replace("{{ webhook_secret }}", webhook_secret)
+        )
 
         data_service.upload_file(
             db=db,
@@ -288,11 +294,25 @@ def commit_changes(
 ):
     """
     Commits changes on a branch.
+    If the target branch is protected against direct writes (e.g. 'main'),
+    rejects direct commits with HTTP 400 so changes must be committed to a feature
+    branch and validated via merge.
     """
+    target_branch = branch or "main"
+    protected_rules = data_service.get_branch_protection(db, dataset_name=dataset_name)
+    if target_branch in protected_rules:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Branch '{target_branch}' is protected against direct writes. "
+                f"Please commit changes on a feature branch, then merge into '{target_branch}'."
+            ),
+        )
+
     return data_service.commit_changes(
         db=db,
         dataset_name=dataset_name,
-        branch_name=branch,
+        branch_name=target_branch,
         message=req.message,
         metadata=req.metadata,
         username=user.username,

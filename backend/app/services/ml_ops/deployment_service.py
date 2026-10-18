@@ -108,7 +108,7 @@ class ModelDeploymentService:
 
             sanitized_name = get_repo_name(model_id)[:16].rstrip("-")
             rayservice_name = f"raysvc-{sanitized_name}-v{target_version}"
-            internal_endpoint_url = f"http://{rayservice_name}-serve-svc.default.svc.cluster.local:8000/predict"
+            internal_endpoint_url = f"http://{rayservice_name}-serve-svc.{settings.KUBERNETES_NAMESPACE}.svc.cluster.local:8000/predict"
             endpoint_url = f"/api/deployments/{deployment_id}/predict"
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -202,6 +202,8 @@ class ModelDeploymentService:
                     "{{otel_exporter_otlp_endpoint}}": getattr(settings, "OTEL_INTERNAL_ENDPOINT", None)
                     or to_k8s_endpoint(getattr(settings, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")),
                     "{{otel_traces_sampler}}": getattr(settings, "OTEL_TRACES_SAMPLER", "always_on"),
+                    "{{namespace}}": settings.KUBERNETES_NAMESPACE,
+                    "{{ray_image}}": settings.RAY_IMAGE,
                 }
                 rendered_yaml = template_content
                 for placeholder, val in replacements.items():
@@ -217,7 +219,7 @@ class ModelDeploymentService:
                         if not doc:
                             continue
                         kind = doc.get("kind")
-                        ns = doc.get("metadata", {}).get("namespace", "default")
+                        ns = doc.get("metadata", {}).get("namespace", settings.KUBERNETES_NAMESPACE)
                         name = doc.get("metadata", {}).get("name")
                         if kind == "ConfigMap":
                             try:
@@ -294,6 +296,8 @@ class ModelDeploymentService:
                 "rayservice_name": rayservice_name,
                 "deployment_id": deployment_id,
             }
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Error during perform_model_deploy: {e}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -317,7 +321,7 @@ class ModelDeploymentService:
         try:
             custom_api, _ = self._get_k8s_apis()
             items = custom_api.list_namespaced_custom_object(
-                group="ray.io", version="v1", namespace="default", plural="rayservices"
+                group="ray.io", version="v1", namespace=settings.KUBERNETES_NAMESPACE, plural="rayservices"
             ).get("items", [])
             for item in items:
                 name = item.get("metadata", {}).get("name")
@@ -434,7 +438,7 @@ class ModelDeploymentService:
                 try:
                     custom_api, core_api = self._get_k8s_apis()
                     k8s_json = custom_api.get_namespaced_custom_object(
-                        group="ray.io", version="v1", namespace="default", plural="rayservices", name=deployment_id
+                        group="ray.io", version="v1", namespace=settings.KUBERNETES_NAMESPACE, plural="rayservices", name=deployment_id
                     )
                     status_obj = k8s_json.get("status", {})
                     svc_status = status_obj.get("serviceStatus", "Unknown")
@@ -476,7 +480,7 @@ class ModelDeploymentService:
 
         internal_endpoints = {}
         if raysvc:
-            internal_endpoints["serve"] = f"http://{raysvc}-serve-svc.default.svc.cluster.local:8000/predict"
+            internal_endpoints["serve"] = f"http://{raysvc}-serve-svc.{settings.KUBERNETES_NAMESPACE}.svc.cluster.local:8000/predict"
 
         k8s_status = "Unknown"
         service_status = "Unknown"
@@ -494,7 +498,7 @@ class ModelDeploymentService:
             try:
                 custom_api, core_api = self._get_k8s_apis()
                 k8s_json = custom_api.get_namespaced_custom_object(
-                    group="ray.io", version="v1", namespace="default", plural="rayservices", name=raysvc
+                    group="ray.io", version="v1", namespace=settings.KUBERNETES_NAMESPACE, plural="rayservices", name=raysvc
                 )
                 status_obj = k8s_json.get("status", {})
                 service_status = status_obj.get("serviceStatus", "Unknown")
@@ -522,7 +526,7 @@ class ModelDeploymentService:
                 head_status = service_status
                 try:
                     pod_list = core_api.list_namespaced_pod(
-                        namespace="default",
+                        namespace=settings.KUBERNETES_NAMESPACE,
                         label_selector=f"ray.io/cluster={raysvc}",
                     )
                     items = getattr(pod_list, "items", [])
@@ -676,13 +680,13 @@ class ModelDeploymentService:
                 for r_svc in raysvc_names_to_clean:
                     try:
                         custom_api.delete_namespaced_custom_object(
-                            group="ray.io", version="v1", namespace="default", plural="rayservices", name=r_svc
+                            group="ray.io", version="v1", namespace=settings.KUBERNETES_NAMESPACE, plural="rayservices", name=r_svc
                         )
                     except Exception as del_svc_err:
                         logger.debug(f"RayService {r_svc} delete note: {del_svc_err}")
                     try:
                         custom_api.delete_namespaced_custom_object(
-                            group="ray.io", version="v1", namespace="default", plural="rayclusters", name=r_svc
+                            group="ray.io", version="v1", namespace=settings.KUBERNETES_NAMESPACE, plural="rayclusters", name=r_svc
                         )
                     except Exception as del_cls_err:
                         logger.debug(f"RayCluster {r_svc} delete note: {del_cls_err}")
@@ -690,7 +694,7 @@ class ModelDeploymentService:
                 for lbl in labels_to_clean:
                     try:
                         core_api.delete_collection_namespaced_config_map(
-                            namespace="default", label_selector=lbl
+                            namespace=settings.KUBERNETES_NAMESPACE, label_selector=lbl
                         )
                     except Exception as del_cm_err:
                         logger.debug(f"ConfigMap collection cleanup note ({lbl}): {del_cm_err}")
@@ -700,7 +704,7 @@ class ModelDeploymentService:
                     if d_id:
                         try:
                             core_api.delete_namespaced_config_map(
-                                name=f"rayservice-code-{d_id}", namespace="default"
+                                name=f"rayservice-code-{d_id}", namespace=settings.KUBERNETES_NAMESPACE
                             )
                         except Exception as del_single_cm_err:
                             logger.debug(f"ConfigMap rayservice-code-{d_id} cleanup note: {del_single_cm_err}")
@@ -721,7 +725,7 @@ class ModelDeploymentService:
                     try:
                         # Deleting the head pod triggers KubeRay to recreate it and reload configuration
                         core_api.delete_collection_namespaced_pod(
-                            namespace="default",
+                            namespace=settings.KUBERNETES_NAMESPACE,
                             label_selector=f"ray.io/cluster={target},ray.io/node-type=head",
                         )
                     except Exception as restart_pod_err:

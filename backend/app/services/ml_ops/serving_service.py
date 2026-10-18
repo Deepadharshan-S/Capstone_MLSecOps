@@ -52,12 +52,13 @@ class PortForwardManager:
         except Exception:
             return False
 
-    def get_service_url(self, service_name: str, target_port: int = 8000, namespace: str = "default") -> Optional[str]:
+    def get_service_url(self, service_name: str, target_port: int = 8000, namespace: Optional[str] = None) -> Optional[str]:
         # In Kubernetes pods, internal DNS and ClusterIP route directly without port-forwarding
         if os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount"):
             return None
 
-        key = f"{namespace}/{service_name}:{target_port}"
+        ns = namespace or settings.KUBERNETES_NAMESPACE
+        key = f"{ns}/{service_name}:{target_port}"
         with self._proc_lock:
             if key in self._forwards:
                 info = self._forwards[key]
@@ -69,7 +70,7 @@ class PortForwardManager:
 
             try:
                 proc = subprocess.Popen(
-                    ["kubectl", "port-forward", "-n", namespace, f"svc/{service_name}", f":{target_port}"],
+                    ["kubectl", "port-forward", "-n", ns, f"svc/{service_name}", f":{target_port}"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -278,7 +279,7 @@ class ModelServingService:
                     resolved_version = str(db_dep.version)
                     matched_dep_id = db_dep.deployment_id
                     matched_raysvc = db_dep.rayservice_name
-                    internal_url_from_tags = f"http://{db_dep.rayservice_name}-serve-svc.default.svc.cluster.local:8000/predict"
+                    internal_url_from_tags = f"http://{db_dep.rayservice_name}-serve-svc.{settings.KUBERNETES_NAMESPACE}.svc.cluster.local:8000/predict"
         except Exception as db_err:
             logger.debug(f"Could not resolve deployment from DB: {db_err}")
 
@@ -329,7 +330,7 @@ class ModelServingService:
         # When running on host (outside K8s), port-forward to local ephemeral port for host-to-cluster connectivity
         if target_service and not os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount"):
             port_fwd_url = PortForwardManager.get_instance().get_service_url(
-                f"{target_service}-serve-svc", target_port=8000
+                f"{target_service}-serve-svc", target_port=8000, namespace=settings.KUBERNETES_NAMESPACE
             )
             if port_fwd_url:
                 endpoints.append(f"{port_fwd_url}/predict")
@@ -337,7 +338,7 @@ class ModelServingService:
         if internal_url_from_tags:
             endpoints.append(internal_url_from_tags)
         if target_service:
-            endpoints.append(f"http://{target_service}-serve-svc.default.svc.cluster.local:8000/predict")
+            endpoints.append(f"http://{target_service}-serve-svc.{settings.KUBERNETES_NAMESPACE}.svc.cluster.local:8000/predict")
             endpoints.append(f"http://{target_service}-serve-svc:8000/predict")
 
         # Deduplicate while preserving order

@@ -37,14 +37,20 @@ echo "Waiting for database..."
 ENV_FILE=".env"
 [ ! -f "$ENV_FILE" ] && [ -f "../.env" ] && ENV_FILE="../.env"
 
-DB_HOST=""
-DB_PORT=""
+DOTENV_DB_HOST=""
+DOTENV_DB_PORT=""
+DOTENV_APP_HOST=""
+DOTENV_APP_PORT=""
 if [ -f "$ENV_FILE" ]; then
-    DB_HOST="$(grep -E '^POSTGRES_HOST=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'\''')"
-    DB_PORT="$(grep -E '^POSTGRES_PORT=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'\''')"
+    DOTENV_DB_HOST="$(grep -E '^POSTGRES_HOST=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'\''')"
+    DOTENV_DB_PORT="$(grep -E '^POSTGRES_PORT=' "$ENV_FILE" | cut -d= -f2- | tr -d '"'\''')"
+    DOTENV_APP_HOST="$(grep -E '^(BACKEND_HOST|API_HOST)=' "$ENV_FILE" | head -n 1 | cut -d= -f2- | tr -d '"'\''')"
+    DOTENV_APP_PORT="$(grep -E '^(BACKEND_PORT|API_PORT)=' "$ENV_FILE" | head -n 1 | cut -d= -f2- | tr -d '"'\''')"
 fi
-DB_HOST="${DB_HOST:-localhost}"
-DB_PORT="${DB_PORT:-5432}"
+DB_HOST="${POSTGRES_HOST:-${DOTENV_DB_HOST:-localhost}}"
+DB_PORT="${POSTGRES_PORT:-${DOTENV_DB_PORT:-5432}}"
+APP_HOST="${BACKEND_HOST:-${API_HOST:-${DOTENV_APP_HOST:-0.0.0.0}}}"
+APP_PORT="${BACKEND_PORT:-${API_PORT:-${DOTENV_APP_PORT:-8001}}}"
 
 MAX_DB_WAIT_SECONDS=60
 waited=0
@@ -65,5 +71,5 @@ $UV_CMD run alembic upgrade head
 echo "Seeding database..."
 $UV_CMD run python -m app.db.seed_db
 
-echo "Starting FastAPI application..."
-$UV_CMD run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+echo "Starting FastAPI application on $APP_HOST:$APP_PORT..."
+$UV_CMD run uvicorn app.main:app --host "$APP_HOST" --port "$APP_PORT" --reload

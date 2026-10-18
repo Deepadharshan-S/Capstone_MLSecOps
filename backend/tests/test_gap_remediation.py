@@ -222,15 +222,26 @@ def test_s3_storage_service_dependency_injection():
 
 def test_minio_app_credentials_configuration():
     """Verifies settings properties for MinIO runtime application credentials and fallback protection."""
+    valid_prod_base = {
+        "SECRET_KEY": "a" * 32,
+        "LAKEFS_ENDPOINT": "http://localhost:8000",
+        "LAKEFS_ACCESS_KEY_ID": "lakefs_key",
+        "LAKEFS_SECRET_ACCESS_KEY": "lakefs_secret",
+        "MINIO_ROOT_USER": "prodadmin",
+        "MINIO_ROOT_PASSWORD": "StrongRootPassword!123",
+        "MINIO_WEBHOOK_SECRET": "prod-minio-secret-at-least-32-chars-long",
+        "LAKEFS_WEBHOOK_SECRET": "prod-lakefs-secret-at-least-32-chars-long",
+        "POSTGRES_USER": "produser",
+        "POSTGRES_PASSWORD": "StrongPostgresPassword!123",
+        "DATABASE_URL": "postgresql://produser:StrongPostgresPassword!123@localhost:5432/sentinelml",
+        "ENVIRONMENT": "production",
+    }
+
     # 1. Explicit app credentials provided
     s_custom = Settings(
-        SECRET_KEY="test-secret-key-123",
-        LAKEFS_ENDPOINT="http://localhost:8000",
-        LAKEFS_ACCESS_KEY_ID="lakefs_key",
-        LAKEFS_SECRET_ACCESS_KEY="lakefs_secret",
+        **valid_prod_base,
         MINIO_ACCESS_KEY="custom_app_key",
         MINIO_SECRET_KEY="custom_app_secret",
-        ENVIRONMENT="production",
     )
     assert s_custom.minio_app_user == "custom_app_key"
     assert s_custom.minio_app_password == "custom_app_secret"
@@ -247,18 +258,15 @@ def test_minio_app_credentials_configuration():
     assert s_dev.minio_app_password == s_dev.MINIO_ROOT_PASSWORD
 
     # 3. Production forbids silent fallback to root credentials
-    s_prod = Settings(
-        SECRET_KEY="test-secret-key-123",
-        LAKEFS_ENDPOINT="http://localhost:8000",
-        LAKEFS_ACCESS_KEY_ID="lakefs_key",
-        LAKEFS_SECRET_ACCESS_KEY="lakefs_secret",
-        ENVIRONMENT="production",
-    )
     with pytest.raises(ValueError, match="Production environment requires MINIO_ACCESS_KEY"):
-        _ = s_prod.minio_app_user
+        bad_user = dict(valid_prod_base)
+        bad_user["MINIO_SECRET_KEY"] = "custom_app_secret"
+        Settings(**bad_user)
 
     with pytest.raises(ValueError, match="Production environment requires MINIO_SECRET_KEY"):
-        _ = s_prod.minio_app_password
+        bad_secret = dict(valid_prod_base)
+        bad_secret["MINIO_ACCESS_KEY"] = "custom_app_key"
+        Settings(**bad_secret)
 
 
 # ---------------------------------------------------------------------------

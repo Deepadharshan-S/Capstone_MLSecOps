@@ -66,9 +66,10 @@ export default function DatasetDetail() {
   // dataset registered with a non-"main" default branch used to show an empty
   // history because this was hardcoded. Refetches once the value lands.
   const defaultBranch = dbMeta.default_branch || 'main'
+  const activeCommitBranch = commitBranch || defaultBranch
   const commits = useFetch(
-    () => datasetsApi.commits(name, defaultBranch, 100),
-    [name, defaultBranch],
+    () => datasetsApi.commits(name, activeCommitBranch, 100),
+    [name, activeCommitBranch],
   )
 
   const branchList = norm(branches.data, 'branches')
@@ -110,7 +111,7 @@ export default function DatasetDetail() {
       <div className="stat-grid">
         <StatCard icon={GitBranch} tone="accent" value={branchList.length} label="Branches" sub={defaultBranch} />
         <StatCard icon={Tag} tone="info" value={tagList.length} label="Tags" sub="named refs" />
-        <StatCard icon={GitCommitHorizontal} tone="purple" value={commitList.length} label="Commits" sub="on default ref" />
+        <StatCard icon={GitCommitHorizontal} tone="purple" value={commitList.length} label="Commits" sub={`on ${activeCommitBranch}`} />
         <StatCard icon={Layers} tone="success" value={meta.data?.dataset_name ? 'lakeFS' : '—'} label="Backend" sub="object storage" />
       </div>
 
@@ -649,7 +650,7 @@ function CommitsTab({
       <Panel
         icon={GitCommitHorizontal}
         title="History"
-        subtitle={`${commits.length} commits`}
+        subtitle={`${commits.length} commits on ${effectiveBranch}`}
         actions={<Button variant="ghost" size="sm" icon={RefreshCw} onClick={onRefresh}>Refresh</Button>}
         bodyClass={commits.length ? 'tight' : ''}
       >
