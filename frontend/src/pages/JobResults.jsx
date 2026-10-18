@@ -176,7 +176,7 @@ function MetricTiles({ results }) {
    JobResults — metrics, curves, matrix, importance.
    Used by Pipeline (live) and Jobs (historical).
    ══════════════════════════════════════════════════════ */
-export default function JobResults({ results, isTraining = false, progress = 0 }) {
+export default function JobResults({ results, isTraining = false, progress = 0, jobId }) {
   if (isTraining) {
     return (
       <Panel icon={Activity} title="Metrics" subtitle="Waiting for the run to produce metrics">
