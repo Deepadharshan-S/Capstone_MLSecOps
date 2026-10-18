@@ -431,5 +431,3 @@ export default function JobResults({ results, isTraining = false, progress = 0 }
   )
 }
 
-/* ── Job detail summary used by Jobs drawer ─────────
-   Moved to ./JobPanels.jsx — see the note there.                       */
