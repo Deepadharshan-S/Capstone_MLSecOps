@@ -64,7 +64,7 @@ export default function EventsTab({ refreshToken = 0 }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SearchInput value={query} onChange={setQuery} placeholder="Search events…" />
-          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={events.refetch} loading={events.loading}>
+          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={events.refresh} loading={events.loading}>
             Refresh
           </Button>
         </div>
@@ -83,7 +83,7 @@ export default function EventsTab({ refreshToken = 0 }) {
         {events.loading && !events.data ? (
           <LoadingState label="Loading events…" />
         ) : events.error && !events.data ? (
-          <ErrorState error={events.error} title="Could not load events" onRetry={events.refetch} />
+          <ErrorState error={events.error} title="Could not load events" onRetry={events.refresh} />
         ) : (
           <DataTable
             caption="Normalized security events, newest first"

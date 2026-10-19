@@ -5,7 +5,8 @@ from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency, fisher_exact, ks_2samp
+
+from app.services.drift import stats as drift_stats
 
 logger = logging.getLogger("dataset.poisoning_detector")
 
@@ -392,30 +393,11 @@ class StatisticalPoisoningDetector:
         """
         Computes Population Stability Index (PSI) between baseline and candidate feature distributions.
         PSI >= 0.25 indicates significant distribution drift.
+
+        Delegates to the shared drift statistics module so poisoning detection
+        and drift detection cannot disagree about the same numbers.
         """
-        clean_base = baseline.dropna()
-        clean_cand = candidate.dropna()
-        if len(clean_base) == 0 or len(clean_cand) == 0:
-            return 0.0
-
-        # Create quantiles on baseline
-        quantiles = np.linspace(0, 1, bins + 1)
-        bin_edges = np.percentile(clean_base, quantiles * 100)
-        bin_edges = np.unique(bin_edges)
-        if len(bin_edges) < 2:
-            return 0.0
-
-        bin_edges[0] = -np.inf
-        bin_edges[-1] = np.inf
-
-        base_counts = pd.cut(clean_base, bins=bin_edges).value_counts(sort=False)
-        cand_counts = pd.cut(clean_cand, bins=bin_edges).value_counts(sort=False)
-
-        base_pct = (base_counts / len(clean_base)).replace(0, eps)
-        cand_pct = (cand_counts / len(clean_cand)).replace(0, eps)
-
-        psi_val = np.sum((cand_pct - base_pct) * np.log(cand_pct / base_pct))
-        return float(psi_val)
+        return drift_stats.compute_psi(baseline, candidate, bins=bins, eps=eps)
 
     def evaluate_continuous_features(
         self,
@@ -449,15 +431,13 @@ class StatisticalPoisoningDetector:
             b_vals = pd.to_numeric(baseline_df[col], errors="coerce").dropna()
             c_vals = pd.to_numeric(candidate_df[col], errors="coerce").dropna()
 
-            if len(b_vals) < 5 or len(c_vals) < 5:
+            ks = drift_stats.ks_two_sample(b_vals, c_vals)
+            if ks is None:
                 # Sample size too small for reliable KS test
                 continue
+            stat_d, p_val = ks
 
-            ks_res = ks_2samp(b_vals, c_vals)
-            stat_d = float(ks_res.statistic)
-            p_val = float(ks_res.pvalue)
-
-            psi_val = self.compute_psi(b_vals, c_vals)
+            psi_val = drift_stats.compute_psi(b_vals, c_vals)
 
             # Flag if p-value passes Bonferroni threshold AND effect size D exceeds threshold
             if p_val < alpha_adj and stat_d >= d_thresh:
@@ -510,65 +490,26 @@ class StatisticalPoisoningDetector:
         alpha_val = alpha if alpha is not None else self.chi2_alpha
         violations: list[ValidationViolation] = []
 
-        b_clean = baseline_labels.dropna()
-        c_clean = candidate_labels.dropna()
-
-        if len(b_clean) < 5 or len(c_clean) < 5:
+        result = drift_stats.categorical_contingency(
+            baseline_labels, candidate_labels, alpha=alpha_val
+        )
+        if result is None:
             return violations
 
-        all_classes = np.union1d(b_clean.unique(), c_clean.unique())
-        if len(all_classes) < 2:
-            return violations
-
-        b_counts = b_clean.value_counts().reindex(all_classes, fill_value=0).values
-        c_counts = c_clean.value_counts().reindex(all_classes, fill_value=0).values
-
-        contingency = np.array([b_counts, c_counts])
-
-        try:
-            stat, p_val, dof, expected = chi2_contingency(contingency)
-            # Check Cochran's rule: sparse counts on binary vs multiclass
-            if len(all_classes) == 2 and np.any(expected < 5):
-                _, p_val = fisher_exact(contingency)
-                stat = float("nan")
-                test_type = "fisher_exact"
-            elif len(all_classes) > 2 and np.any(expected < 5):
-                # STAT-01: Monte Carlo permutation test for sparse multiclass contingency tables
-                combined_labels = np.concatenate([b_clean.values, c_clean.values])
-                n_b = len(b_clean)
-                observed_stat = float(stat)
-                rng = np.random.default_rng(seed=42)
-                num_perms = 1000
-                count_extreme = 0
-                for _ in range(num_perms):
-                    perm = rng.permutation(combined_labels)
-                    p_b_counts = pd.Series(perm[:n_b]).value_counts().reindex(all_classes, fill_value=0).values
-                    p_c_counts = pd.Series(perm[n_b:]).value_counts().reindex(all_classes, fill_value=0).values
-                    p_contingency = np.array([p_b_counts, p_c_counts])
-                    p_stat, _, _, _ = chi2_contingency(p_contingency)
-                    if p_stat >= observed_stat:
-                        count_extreme += 1
-                p_val = float((count_extreme + 1) / (num_perms + 1))
-                test_type = "chi2_contingency_monte_carlo"
-            else:
-                test_type = "chi2_contingency"
-
-            if p_val < alpha_val:
-                violations.append(
-                    ValidationViolation(
-                        feature=target_name,
-                        test_type=test_type,
-                        statistic=float(stat) if not np.isnan(stat) else 0.0,
-                        p_value=float(p_val),
-                        threshold=alpha_val,
-                        message=(
-                            f"Target label '{target_name}' distribution shifted significantly "
-                            f"({test_type} p={p_val:.2e} < {alpha_val:.2e})."
-                        ),
-                    )
+        if result["significant"]:
+            violations.append(
+                ValidationViolation(
+                    feature=target_name,
+                    test_type=result["test_type"],
+                    statistic=result["statistic"],
+                    p_value=result["p_value"],
+                    threshold=alpha_val,
+                    message=(
+                        f"Target label '{target_name}' distribution shifted significantly "
+                        f"({result['test_type']} p={result['p_value']:.2e} < {alpha_val:.2e})."
+                    ),
                 )
-        except Exception as e:
-            logger.warning(f"Error computing chi-square test on target '{target_name}': {e}")
+            )
 
         return violations
 

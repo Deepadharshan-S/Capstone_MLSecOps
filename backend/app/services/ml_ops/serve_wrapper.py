@@ -89,6 +89,47 @@ class ModelServingDeployment:
             "timestamp": time.time(),
         }
 
+    def _predict_probabilities(self, df) -> list | None:
+        """
+        Probability vectors for the batch, or None when unavailable.
+
+        `mlflow.pyfunc.load_model` returns a PyFuncModel, which deliberately
+        exposes only `predict` — there is no `predict_proba` on its public API.
+        So the raw estimator is reached through the logging wrapper instead:
+        `_model_impl.python_model` is the `ModelWrapper` defined in
+        ray_wrapper, whose `.model` is the original sklearn object.
+
+        Every access path is attempted in turn and any failure degrades to
+        None rather than failing the request: probabilities are telemetry, and
+        a model that cannot supply them must still serve predictions. Callers
+        record `has_probabilities` so the absence is explicit downstream.
+        """
+        if self.model is None:
+            return None
+
+        candidates = [
+            # Some flavours proxy predict_proba directly onto PyFuncModel.
+            lambda m: m.predict_proba(df),
+            # Our ModelWrapper.predict_proba (models logged after this change).
+            lambda m: m._model_impl.python_model.predict_proba(None, df),
+            # The raw estimator inside ModelWrapper — works for models logged
+            # before this change, so no re-registration is required.
+            lambda m: m._model_impl.python_model.model.predict_proba(df),
+        ]
+
+        for attempt in candidates:
+            try:
+                proba = attempt(self.model)
+            except Exception:
+                continue
+            if proba is None:
+                continue
+            if hasattr(proba, "tolist"):
+                proba = proba.tolist()
+            return proba
+
+        return None
+
     async def _perform_inference(self, request: Request) -> dict:
         """Executes model inference without exposing sensitive payloads or headers."""
         if self.model is None:
@@ -127,7 +168,15 @@ class ModelServingDeployment:
             elif hasattr(preds, "to_dict"):
                 preds = preds.to_dict()
 
-            return {"predictions": preds, "status": "success"}
+            # Best-effort: a model without predict_proba still serves, it just
+            # reports no confidence.
+            probabilities = self._predict_probabilities(df)
+
+            return {
+                "predictions": preds,
+                "probabilities": probabilities,
+                "status": "success",
+            }
         except HTTPException:
             raise
         except Exception as pred_err:

@@ -16,6 +16,8 @@ from app.models.threat_hunting import (
     InferenceRateRecord,
 )
 
+from app.models.drift import InferenceRecord, ModelBaseline
+
 __all__ = [
     "User",
     "RefreshToken",
@@ -31,5 +33,7 @@ __all__ = [
     "AlertHistory",
     "HuntJob",
     "InferenceRateRecord",
+    "InferenceRecord",
+    "ModelBaseline",
 ]
 

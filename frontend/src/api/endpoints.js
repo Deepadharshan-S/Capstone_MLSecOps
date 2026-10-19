@@ -258,3 +258,56 @@ export const threatHuntingApi = {
   getHunt: (huntId) => api.get(`/hunts/${enc(huntId)}`),
   getHuntResults: (huntId) => api.get(`/hunts/${enc(huntId)}/results`),
 }
+
+// Mirrors backend/app/api/drift.py — label-free drift detection (D1 data,
+// D2 prediction, D3 confidence). Findings are stored as alerts with
+// detection_source="drift_engine", so they share the alert lifecycle rather
+// than living in a separate store. D4/D5 are absent by design: they need
+// ground-truth outcomes, which the backend does not collect.
+export const driftApi = {
+  // GET /drift/config — thresholds + window sizes the UI explains against
+  config: () => api.get('/drift/config'),
+
+  // GET /drift/findings — filters: detection_type, model_name, severity, status
+  listFindings: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.detection_type) qs.set('detection_type', params.detection_type)
+    if (params.model_name) qs.set('model_name', params.model_name)
+    if (params.severity) qs.set('severity', params.severity)
+    if (params.status) qs.set('status', params.status)
+    qs.set('limit', Math.min(Number(params.limit) || 25, 200))
+    qs.set('offset', Number(params.offset) || 0)
+    return api.get(`/drift/findings?${qs}`)
+  },
+
+  // GET /drift/baselines · GET /drift/baselines/detail
+  listBaselines: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.model_name) qs.set('model_name', params.model_name)
+    if (params.model_version) qs.set('model_version', params.model_version)
+    if (params.status) qs.set('status', params.status)
+    qs.set('limit', Math.min(Number(params.limit) || 50, 200))
+    qs.set('offset', Number(params.offset) || 0)
+    return api.get(`/drift/baselines?${qs}`)
+  },
+  getBaselineDetail: (modelName, modelVersion) => {
+    const qs = new URLSearchParams({ model_name: modelName })
+    if (modelVersion) qs.set('model_version', modelVersion)
+    return api.get(`/drift/baselines/detail?${qs}`)
+  },
+  // POST /drift/baselines — computes reference stats from the training dataset
+  createBaseline: (body) => api.post('/drift/baselines', body),
+
+  // POST /drift/check — run D1/D2/D3 now; publish=false previews without alerting
+  runCheck: (body) => api.post('/drift/check', body),
+
+  // GET /drift/telemetry — raw per-request rows the detectors measure against
+  listTelemetry: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.model_name) qs.set('model_name', params.model_name)
+    if (params.model_version) qs.set('model_version', params.model_version)
+    qs.set('limit', Math.min(Number(params.limit) || 25, 200))
+    qs.set('offset', Number(params.offset) || 0)
+    return api.get(`/drift/telemetry?${qs}`)
+  },
+}

@@ -37,6 +37,37 @@ class Settings(BaseSettings):
     INFERENCE_BURST_WINDOW_SECONDS: int = 60
     INFERENCE_BURST_THRESHOLD: int = 50
 
+    # ── Drift Detection ──────────────────────────────────────────────
+    # D1/D2/D3 are label-free: they compare incoming inference traffic
+    # against a stored per-model baseline. D4 (performance) and D5 (concept
+    # drift) need ground-truth outcomes and are intentionally not wired up.
+    DRIFT_DETECTOR_ENABLED: bool = True
+    DRIFT_SWEEP_INTERVAL_SECONDS: int = 300
+    # Per-request telemetry retention. Rows older than this are pruned by the
+    # drift worker so the raw-per-request table cannot grow without bound.
+    DRIFT_TELEMETRY_RETENTION_DAYS: int = 30
+    # KS is meaningless on a handful of rows; stay silent until a window has
+    # enough observations to carry a p-value.
+    DRIFT_MIN_OBSERVATIONS: int = 50
+    DRIFT_OBSERVATION_WINDOW_SECONDS: int = 3600
+    # Statistical gates, mirroring the poisoning detector so the two
+    # subsystems agree on what "significant" means.
+    DRIFT_KS_ALPHA: float = 0.01
+    DRIFT_KS_D_THRESHOLD: float = 0.15
+    DRIFT_CHI2_ALPHA: float = 0.01
+    DRIFT_PSI_THRESHOLD: float = 0.25
+    DRIFT_JSD_THRESHOLD: float = 0.10
+    # Bound what a single inference record may store for its feature payload.
+    DRIFT_MAX_FEATURE_COLUMNS: int = 60
+    DRIFT_MAX_FEATURE_ROWS: int = 20
+    # A bounded reservoir of raw reference values per numeric feature, kept so
+    # the KS test and PSI have a real sample to compare against. Without it a
+    # baseline could only support histogram comparison, not a two-sample test.
+    DRIFT_BASELINE_SAMPLE_SIZE: int = 5000
+    # Categorical distributions with an observed shift this large in relative
+    # share are reported alongside the significance tests.
+    DRIFT_MISSING_RATE_DELTA: float = 0.10
+
     # OpenTelemetry Observability Configuration
     OTEL_ENABLED: bool = False
     OTEL_SERVICE_NAME: str = "sentinelml-backend"

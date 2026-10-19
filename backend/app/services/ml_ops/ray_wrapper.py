@@ -20,6 +20,23 @@ class ModelWrapper(mlflow.pyfunc.PythonModel):
             return self.model.predict(model_input)
         return self.model
 
+    def predict_proba(self, context, model_input):
+        """
+        Probability vector for each row, when the wrapped estimator supports it.
+
+        Exposed so the serving layer can return confidence scores alongside
+        class labels. Without this, confidence drift has only labels to work
+        from — and a binary label is always either 0 or 1, which reads as
+        perfect confidence every time. Classifiers without `predict_proba`
+        (SVM without probability=True, most regressors) simply raise and the
+        caller degrades to label-only telemetry.
+        """
+        if hasattr(self.model, "predict_proba"):
+            return self.model.predict_proba(model_input)
+        raise AttributeError(
+            f"{type(self.model).__name__} does not implement predict_proba"
+        )
+
 
 def get_repo_name(name: str) -> str:
     """Sanitizes a dataset name to make it a valid lakeFS repository name."""

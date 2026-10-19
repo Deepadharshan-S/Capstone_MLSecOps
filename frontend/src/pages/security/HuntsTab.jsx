@@ -224,13 +224,13 @@ export default function HuntsTab({ refreshToken = 0 }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <HuntForm onCreated={hunts.refetch} />
+      <HuntForm onCreated={hunts.refresh} />
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <span className="muted">
           {items.length} hunt{items.length === 1 ? '' : 's'} · newest first
         </span>
-        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={hunts.refetch} loading={hunts.loading}>
+        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={hunts.refresh} loading={hunts.loading}>
           Refresh
         </Button>
       </div>
@@ -244,7 +244,7 @@ export default function HuntsTab({ refreshToken = 0 }) {
         {hunts.loading && !hunts.data ? (
           <LoadingState label="Loading hunts…" />
         ) : hunts.error && !hunts.data ? (
-          <ErrorState error={hunts.error} title="Could not load hunts" onRetry={hunts.refetch} />
+          <ErrorState error={hunts.error} title="Could not load hunts" onRetry={hunts.refresh} />
         ) : (
           <DataTable
             caption="Threat hunt jobs"

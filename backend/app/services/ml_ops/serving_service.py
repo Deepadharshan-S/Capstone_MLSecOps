@@ -345,6 +345,7 @@ class ModelServingService:
         unique_endpoints = list(dict.fromkeys(endpoints))
 
         preds = None
+        probabilities = None
         last_err = None
         infer_successful = False
 
@@ -356,6 +357,9 @@ class ModelServingService:
                     if resp.status_code == 200:
                         res_obj = resp.json()
                         preds = res_obj.get("predictions", [])
+                        # Optional: models whose serving contract cannot supply
+                        # probabilities return null here, recorded as such.
+                        probabilities = res_obj.get("probabilities")
                         infer_successful = True
                         break
                     elif resp.status_code == 400:
@@ -392,16 +396,21 @@ class ModelServingService:
         record_inference_duration(latency_s)
 
         # 3b. Decision-Boundary Scraping & Behavioral Drift Monitoring
+        # Real probabilities take precedence over class labels: a label of 0 or
+        # 1 reads as perfect confidence, which made these detectors silent on
+        # every binary model. Labels are only used as a last resort.
         if preds is not None:
             inference_rate_detector.record_and_check_decision_boundary(
                 actor_id=user.username,
                 resource_id=str(matched_model),
                 predictions=preds,
+                probabilities=probabilities,
             )
             # Model Behavioral Drift (Abrupt Confidence Degradation - AML.T0024 / AML.T0040)
             inference_rate_detector.record_and_check_confidence_drift(
                 resource_id=str(matched_model),
                 predictions=preds,
+                probabilities=probabilities,
             )
 
         # 3c. Algorithmic DoS / Latency Spike Anomaly Detector (AML.T0029)
@@ -409,6 +418,29 @@ class ModelServingService:
             resource_id=str(matched_model),
             latency_ms=latency_ms,
         )
+
+        # 3d. Persist raw per-request telemetry — the substrate every label-free
+        # drift detector (D1/D2/D3) measures against. Non-fatal by design.
+        try:
+            from app.db.session import SessionLocal
+            from app.services.drift.telemetry import record_inference
+
+            with SessionLocal() as telemetry_db:
+                record_inference(
+                    db=telemetry_db,
+                    model_name=matched_model,
+                    model_version=str(resolved_version),
+                    deployment_id=matched_dep_id,
+                    rayservice_name=matched_raysvc,
+                    request_id=getattr(user, "username", None),
+                    client_ip=getattr(user, "username", None),
+                    predictions=preds,
+                    probabilities=probabilities,
+                    df=df,
+                    latency_ms=latency_ms,
+                )
+        except Exception as tel_err:
+            logger.debug(f"Non-fatal drift telemetry notice: {tel_err}")
 
         # 4. Security Audit Log
         log_audit_event(

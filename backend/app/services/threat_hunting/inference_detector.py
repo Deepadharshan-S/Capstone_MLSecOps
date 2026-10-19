@@ -205,20 +205,30 @@ class InferenceRateDetector:
         predictions: Any,
         client_ip: Optional[str] = None,
         db: Optional[Session] = None,
+        probabilities: Optional[Any] = None,
     ) -> bool:
         """
         Decision-Boundary Scraping Detector (MITRE ATLAS AML.T0024).
         Tracks prediction probability confidence margins. If a client's queries heavily cluster
         near the classification decision threshold (0.48 <= P(y=1) <= 0.52), triggers an alert.
+
+        `probabilities` is the real probability channel from the serving
+        contract. When present it takes priority: class labels 0/1 satisfy the
+        range check below but never land in [0.48, 0.52], so reading labels as
+        scores left this detector permanently silent on binary models.
         """
+        source = probabilities if probabilities else predictions
         probs: List[float] = []
 
-        if isinstance(predictions, list):
-            for item in predictions:
-                if isinstance(item, (int, float)) and 0.0 <= item <= 1.0:
+        if isinstance(source, list):
+            for item in source:
+                if isinstance(item, (int, float)) and not isinstance(item, bool) and 0.0 <= item <= 1.0:
                     probs.append(float(item))
                 elif isinstance(item, list) and len(item) >= 2:
-                    p1 = float(item[1])
+                    try:
+                        p1 = float(item[1])
+                    except (TypeError, ValueError):
+                        continue
                     if 0.0 <= p1 <= 1.0:
                         probs.append(p1)
                 elif isinstance(item, dict):
@@ -331,19 +341,28 @@ class InferenceRateDetector:
         predictions: List[Any],
         client_ip: Optional[str] = None,
         db: Optional[Session] = None,
+        probabilities: Optional[List[Any]] = None,
     ) -> bool:
         """
         Model Behavioral Drift Detector (MITRE ATLAS AML.T0024 / AML.T0040).
         Extracts prediction confidence scores and detects abrupt collapse in confidence distributions.
         A sudden drop in mean confidence (e.g. mean confidence <= 0.60 across a 10-sample window)
         signals clean-label data poisoning, severe data drift, or adversarial evasion querying.
+
+        `probabilities` is the real probability channel from the serving
+        contract. When present it is used instead of `predictions`, because a
+        bare class label of 0 or 1 passes the [0, 1] range check below and maps
+        to perfect confidence every time — which made this detector silent on
+        every binary model. `predictions` still carries scores for callers that
+        only have them there.
         """
-        if not predictions:
+        source = probabilities if probabilities else predictions
+        if not source:
             return False
 
         extracted_confidences = []
-        for p in predictions:
-            if isinstance(p, (float, int)):
+        for p in source:
+            if isinstance(p, (float, int)) and not isinstance(p, bool):
                 val = float(p)
                 if 0.0 <= val <= 1.0:
                     extracted_confidences.append(max(val, 1.0 - val))

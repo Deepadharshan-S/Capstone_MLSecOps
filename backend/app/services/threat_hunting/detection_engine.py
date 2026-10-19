@@ -31,6 +31,10 @@ class DetectionResult:
     actor_id: Optional[str]
     resource_id: Optional[str]
     supporting_evidence: dict[str, Any]
+    # Which subsystem produced this. The rule engine is the default; drift
+    # findings set "drift_engine" so they stay filterable apart from rule hits
+    # even though they share the same alert lifecycle and dedup machinery.
+    detection_source: str = "rule_engine"
 
 
 class DetectionEngine:

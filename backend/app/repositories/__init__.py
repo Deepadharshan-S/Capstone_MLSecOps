@@ -5,6 +5,8 @@ from app.repositories.token_repository import RefreshTokenRepository, Blackliste
 from app.repositories.training_job_repository import TrainingJobRepository
 from app.repositories.deployment_repository import DeploymentRepository
 from app.repositories.audit_log_repository import AuditLogRepository
+from app.repositories.inference_repository import InferenceRepository
+from app.repositories.baseline_repository import BaselineRepository
 
 __all__ = [
     "BaseRepository",
@@ -15,4 +17,6 @@ __all__ = [
     "TrainingJobRepository",
     "DeploymentRepository",
     "AuditLogRepository",
+    "InferenceRepository",
+    "BaselineRepository",
 ]

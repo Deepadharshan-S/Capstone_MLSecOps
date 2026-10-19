@@ -102,7 +102,7 @@ class AlertService:
             description=detection.description,
             severity=detection.severity,
             status="OPEN",
-            detection_source="rule_engine",
+            detection_source=detection.detection_source,
             rule_id=detection.rule_id,
             rule_version=detection.rule_version,
             mitre_attack_id=detection.mitre_attack_id,

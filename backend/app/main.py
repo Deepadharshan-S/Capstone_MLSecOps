@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.mlflow_loader import warm_mlflow
 from app.db.session import get_db, engine
-from app.api import auth, users, ml_ops, datasets, threat_hunting, webhooks
+from app.api import auth, users, ml_ops, datasets, threat_hunting, webhooks, drift
 from app.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from app.services.interfaces import VersionControlService, ObjectStorageService
 from app.services.dependencies import (
@@ -97,10 +97,37 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Started threat detection worker background task.")
 
+    # 4. Start the drift sweep worker (D1/D2/D3 — label-free detectors)
+    drift_task = None
+    if settings.DRIFT_DETECTOR_ENABLED:
+        from app.services.drift.worker import drift_worker_loop
+
+        drift_task = asyncio.create_task(
+            drift_worker_loop(),
+            name="sentinelml_drift_worker",
+        )
+        logger.info(
+            "Started drift detection worker background task "
+            f"(interval={settings.DRIFT_SWEEP_INTERVAL_SECONDS}s, "
+            f"window={settings.DRIFT_OBSERVATION_WINDOW_SECONDS}s, "
+            f"min_samples={settings.DRIFT_MIN_OBSERVATIONS})."
+        )
+
     try:
         yield
     finally:
-        # 4. Stop background tasks
+        # 5. Stop background tasks
+        if drift_task is not None:
+            logger.info("Stopping drift worker background task...")
+            drift_task.cancel()
+            try:
+                await drift_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Error while stopping drift worker: {e}")
+            logger.info("Drift worker background task stopped.")
+
         if detection_task is not None:
             logger.info("Stopping threat detection worker background task...")
             detection_task.cancel()
@@ -213,6 +240,7 @@ app.include_router(users.router, prefix="/api")
 app.include_router(ml_ops.router, prefix="/api")
 app.include_router(datasets.router, prefix="/api")
 app.include_router(threat_hunting.router, prefix="/api")
+app.include_router(drift.router, prefix="/api")
 app.include_router(webhooks.router, prefix="/api")
 
 

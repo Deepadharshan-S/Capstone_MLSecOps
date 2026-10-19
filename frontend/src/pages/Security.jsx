@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import {
   PageHeader, Tabs, LoadingState, Badge, Button,
 } from '../components/ui/index.jsx'
-import { Shield, Bell, Database, SlidersHorizontal, Target, RefreshCw } from '../components/icons.jsx'
+import { Shield, Bell, Database, SlidersHorizontal, Target, RefreshCw, LineChart } from '../components/icons.jsx'
 
 // Tab panels are code-split like routes — the alerts feed is the landing
 // tab, the heavier rule editor / hunt forms only load when opened.
@@ -10,12 +10,14 @@ const AlertsTab = lazy(() => import('./security/AlertsTab.jsx'))
 const EventsTab = lazy(() => import('./security/EventsTab.jsx'))
 const RulesTab = lazy(() => import('./security/RulesTab.jsx'))
 const HuntsTab = lazy(() => import('./security/HuntsTab.jsx'))
+const DriftTab = lazy(() => import('./security/DriftTab.jsx'))
 
 const TABS = [
   { id: 'alerts', label: 'Alerts', icon: Bell },
   { id: 'events', label: 'Security events', icon: Database },
   { id: 'rules', label: 'Detection rules', icon: SlidersHorizontal },
   { id: 'hunts', label: 'Threat hunts', icon: Target },
+  { id: 'drift', label: 'Drift', icon: LineChart },
 ]
 
 export default function Security() {
@@ -51,6 +53,7 @@ export default function Security() {
         {tab === 'events' && <EventsTab refreshToken={refreshToken} />}
         {tab === 'rules' && <RulesTab refreshToken={refreshToken} />}
         {tab === 'hunts' && <HuntsTab refreshToken={refreshToken} />}
+        {tab === 'drift' && <DriftTab refreshToken={refreshToken} />}
       </Suspense>
     </div>
   )

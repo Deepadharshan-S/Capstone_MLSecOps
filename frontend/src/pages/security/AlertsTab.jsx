@@ -469,7 +469,7 @@ export default function AlertsTab({ refreshToken = 0 }) {
         {alerts.loading && !alerts.data ? (
           <LoadingState label="Loading alerts…" />
         ) : alerts.error && !alerts.data ? (
-          <ErrorState error={alerts.error} title="Could not load alerts" onRetry={alerts.refetch} />
+          <ErrorState error={alerts.error} title="Could not load alerts" onRetry={alerts.refresh} />
         ) : (
           <DataTable
             caption="Security alerts, newest first"
