@@ -130,6 +130,11 @@ function Stepper({ step, maxReached, onJump, state }) {
 /* ══════════════════════════════════════════════════════
    Step 0 — Dataset
    ══════════════════════════════════════════════════════ */
+// The picker renders one long list; 8 rows keeps the panel roughly the
+// height of the upload dropzone beside it instead of pushing the wizard
+// controls off-screen.
+const DS_PAGE_SIZE = 8
+
 function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded, canUpload }) {
   const toast = useToast()
   const fileRef = useRef(null)
@@ -137,11 +142,20 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
   const [uploading, setUploading] = useState(false)
   const [uploadErr, setUploadErr] = useState(null)
   const [filter, setFilter] = useState('')
+  const [page, setPage] = useState(0)
 
   const visible = useMemo(
     () => datasets.filter((d) => (d.name || '').toLowerCase().includes(filter.toLowerCase())),
     [datasets, filter],
   )
+
+  // Page math. effPage is clamped rather than trusted: the filter reset below
+  // handles the common case, but the datasets prop can also shrink underneath
+  // us (an upload replacing the list), which would otherwise strand the view
+  // on a page that no longer exists.
+  const pageCount = Math.max(1, Math.ceil(visible.length / DS_PAGE_SIZE))
+  const effPage = Math.min(page, pageCount - 1)
+  const pageRows = visible.slice(effPage * DS_PAGE_SIZE, (effPage + 1) * DS_PAGE_SIZE)
 
   async function uploadFile(file) {
     if (!file) return
@@ -218,8 +232,10 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
       <Panel
         icon={Database}
         title="Or pick an existing dataset"
-        subtitle={`${datasets.length} dataset${datasets.length === 1 ? '' : 's'} available`}
-        actions={<TextInput placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 200 }} />}
+        subtitle={filter
+          ? `${visible.length} of ${datasets.length} dataset${datasets.length === 1 ? '' : 's'} match`
+          : `${datasets.length} dataset${datasets.length === 1 ? '' : 's'} available`}
+        actions={<TextInput placeholder="Filter…" value={filter} onChange={(e) => { setFilter(e.target.value); setPage(0) }} style={{ width: 200 }} />}
         bodyClass={visible.length ? 'tight-padded' : ''}
       >
         {visible.length === 0 ? (
@@ -231,7 +247,7 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
         ) : (
           <div>
             <div className="row-list">
-              {visible.map((d) => {
+              {pageRows.map((d) => {
                 const isSel = selected?.name === d.name
                 return (
                   <button
@@ -260,6 +276,36 @@ function DatasetStep({ datasets, loading, error, selected, onSelect, onUploaded,
                   </button>
                 )
               })}
+            </div>
+            {/* Same footer classes DataTable uses, so paging looks identical
+                everywhere. The selection lives in the parent, so a chosen
+                dataset stays chosen even when it's on another page. */}
+            <div className="table-footer">
+              <span>
+                {visible.length
+                  ? `${effPage * DS_PAGE_SIZE + 1}–${Math.min((effPage + 1) * DS_PAGE_SIZE, visible.length)} of ${visible.length}`
+                  : '0 results'}
+              </span>
+              {pageCount > 1 && (
+                <div className="pagination">
+                  <button className="page-btn" disabled={effPage === 0} onClick={() => setPage(effPage - 1)} aria-label="Previous page">
+                    <ChevronLeft size={14} />
+                  </button>
+                  {Array.from({ length: pageCount }, (_, i) => i)
+                    .filter((i) => i === 0 || i === pageCount - 1 || Math.abs(i - effPage) <= 1)
+                    .map((i, idx, arr) => (
+                      <span key={i} className="flex items-center gap-1">
+                        {idx > 0 && arr[idx - 1] !== i - 1 && <span className="muted" style={{ padding: '0 2px' }}>…</span>}
+                        <button className={`page-btn ${i === effPage ? 'is-active' : ''}`} onClick={() => setPage(i)}>
+                          {i + 1}
+                        </button>
+                      </span>
+                    ))}
+                  <button className="page-btn" disabled={effPage >= pageCount - 1} onClick={() => setPage(effPage + 1)} aria-label="Next page">
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -742,7 +788,10 @@ export default function Pipeline() {
     setDsLoading(true)
     setDsError(null)
     try {
-      const data = await datasetsApi.list()
+      // The backend defaults to limit=100, which would silently truncate the
+      // picker (and now hide it behind pagination), so ask for the full
+      // catalog explicitly.
+      const data = await datasetsApi.list(500)
       const list = Array.isArray(data) ? data : data?.datasets || []
       setDatasets(list)
       return list

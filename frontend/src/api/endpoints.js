@@ -115,7 +115,16 @@ export const datasetsApi = {
   /* ── Catalog ────────────────────────────────────── */
   // POST /datasets (register + upload) · GET /datasets · DELETE /datasets/{name}
   register: (formData) => api.upload('/datasets', formData),
-  list: () => api.get('/datasets'),
+  // GET /datasets — limit/offset mirror the backend's paging params
+  // (api/datasets.py caps limit at 1000). Callers that want the whole
+  // catalog pass a limit; the no-arg form keeps the server default.
+  list: (limit, offset) => {
+    const s = new URLSearchParams()
+    if (limit) s.set('limit', String(limit))
+    if (offset) s.set('offset', String(offset))
+    const qs = s.toString()
+    return api.get(`/datasets${qs ? `?${qs}` : ''}`)
+  },
   remove: (name) => api.del(`/datasets/${enc(name)}`),
 
   /* ── Metadata ───────────────────────────────────── */
