@@ -15,7 +15,7 @@ import {
 const EVENT_POLL_MS = 30000
 const LOAD_WINDOW = 200 // newest N events; backend max is 500
 
-export default function EventsTab() {
+export default function EventsTab({ refreshToken = 0 }) {
   const [sourceFilter, setSourceFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -23,7 +23,8 @@ export default function EventsTab() {
   const debounced = useDebounced(query, 200)
 
   // `deps` refetches the moment a filter changes rather than leaving the
-  // previous result on screen until the next 30s tick.
+  // previous result on screen until the next 30s tick. `refreshToken` comes
+  // from the page header's Refresh button and does the same thing on demand.
   const events = usePolling(
     () => threatHuntingApi.listSecurityEvents({
       source: sourceFilter || undefined,
@@ -31,7 +32,7 @@ export default function EventsTab() {
       limit: LOAD_WINDOW,
     }),
     EVENT_POLL_MS,
-    { immediate: true, deps: [sourceFilter, severityFilter] },
+    { immediate: true, deps: [sourceFilter, severityFilter, refreshToken] },
   )
 
   const items = events.data?.items || []

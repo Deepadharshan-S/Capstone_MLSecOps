@@ -328,7 +328,7 @@ function AlertDrawer({ alertId, onClose, onChanged }) {
 }
 
 /* ── Main alerts tab ─────────────────────────────────────────────────── */
-export default function AlertsTab() {
+export default function AlertsTab({ refreshToken = 0 }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -347,7 +347,7 @@ export default function AlertsTab() {
       limit: 200,
     }),
     ALERT_POLL_MS,
-    { immediate: true, deps: [statusFilter, severityFilter] },
+    { immediate: true, deps: [statusFilter, severityFilter, refreshToken] },
   )
 
   // Exact counts from the server (limit=1 requests that only read `total`).
@@ -359,7 +359,7 @@ export default function AlertsTab() {
       threatHuntingApi.listAlerts({ status: 'OPEN', severity: 'HIGH', limit: 1 }),
     ])
     return { total: total.total, open: open.total, critOpen: critOpen.total, highOpen: highOpen.total }
-  }, ALERT_POLL_MS, { immediate: true })
+  }, ALERT_POLL_MS, { immediate: true, deps: [refreshToken] })
 
   const items = alerts.data?.items || []
   const filtered = debounced

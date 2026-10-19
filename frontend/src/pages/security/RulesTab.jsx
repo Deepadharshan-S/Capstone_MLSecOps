@@ -349,12 +349,12 @@ function TestModal({ rule, onClose }) {
 }
 
 /* ── Main rules tab ──────────────────────────────────────────────────── */
-export default function RulesTab() {
+export default function RulesTab({ refreshToken = 0 }) {
   const { hasPermission } = useAuth()
   const toast = useToast()
   const canManage = hasPermission('rules:manage')
 
-  const rules = useFetch(() => threatHuntingApi.listRules(), [])
+  const rules = useFetch(() => threatHuntingApi.listRules(), [refreshToken])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null) // rule being edited, or null = create
   const [testing, setTesting] = useState(null)
@@ -404,7 +404,9 @@ export default function RulesTab() {
         subtitle="Deterministic threshold rules — no arbitrary expressions"
         bodyClass={items.length ? 'tight' : ''}
       >
-        {rules.loading ? (
+        {/* `&& !rules.data` matches the other tabs: a refresh keeps the rows
+            on screen instead of swapping them for a skeleton. */}
+        {rules.loading && !rules.data ? (
           <LoadingState label="Loading rules…" />
         ) : rules.error ? (
           <ErrorState error={rules.error} title="Could not load rules" onRetry={rules.refetch} />

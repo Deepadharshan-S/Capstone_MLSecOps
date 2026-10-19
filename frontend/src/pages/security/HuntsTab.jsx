@@ -211,13 +211,13 @@ function HuntResultsDrawer({ hunt, onClose }) {
   )
 }
 
-export default function HuntsTab() {
+export default function HuntsTab({ refreshToken = 0 }) {
   const [selected, setSelected] = useState(null)
 
   const hunts = usePolling(
     () => threatHuntingApi.listHunts({ limit: 100 }),
     HUNT_POLL_MS,
-    { immediate: true },
+    { immediate: true, deps: [refreshToken] },
   )
 
   const items = hunts.data?.items || []
