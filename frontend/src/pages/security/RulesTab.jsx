@@ -349,12 +349,14 @@ function TestModal({ rule, onClose }) {
 }
 
 /* ── Main rules tab ──────────────────────────────────────────────────── */
-export default function RulesTab({ refreshToken = 0 }) {
+export default function RulesTab() {
   const { hasPermission } = useAuth()
   const toast = useToast()
   const canManage = hasPermission('rules:manage')
 
-  const rules = useFetch(() => threatHuntingApi.listRules(), [refreshToken])
+  // Rules change only when someone edits them, so this is a one-shot fetch
+  // with a manual Refresh — unlike the other tabs, nothing polls here.
+  const rules = useFetch(() => threatHuntingApi.listRules(), [])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null) // rule being edited, or null = create
   const [testing, setTesting] = useState(null)

@@ -7,7 +7,7 @@ import {
   LoadingState, ErrorState, Field, TextInput, KeyValue, useToast,
 } from '../../components/ui/index.jsx'
 import {
-  Target, RefreshCw, Inbox, Play, Eye,
+  Target, Inbox, Play, Eye,
 } from '../../components/icons.jsx'
 import {
   severityTone, ALL_SEVERITIES, fmtTime, relTime, localInputToIso, defaultHuntWindow,
@@ -211,13 +211,13 @@ function HuntResultsDrawer({ hunt, onClose }) {
   )
 }
 
-export default function HuntsTab({ refreshToken = 0 }) {
+export default function HuntsTab() {
   const [selected, setSelected] = useState(null)
 
   const hunts = usePolling(
     () => threatHuntingApi.listHunts({ limit: 100 }),
     HUNT_POLL_MS,
-    { immediate: true, deps: [refreshToken] },
+    { immediate: true },
   )
 
   const items = hunts.data?.items || []
@@ -226,14 +226,9 @@ export default function HuntsTab({ refreshToken = 0 }) {
     <div className="flex flex-col gap-4">
       <HuntForm onCreated={hunts.refresh} />
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <span className="muted">
-          {items.length} hunt{items.length === 1 ? '' : 's'} · newest first
-        </span>
-        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={hunts.refresh} loading={hunts.loading}>
-          Refresh
-        </Button>
-      </div>
+      <span className="muted">
+        {items.length} hunt{items.length === 1 ? '' : 's'} · newest first
+      </span>
 
       <Panel
         icon={Target}

@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { threatHuntingApi } from '../../api/endpoints.js'
 import { usePolling, useDebounced } from '../../hooks/useFetch.js'
 import {
-  Panel, Button, DataTable, Drawer, Badge, EmptyState, LoadingState,
+  Panel, DataTable, Drawer, Badge, EmptyState, LoadingState,
   ErrorState, SearchInput, Select, KeyValue, TextInput,
 } from '../../components/ui/index.jsx'
 import {
-  Database, RefreshCw, Inbox,
+  Database, Inbox,
 } from '../../components/icons.jsx'
 import {
   severityTone, ALL_SEVERITIES, fmtTime, relTime, fmtValue,
@@ -15,7 +15,7 @@ import {
 const EVENT_POLL_MS = 30000
 const LOAD_WINDOW = 200 // newest N events; backend max is 500
 
-export default function EventsTab({ refreshToken = 0 }) {
+export default function EventsTab() {
   const [sourceFilter, setSourceFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -23,8 +23,7 @@ export default function EventsTab({ refreshToken = 0 }) {
   const debounced = useDebounced(query, 200)
 
   // `deps` refetches the moment a filter changes rather than leaving the
-  // previous result on screen until the next 30s tick. `refreshToken` comes
-  // from the page header's Refresh button and does the same thing on demand.
+  // previous result on screen until the next 30s tick.
   const events = usePolling(
     () => threatHuntingApi.listSecurityEvents({
       source: sourceFilter || undefined,
@@ -32,7 +31,7 @@ export default function EventsTab({ refreshToken = 0 }) {
       limit: LOAD_WINDOW,
     }),
     EVENT_POLL_MS,
-    { immediate: true, deps: [sourceFilter, severityFilter, refreshToken] },
+    { immediate: true, deps: [sourceFilter, severityFilter] },
   )
 
   const items = events.data?.items || []
@@ -62,12 +61,7 @@ export default function EventsTab({ refreshToken = 0 }) {
             onChange={(e) => setSourceFilter(e.target.value)}
           />
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <SearchInput value={query} onChange={setQuery} placeholder="Search events…" />
-          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={events.refresh} loading={events.loading}>
-            Refresh
-          </Button>
-        </div>
+        <SearchInput value={query} onChange={setQuery} placeholder="Search events…" />
       </div>
 
       <Panel

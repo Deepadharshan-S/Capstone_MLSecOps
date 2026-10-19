@@ -328,7 +328,7 @@ function AlertDrawer({ alertId, onClose, onChanged }) {
 }
 
 /* ── Main alerts tab ─────────────────────────────────────────────────── */
-export default function AlertsTab({ refreshToken = 0 }) {
+export default function AlertsTab() {
   const [statusFilter, setStatusFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -339,7 +339,7 @@ export default function AlertsTab({ refreshToken = 0 }) {
   // surface in the UI as the backend detection worker generates them.
   // `deps` makes the feed refetch the moment a filter changes — otherwise the
   // new closure is only picked up on the next 20s tick, and switching
-  // severity/status looked like it needed a manual Refresh.
+  // severity/status looks like a stall.
   const alerts = usePolling(
     () => threatHuntingApi.listAlerts({
       status: statusFilter || undefined,
@@ -347,7 +347,7 @@ export default function AlertsTab({ refreshToken = 0 }) {
       limit: 200,
     }),
     ALERT_POLL_MS,
-    { immediate: true, deps: [statusFilter, severityFilter, refreshToken] },
+    { immediate: true, deps: [statusFilter, severityFilter] },
   )
 
   // Exact counts from the server (limit=1 requests that only read `total`).
@@ -359,7 +359,7 @@ export default function AlertsTab({ refreshToken = 0 }) {
       threatHuntingApi.listAlerts({ status: 'OPEN', severity: 'HIGH', limit: 1 }),
     ])
     return { total: total.total, open: open.total, critOpen: critOpen.total, highOpen: highOpen.total }
-  }, ALERT_POLL_MS, { immediate: true, deps: [refreshToken] })
+  }, ALERT_POLL_MS, { immediate: true })
 
   const items = alerts.data?.items || []
   const filtered = debounced
@@ -446,13 +446,6 @@ export default function AlertsTab({ refreshToken = 0 }) {
             {ALL_SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
           </Select>
           <SearchInput value={query} onChange={setQuery} placeholder="Search alerts…" />
-          <Button
-            variant="secondary" size="sm" icon={RefreshCw}
-            onClick={() => { alerts.refresh(); stats.refresh() }}
-            loading={alerts.loading}
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 

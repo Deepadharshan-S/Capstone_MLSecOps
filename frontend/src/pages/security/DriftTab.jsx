@@ -7,7 +7,7 @@ import {
   Alert, useToast,
 } from '../../components/ui/index.jsx'
 import {
-  LineChart, RefreshCw, Inbox, FlaskConical, Gauge, Activity, Plus, Play,
+  LineChart, Inbox, FlaskConical, Gauge, Activity, Plus, Play,
 } from '../../components/icons.jsx'
 import {
   severityTone, ALL_SEVERITIES, fmtTime, relTime, fmtValue,
@@ -35,13 +35,13 @@ const VIEWS = [
   { value: 'telemetry', label: 'Telemetry' },
 ]
 
-export default function DriftTab({ refreshToken = 0 }) {
+export default function DriftTab() {
   const [view, setView] = useState('findings')
   const toast = useToast()
 
   // Detector configuration, fetched once — the UI quotes these numbers when
   // explaining why a check was skipped ("only 12 observations; at least 50").
-  const config = useFetch(() => driftApi.config(), [refreshToken])
+  const config = useFetch(() => driftApi.config())
 
   const [checkOpen, setCheckOpen] = useState(false)
 
@@ -54,21 +54,12 @@ export default function DriftTab({ refreshToken = 0 }) {
           <Button size="sm" icon={Play} onClick={() => setCheckOpen(true)}>
             Run drift check
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={RefreshCw}
-            onClick={config.refetch}
-            loading={config.loading}
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 
-      {view === 'findings' && <FindingsView refreshToken={refreshToken} config={config.data} />}
-      {view === 'baselines' && <BaselinesView refreshToken={refreshToken} />}
-      {view === 'telemetry' && <TelemetryView refreshToken={refreshToken} />}
+      {view === 'findings' && <FindingsView />}
+      {view === 'baselines' && <BaselinesView />}
+      {view === 'telemetry' && <TelemetryView />}
 
       <CheckModal
         open={checkOpen}
@@ -104,7 +95,7 @@ function ConfigChips({ config }) {
 /* ══════════════════════════════════════════════════════
    Findings
    ══════════════════════════════════════════════════════ */
-function FindingsView({ refreshToken }) {
+function FindingsView() {
   const [typeFilter, setTypeFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const [modelFilter, setModelFilter] = useState('')
@@ -119,7 +110,7 @@ function FindingsView({ refreshToken }) {
       limit: 100,
     }),
     FINDING_POLL_MS,
-    { immediate: true, deps: [typeFilter, severityFilter, modelFilter, refreshToken] },
+    { immediate: true, deps: [typeFilter, severityFilter, modelFilter] },
   )
 
   const items = findings.data?.items || []
@@ -368,7 +359,7 @@ function FeatureBlock({ feature, detail }) {
 /* ══════════════════════════════════════════════════════
    Baselines
    ══════════════════════════════════════════════════════ */
-function BaselinesView({ refreshToken }) {
+function BaselinesView() {
   const toast = useToast()
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(null)
@@ -377,7 +368,7 @@ function BaselinesView({ refreshToken }) {
   const baselines = usePolling(
     () => driftApi.listBaselines({ limit: 100 }),
     FINDING_POLL_MS,
-    { immediate: true, deps: [refreshToken] },
+    { immediate: true },
   )
 
   const items = baselines.data?.items || []
@@ -543,13 +534,13 @@ function BaselineDrawer({ baseline, onClose }) {
 /* ══════════════════════════════════════════════════════
    Telemetry
    ══════════════════════════════════════════════════════ */
-function TelemetryView({ refreshToken }) {
+function TelemetryView() {
   const [modelFilter, setModelFilter] = useState('')
 
   const telemetry = usePolling(
     () => driftApi.listTelemetry({ model_name: modelFilter || undefined, limit: 50 }),
     FINDING_POLL_MS,
-    { immediate: true, deps: [modelFilter, refreshToken] },
+    { immediate: true, deps: [modelFilter] },
   )
 
   const items = telemetry.data?.items || []
