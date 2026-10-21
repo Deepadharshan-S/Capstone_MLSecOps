@@ -9,166 +9,226 @@
 [![Falco eBPF](https://img.shields.io/badge/Falco-eBPF_Kernel-00AEC7.svg)](https://falco.org/)
 [![MITRE ATLAS](https://img.shields.io/badge/Compliance-MITRE_ATLAS-FF6F00.svg)](https://atlas.mitre.org/)
 
-**SentinelML** is an enterprise-grade MLSecOps platform that unifies **machine learning operational agility** with **zero-trust security enforcement**. It secures the complete machine learning lifecycle—from raw dataset ingestion and distributed training to live Kubernetes inference serving—protecting AI assets against supply chain poisoning, deserialization exploits, runtime container escapes, and model theft.
+**SentinelML** is an enterprise-grade MLSecOps platform that unifies **machine learning operational agility** with **zero-trust security enforcement**. Developed as a cybersecurity capstone, it secures the complete machine learning lifecycle—from raw dataset ingestion and distributed training to live Kubernetes inference serving—protecting AI assets against supply chain poisoning, deserialization exploits, runtime container escapes, adversarial evasion, and model theft.
 
 ---
 
-## Architecture Overview
+## 1. Problem Statement & Motivation
+
+Modern artificial intelligence and machine learning pipelines face unique, high-consequence security threats across every lifecycle phase:
+
+1. **Supply Chain Compromise & Unsafe Deserialization**: Arbitrary code execution payloads embedded inside serialized pickle models (`.pkl`, `.joblib`) can compromise worker environments at load time.
+2. **Dataset Poisoning & Label Manipulation**: Adversaries manipulate training batches to degrade accuracy or insert backdoor triggers.
+3. **Storage Tampering**: Bypassing version control via direct object store mutations alters datasets out-of-band.
+4. **Inference Attacks & Model Stealing**: Malicious clients query prediction endpoints to reverse-engineer proprietary models (black-box stealing) or extract private training data (model inversion).
+5. **Runtime Container Escapes**: Compromised model serving pods can spawn interactive shells or exfiltrate cluster secrets.
+6. **Data & Prediction Drift**: In-flight distribution shifts degrade model fidelity without immediate warning.
+
+SentinelML addresses these challenges by embedding continuous verification, cryptographic provenance, pre-merge gatekeepers, and runtime SIEM event correlation directly into MLOps workflows.
+
+---
+
+## 2. V1 Scope vs. Future Roadmap
+
+SentinelML V1 provides an end-to-end, tested, and deployable MLSecOps platform.
+
+### V1 Scope (Implemented & Verified)
+- [x] **Zero-Trust Model Governance**: Static pickle AST disassembly, opcode inspection, automated quarantine of malicious payloads, and enforcement of safe formats (**Safetensors**, **ONNX**).
+- [x] **Cryptographic Provenance**: HMAC-SHA256 and Cosign/Sigstore attestation signing for approved models.
+- [x] **Dataset Versioning & Poisoning Defense**: lakeFS Git-for-Data branch workflows with pre-merge statistical validation gates (KS test with Bonferroni correction, Chi-square, PSI).
+- [x] **Direct Storage Bypass Detection**: MinIO S3 bucket notification webhooks flagging unversioned out-of-band storage mutations.
+- [x] **Distributed Training**: KubeRay RayJob CRD manifest generation, multi-candidate tournaments (Logistic Regression, Random Forest, XGBoost, LightGBM), and local Ray execution fallback.
+- [x] **Inference Serving & Real-Time Defense**: RayService rolling deployments, memory flooding DoS shields, decision-boundary scraping detectors, feature perturbation analysis, and adversarial FGSM/PGD noise detection.
+- [x] **Label-Free Drift Engine**: Automated baseline tracking and detection for **D1 Feature Drift**, **D2 Prediction Drift**, and **D3 Confidence Collapse**.
+- [x] **Threat Hunting SIEM**: Background correlation engine evaluating 23 built-in detection rules against MITRE ATT&CK / ATLAS frameworks with evidence generation.
+- [x] **Runtime Security**: Falco eBPF kernel event ingestion and rogue RayService pod detection.
+- [x] **Authentication & RBAC**: JWT access/refresh token rotation, token revocation blacklisting, password complexity rules, and 4 provisioned roles (`admin`, `data_scientist`, `ml_engineer`, `viewer`).
+- [x] **Full-Stack Observability**: OpenTelemetry distributed tracing and metrics exported to OTel Collector, Prometheus, Tempo, and Grafana.
+
+### V2 Scope (Planned for Future Releases)
+- [ ] **Continuous Training (CT)**: Automated retraining triggers and end-to-end pipeline re-execution upon verified drift thresholds.
+- [ ] **Automatic Production Promotion**: Zero-touch promotion of retrained models based on automated validation tournament scoring.
+- [ ] **Outcome-Dependent Drift (D4/D5)**: Performance degradation (D4) and true concept drift (D5) monitoring (requires delayed ground-truth label ingestion).
+- [ ] **Native OTel Log Export to Loki**: Direct streaming of FastAPI application logs via OTel Collector to Grafana Loki.
+
+---
+
+## 3. Architecture Overview
+
+### System Component Diagram
 
 ```
-                                      SENTINELML ARCHITECTURE
+                                      SENTINELML V1 ARCHITECTURE
  ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
  │                                   REACT 18 SECURITY DASHBOARD                                    │
  │       Datasets • Model Registry • Distributed Training • Deployments • Threat Hunting (SIEM)     │
  └────────────────────────────────┬─────────────────────────────────────────────────────────────────┘
-                                  │ REST / JSON (JWT RBAC)
+                                  │ HTTP / JSON (JWT RBAC) [Port :5173 -> :8001]
  ┌────────────────────────────────▼─────────────────────────────────────────────────────────────────┐
- │                                    FASTAPI BACKEND GATEWAY                                       │
+ │                                    FASTAPI BACKEND GATEWAY (:8001)                               │
  │  ┌───────────────────────┬───────────────────────┬───────────────────────┬────────────────────┐  │
  │  │ Model Governance Gate │ Data Poisoning Shield │ Inference Rate & DoS  │ SIEM Threat Engine │  │
- │  │ Safe Format / Cosign  │ LakeFS Pre-Merge Gate │ Sliding Window & Drift│ 23 Detection Rules │  │
+ │  │ Safe Format / Cosign  │ lakeFS Pre-Merge Gate │ Sliding Window & Drift│ 23 Detection Rules │  │
  │  └───────────────────────┴───────────────────────┴───────────────────────┴────────────────────┘  │
  └───────┬──────────────────────────┬──────────────────────────┬─────────────────────────────┬──────┘
          │                          │                          │                             │
  ┌───────▼────────┐         ┌───────▼────────┐         ┌───────▼────────┐            ┌───────▼──────┐
- │  lakeFS / S3   │         │ MLflow / MinIO │         │ KubeRay Server │            │  Falco eBPF  │
- │ Git-for-Data   │         │ Signed Models  │         │ RayJob / Serve │            │ Kernel Probe │
- │ Data Poisoning │         │ Attestation    │         │ Microservices  │            │ Container RCE│
+ │  lakeFS (:8000)│         │ MLflow (:5000) │         │ KubeRay Server │            │  Falco eBPF  │
+ │ Git-for-Data   │         │ MinIO (:9000)  │         │ RayJob / Serve │            │ Kernel Probe │
+ │ Pre-Merge Gate │         │ Signed Models  │         │ Microservices  │            │ Container RCE│
  └────────────────┘         └────────────────┘         └────────────────┘            └──────────────┘
 ```
 
----
+### Complete Service Interaction Flow
 
-## Core Capabilities & Security Pillars
+```mermaid
+graph TD
+    Client[React Dashboard :5173] -->|HTTP / JWT| Backend[FastAPI Backend :8001]
+    
+    subgraph Data & Storage Layer
+        Backend -->|PostgreSQL Wire| DB[(PostgreSQL :5432)]
+        Backend -->|S3 REST API| MinIO[(MinIO S3 :9000)]
+        Backend -->|lakeFS SDK| LakeFS[lakeFS Git-for-Data :8000]
+        LakeFS -->|Blockstore IO| MinIO
+        LakeFS -->|Pre-merge Webhook| Backend
+        MinIO -->|Mutation Webhook| Backend
+    end
+    
+    subgraph Machine Learning Lifecycle
+        Backend -->|MLflow Client| MLflow[MLflow Server :5000]
+        MLflow -->|Artifact Storage| MinIO
+        Backend -->|K8s CRD Client| KubeRay[Ray / KubeRay Controller]
+        KubeRay -->|RayJob Execution| RayCluster[Ray Worker Pods]
+        KubeRay -->|RayService Deployment| RayServe[RayServe Model Endpoints]
+        Backend -->|Inference Forwarding| RayServe
+    end
 
-### 1. Model Supply Chain & Provenance Governance
-* **Zero-Trust Format Enforcement:** Blocks legacy executable pickle formats (`.pkl`, `.joblib`) from entering staging and production pipelines, enforcing tamper-resistant tensor formats (**Safetensors** and **ONNX**).
-* **Static AST Opcode Scanner:** Disassembles candidate pickle bytecodes using `pickletools` to identify and reject dangerous functions (`os.system`, `subprocess.Popen`, `posix`, `socket`) before storage.
-* **Cryptographic Attestation & Signatures:** Signs approved model versions with HMAC-SHA256 and Cosign/Sigstore provenance digests. Unsigned or tampered artifacts are rejected at deployment.
-* **Continuous Digest Integrity:** Computes SHA-256 digests in real time and verifies them against the registered manifest, catching "man-in-the-storage" tampering.
-* **Neural Backdoor & Trojan Scanner:** Scans model weight matrices for extreme outlier activations ($Z\text{-score} > 5.0$) characteristic of injected trojan trigger neurons (BadNets).
+    subgraph Security & Runtime Monitoring
+        Falco[Falco eBPF Engine] -->|Runtime Alert Webhook| Backend
+        Backend -->|Background Detection Worker| DB
+    end
 
-### 2. Dataset Versioning & In-Flight Storage Security
-* **LakeFS Git-for-Data Version Control:** Immutable, branch-based dataset versioning with atomic commits, branch rollbacks, and reproducible lineage.
-* **Statistical Data Poisoning Pre-Merge Gate:** LakeFS pre-merge action calculates class distributions and Kolmogorov-Smirnov statistics. If class balances deviate drastically ($> 25\%$ label flip), the merge to `main` is blocked.
-* **Direct MinIO Storage Bypass Detection:** Webhook listeners capture direct S3 mutations in underlying MinIO buckets that bypass LakeFS version control.
-* **Tabular Schema Injection Shield:** Detects duplicate header collisions (`Label` vs `label`), target column manipulation, and injected privilege columns (`admin`, `override`).
-
-### 3. Distributed Compute & Pipeline Training
-* **KubeRay RayJob Orchestration:** Automatically renders Kubernetes RayJob CRD manifests with isolated, short-lived scoped credentials and executes distributed training.
-* **Multi-Model Candidate Search:** Concurrently trains and cross-evaluates multiple algorithms (**Logistic Regression, Random Forest, XGBoost, LightGBM**), automatically registering the top-performing candidate as the champion.
-* **Local Ray Execution Fallback:** Built-in sandboxed local fallback for resource-constrained development environments without Kubernetes.
-
-### 4. Real-Time Inference Serving & API Threat Defense
-* **RayServe Serving Microservices:** Manages live model serving using RayService CRDs with zero-downtime rolling updates.
-* **Algorithmic Memory Flooding DoS Shield:** Flags batch matrices exceeding $100,000$ cells to prevent Ray worker Out-Of-Memory (OOM) crashes.
-* **Decision Boundary Scraping (Model Inversion):** Detects actors probing predictions near decision thresholds ($0.48 \le P \le 0.52$) to reverse-engineer private training data (MITRE ATLAS `AML.T0024`).
-* **Black-Box Model Stealing Protection:** Identifies systematic single-feature stepping ($L_0 = 1$) queries used to estimate numerical gradients (MITRE ATLAS `AML.T0040`).
-* **Behavioral Confidence Collapse Monitoring:** Real-time sliding window detector tracks mean confidence scores; drops to $\le 60\%$ trigger drift alerts.
-* **Adversarial Noise Detection:** Flags high-frequency perturbations characteristic of Fast Gradient Sign Method (FGSM) or Projected Gradient Descent (PGD) evasion attacks.
-
-### 5. Container Runtime Security & eBPF Telemetry
-* **Falco eBPF Kernel Webhooks:** Ingests Linux kernel system call telemetry to catch interactive shells (`bash`, `sh`) or network exfiltration utilities (`curl`, `nc`) spawned inside model serving pods.
-* **Rogue RayServe Deployment Reconciler:** Scans the cluster for unmanaged RayService pods that bypass SentinelML governance approval.
-
-### 6. Full-Stack Observability
-* **Distributed Tracing:** Automated OpenTelemetry instrumentation spanning HTTP requests, database transactions, and ML training spans.
-* **Metrics & Dashboards:** Pre-configured Prometheus scrapers, Grafana dashboards, Loki log aggregators, and Tempo distributed trace visualizers.
-
----
-
-## Technology Stack
-
-| Layer | Technologies |
-| :--- | :--- |
-| **Backend & API** | FastAPI, Python 3.12, SQLAlchemy 2.0, Pydantic v2, Uvicorn |
-| **Frontend** | React 18, Vite, Vanilla CSS Design System, Lucide React, Recharts |
-| **Data & Storage** | PostgreSQL 16, MinIO S3 Object Storage, LakeFS (Git-for-Data) |
-| **Machine Learning** | MLflow 2.x / 3.x, Ray / KubeRay, Scikit-learn, XGBoost, LightGBM, ONNX, Safetensors |
-| **Security & eBPF** | Falco eBPF, Cosign / HMAC Cryptographic Attestation, Pickle AST Disassembler |
-| **Observability** | OpenTelemetry, Prometheus, Grafana, Loki, Tempo |
-
----
-
-## Project Structure
-
+    subgraph Observability Stack
+        Backend -->|OTLP / HTTP :4318| OTelCol[OTel Collector]
+        OTelCol -->|OTLP gRPC| Tempo[Grafana Tempo :3200]
+        OTelCol -->|Scrape :8889| Prometheus[Prometheus :9090]
+        Grafana[Grafana Dashboards :3000] -->|Queries| Prometheus
+        Grafana -->|Queries| Tempo
+    end
 ```
+
+---
+
+## 4. Technology Stack
+
+| Domain | Technologies | Purpose |
+| :--- | :--- | :--- |
+| **Backend Core** | Python 3.12, FastAPI 0.115, Uvicorn, Pydantic v2 | High-performance asynchronous API gateway |
+| **Database & Persistence** | PostgreSQL 16, SQLAlchemy 2.0, Alembic | Relational state, users, alerts, jobs, baselines |
+| **Data Versioning** | lakeFS, lakeFS SDK | Immutable branching, commits, and rollback for data |
+| **Object Storage** | MinIO (S3 Compatible) | S3 blockstore for lakeFS and MLflow artifacts |
+| **Machine Learning** | MLflow 3.x, Scikit-learn, XGBoost, LightGBM | Experiment tracking, model registry, training |
+| **Distributed Compute** | Ray 2.57, KubeRay, Kubernetes Python Client | Distributed RayJobs and auto-scaling RayServices |
+| **Serialization Security** | ONNX, Safetensors, `pickletools` AST Scanner | Safe tensor formats and malicious opcode blocking |
+| **Runtime Security** | Falco eBPF, HMAC-SHA256, Cosign / Sigstore | Kernel syscall monitoring, cryptographic signing |
+| **Frontend** | React 18, Vite, Vanilla CSS Design System, Recharts | Real-time operations console & SIEM dashboard |
+| **Observability** | OpenTelemetry, Prometheus, Tempo, Loki, Grafana | Distributed tracing, metrics, and visualization |
+
+---
+
+## 5. Repository Structure
+
+```text
 Capstone_MLSecOps/
-├── backend/
+├── backend/                          # FastAPI backend application
 │   ├── alembic/                      # Database migrations (PostgreSQL)
-│   ├── app/
-│   │   ├── api/                      # REST endpoints (auth, models, datasets, alerts, webhooks)
-│   │   ├── core/                     # Configuration, security, logging, OpenTelemetry telemetry
+│   ├── alembic.ini                   # Alembic environment configuration
+│   ├── app/                          # Core application package
+│   │   ├── api/                      # REST endpoints (auth, models, datasets, drift, alerts)
+│   │   ├── core/                     # Configuration, security, logging, OpenTelemetry
 │   │   ├── db/                       # Database session, base models, seed scripts
 │   │   ├── models/                   # SQLAlchemy ORM schemas
 │   │   ├── repositories/             # Data access repository layer
-│   │   ├── schemas/                  # Pydantic request/response validation
-│   │   ├── services/
-│   │   │   ├── auth/                 # RBAC, password hashing, JWT token lifecycle
-│   │   │   ├── dataset/              # LakeFS SDK, catalog, statistical poisoning tests
-│   │   │   ├── ml_ops/               # Model registry, RayJobs, RayService deployment governance
-│   │   │   └── threat_hunting/       # Detection engine, inference monitor, storage detector
+│   │   ├── schemas/                  # Pydantic request/response validation schemas
+│   │   ├── services/                 # Business logic and external service integrations
 │   │   └── templates/                # RayJob & RayService Kubernetes YAML templates
-│   ├── tests/                        # Comprehensive PyTest test suite (unit, integration, security)
-│   └── run.sh                        # Automated backend startup script with database wait & migrations
-├── frontend/
-│   ├── src/
-│   │   ├── components/               # UI components, Layout, Navigation, Error Boundary
-│   │   ├── pages/                    # Dashboard, Datasets, Models, Pipeline, Deployments, Alerts
-│   │   └── services/                 # Axios API clients
-│   ├── package.json
-│   └── vite.config.js
+│   ├── README.md                     # Dedicated backend architecture and setup guide
+│   ├── run.sh                        # Automated backend startup script (Linux/macOS)
+│   ├── run.ps1                       # Automated backend startup script (Windows)
+│   └── tests/                        # Comprehensive automated test suite (350+ tests)
+├── frontend/                         # React 18 / Vite single-page application
+│   ├── src/                          # Application source code
+│   │   ├── api/                      # Axios API clients
+│   │   ├── auth/                     # AuthContext, RoleGate, token handling
+│   │   ├── components/               # UI components, layout, icons
+│   │   ├── pages/                    # Code-split dashboard pages
+│   │   └── shell/                    # Navigation, sidebar, user menu
+│   ├── package.json                  # Frontend dependencies
+│   ├── README.md                     # Dedicated frontend guide
+│   └── vite.config.js                # Vite build and proxy configuration
+├── k8s/                              # Kubernetes manifests
+│   └── rayjob-network-policy.yaml    # Network isolation policy for training pods
+├── observability/                    # Observability infrastructure configuration
+│   ├── grafana/                      # Provisioned Grafana datasources and dashboards
+│   ├── loki/                         # Loki log aggregator configuration
+│   ├── otel-collector/               # OpenTelemetry Collector Contrib pipeline config
+│   ├── prometheus/                   # Prometheus scrape configurations
+│   ├── tempo/                        # Grafana Tempo trace storage configuration
+│   ├── verify_phase5_e2e.py          # OTel telemetry validation script
+│   ├── verify_phase6a_e2e.py         # RayService distributed trace validation script
+│   └── README.md                     # Dedicated observability stack guide
 ├── docker-compose.yml                # Multi-service infrastructure orchestration
 ├── init-db.sql                       # Initial PostgreSQL database setup
-└── README.md
+├── pyproject.toml                    # Python project configuration (uv / pip)
+├── uv.lock                           # Locked Python dependencies
+└── README.md                         # Primary project documentation (this file)
 ```
 
 ---
 
-## Quickstart & Setup Guide
+## 6. Prerequisites & Setup Guide
 
 ### 1. Prerequisites
-* **Docker & Docker Compose** (v24.0+)
-* **Python 3.12+** and `uv` or `pip`
-* **Node.js 18+** and `npm`
+- **Operating System**: Linux, macOS, or Windows (WSL2 recommended)
+- **Container Runtime**: Docker Desktop or Docker Engine v24.0+ with Docker Compose
+- **Python**: Version 3.12+ (managed with `uv` or `python3.12-venv`)
+- **Node.js**: Version 18+ with `npm`
 
 ---
 
 ### 2. Configure Environment Variables
-Copy and inspect the environment configuration file:
+Copy the template configuration file:
 ```bash
-cp .env.example .env   # Or review existing .env in repository root
+cp .env.example .env
 ```
 
-Key environment configuration variables (configured in `.env`):
+Review the key settings in `.env`:
 ```ini
-# Application
-APP_NAME=SentinelML
-DEBUG=true
-PORT=8000
+# Core Application Ports
+# Note: Backend runs on 8001 to prevent collision with lakeFS on 8000.
+PORT=8001
+API_HOST=0.0.0.0
 
 # PostgreSQL
-DATABASE_URL=postgresql+psycopg://<db_user>:<db_password>@localhost:5432/<db_name>
+POSTGRES_USER=sentinelml
+POSTGRES_PASSWORD=sentinelml123
+POSTGRES_DB=sentinelml
+DATABASE_URL=postgresql+psycopg://sentinelml:sentinelml123@localhost:5432/sentinelml
 
-# MinIO S3 Storage
+# Storage & Services
 MINIO_ENDPOINT=http://localhost:9000
-MINIO_ROOT_USER=<minio_user>
-MINIO_ROOT_PASSWORD=<minio_password>
-
-# LakeFS Version Control
 LAKEFS_ENDPOINT=http://localhost:8000
-LAKEFS_ACCESS_KEY_ID=<lakefs_access_key>
-LAKEFS_SECRET_ACCESS_KEY=<lakefs_secret_key>
-
-# MLflow Tracking
+LAKEFS_WEBHOOK_URL="http://host.docker.internal:8001/api/webhooks/lakefs/data-validation"
 MLFLOW_TRACKING_URI=http://localhost:5000
-MLFLOW_S3_ENDPOINT_URL=http://localhost:9000
+
+# Security Keys
+SECRET_KEY="your-jwt-secret-key-change-this-in-production"
 ```
 
 ---
 
 ### 3. Start Infrastructure Services
-Launch PostgreSQL, MinIO, LakeFS, MLflow, and the Observability stack:
+Start PostgreSQL, MinIO, lakeFS, MLflow, and the Observability stack:
 ```bash
 docker compose up -d
 ```
@@ -181,97 +241,140 @@ docker compose ps
 ---
 
 ### 4. Start the Backend API Server
-The backend startup script automatically waits for PostgreSQL, applies Alembic migrations, seeds default users, and starts the Uvicorn server:
+The backend startup script automatically waits for PostgreSQL, applies Alembic migrations, seeds default users, and starts the Uvicorn server on port `8001`:
+
 ```bash
 cd backend
 ./run.sh
 ```
-* Backend API documentation is live at **`http://localhost:8001/docs`**.
+
+*(On Windows PowerShell, use `.\run.ps1`)*
+
+* The Backend API Swagger documentation is live at **[http://localhost:8001/docs](http://localhost:8001/docs)**.
+* The Health endpoint is live at **[http://localhost:8001/health](http://localhost:8001/health)**.
 
 ---
 
-### 5. Start the Frontend Dashboard
-In a separate terminal, start the React dev server:
+### 5. Start the Frontend Security Dashboard
+In a separate terminal, install dependencies and launch the Vite development server:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-* Open your browser and navigate to **`http://localhost:5173`**.
+
+* The dashboard is live at **[http://localhost:5173](http://localhost:5173)**.
+* The development server proxies all `/api` and `/health` calls to `http://127.0.0.1:8001`.
 
 ---
 
-## Role-Based Access Control (RBAC) Accounts
+## 7. Role-Based Access Control (RBAC) Accounts
 
-SentinelML provisions role-based user accounts for role segregation:
+The database seed script (`backend/app/db/seed_db.py`) provisions accounts for role segregation:
 
-| Username | Default Role | Permissions & Scopes |
-| :--- | :--- | :--- |
-| **`admin_user`** | `admin` | Full administrative control, user management, rules, alerts |
-| **`ds_user`** | `data_scientist` | Dataset management, pipeline training, model uploads |
-| **`mle_user`** | `ml_engineer` | Model deployments, RayService management, inference |
-| **`viewer_user`** | `viewer` | Read-only inspection of models, metrics, and jobs |
+| Username | Default Role | Scopes & Permissions | Default Dev Password |
+| :--- | :--- | :--- | :--- |
+| **`admin_user`** | `admin` | Full system administration, user management, rule configuration, alert triage | `AdminPassword123!` |
+| **`ds_user`** | `data_scientist` | Dataset management, branch workflows, training tournaments, model uploads | `DataScientist123!` |
+| **`mle_user`** | `ml_engineer` | Model deployment management, RayService scaling, test inference queries | `MLEngineerPassword123!` |
+| **`viewer_user`** | `viewer` | Read-only inspection of models, metrics, runs, and job statuses | `ViewerPassword123!` |
 
-> [!NOTE]
-> Initial account passwords for local development are configured via `.env` / `SEED_ADMIN_PASSWORD` (see `backend/app/db/seed_db.py`). In production environments, credentials must be supplied via secure environment variables or an enterprise secret manager.
+> [!IMPORTANT]
+> The default development credentials above are intended for local development and demonstration only. In production deployments, specify `SEED_ADMIN_PASSWORD` in your secret manager to securely initialize the administrative user.
 
 ---
 
-## Threat Detection Matrix (MITRE ATLAS / ATT&CK)
+## 8. Threat Detection Matrix (MITRE ATT&CK / ATLAS)
 
-SentinelML's built-in Threat Hunting SIEM monitors 23 distinct detection rules:
+SentinelML's built-in SIEM evaluates **23 distinct detection rules** against real-time operational events:
 
-| Category | Rule / Trigger Name | Severity | MITRE ATLAS / ATT&CK |
+| Category | Rule / Trigger Name | Severity | MITRE Framework ID |
 | :--- | :--- | :---: | :--- |
-| **Model Governance** | Pickle Deserialization RCE Payload | `CRITICAL` | `AML.T0025` / `T1203` |
-| | Model Artifact Integrity SHA-256 Digest Mismatch | `CRITICAL` | `AML.T0010` / `T1584` |
-| | Neural Backdoor / Trojan Trigger in Weights | `CRITICAL` | `AML.T0018` / `T1584` |
-| | Legacy Pickle Serialization in Production | `HIGH` | `AML.T0025` / `T1203` |
-| | Unsigned / Invalidly Attested Model Promotion | `HIGH` | `AML.T0010` / `T1584` |
-| | Unregistered Shadow Model Artifact in S3 | `HIGH` | `AML.T0010` / `T1584` |
-| **Dataset & Storage** | Direct MinIO Storage Bypass (Unversioned Mutation) | `HIGH` | `AML.T0020` / `T1565.001` |
-| | Tabular Dataset Schema Injection Anomaly | `HIGH` | `AML.T0020` / `T1565.001` |
+| **Model Governance** | Pickle Deserialization RCE Payload Detected | `CRITICAL` | `AML.T0025` / `T1203` |
+| | Model Artifact Integrity Digest Mismatch (Tampering) | `CRITICAL` | `AML.T0010` / `T1584` |
+| | Hidden Backdoor or Trojan Trigger in Model Weights | `CRITICAL` | `AML.T0018` / `T1584` |
+| | Legacy Pickle Serialization Promoted to Production | `HIGH` | `AML.T0025` / `T1203` |
+| | Unsigned or Invalidly Attested Model Promoted to Production | `HIGH` | `AML.T0010` / `T1584` |
+| | Unregistered Shadow Model Artifact in S3 Storage | `HIGH` | `AML.T0010` / `T1584` |
+| **Dataset & Storage** | Direct MinIO Storage Bypass (Unversioned Storage Mutation) | `HIGH` | `AML.T0020` / `T1565.001` |
+| | Tabular Schema Injection Detection | `HIGH` | `AML.T0020` / `T1565.001` |
 | | Statistical Data Poisoning on Dataset Merge | `HIGH` | `AML.T0020` / `T1565.001` |
-| | Unauthorized Dataset Branch Mutation / Deletion | `HIGH` | `AML.T0031` / `T1485` |
-| **Inference Serving** | Algorithmic DoS: Tabular Memory Flooding | `HIGH` | `AML.T0029` / `T1499` |
-| | Decision Boundary Scraping (Model Inversion) | `HIGH` | `AML.T0024` |
-| | Systematic Feature Perturbation (Model Stealing) | `HIGH` | `AML.T0040` |
-| | Adversarial Perturbation (FGSM/PGD Noise) | `HIGH` | `AML.T0043` / `T1499` |
+| | Unauthorized Dataset Branch Mutation | `HIGH` | `AML.T0031` / `T1485` |
+| **Inference Defense** | Algorithmic Denial of Service (Tabular Memory Flooding) | `HIGH` | `AML.T0029` / `T1499` |
+| | Model Inversion & Decision-Boundary Scraping | `HIGH` | `AML.T0024` |
+| | Systematic Feature Perturbation (Black-box Extraction) | `HIGH` | `AML.T0040` |
+| | Adversarial Input Perturbation (FGSM/PGD Noise Detected) | `HIGH` | `AML.T0043` / `T1499` |
 | | Model Behavioral Drift: Abrupt Confidence Degradation | `HIGH` | `AML.T0024` |
-| | Algorithmic DoS: Latency Spike Anomaly | `HIGH` | `AML.T0029` / `T1499` |
-| | Anomalous Inference Rate Burst | `MEDIUM` | `AML.T0024` |
-| **Cluster & Runtime** | Unauthorized Container Process (Falco eBPF) | `CRITICAL` | `AML.T0038` / `T1059.004` |
-| | Unregistered Rogue RayServe Deployment | `CRITICAL` | `AML.T0038` / `T1584` |
+| | Algorithmic Denial of Service: Inference Latency Spike Anomaly | `HIGH` | `AML.T0029` / `T1499` |
+| | Anomalous Inference Request Rate (Model Inversion / Extraction) | `MEDIUM` | `AML.T0024` |
+| **Cluster & Runtime** | Container Runtime Unauthorized Process Execution (Falco eBPF) | `CRITICAL` | `AML.T0038` / `T1059.004` |
+| | Unregistered Rogue RayServe Deployment Detected (Direct Injection) | `CRITICAL` | `AML.T0038` / `T1584` |
 | | Unexpected RayJob Submission Spikes | `MEDIUM` | `AML.T0002` / `T1496` |
 | **Authentication** | Repeated Authentication Failures (Brute Force) | `HIGH` | `T1110.001` |
-| | Revoked Token Reuse Replay Attempt | `HIGH` | `T1550` |
-| | Excessive 401/403 Requests (Privilege Enumeration) | `MEDIUM` | `T1078` |
+| | Revoked Token Reuse Attempt | `HIGH` | `T1550` |
+| | Excessive Unauthorized Requests (Privilege Abuse / Enumeration) | `MEDIUM` | `T1078` |
 
 ---
 
-## Testing & Quality Assurance
+## 9. Drift Detection Engine (D1, D2, D3)
 
-SentinelML features an automated test suite covering unit tests, integration pipelines, and adversarial attack simulations:
+SentinelML implements an automated, label-free statistical drift detection engine designed to monitor active model serving traffic:
 
-### Backend Test Suite
+1. **D1: Feature Data Drift (`DataDriftDetector`)**:
+   - Compares incoming inference feature distributions against the registered training baseline.
+   - **Numerical Features**: Two-sample Kolmogorov-Smirnov (`ks_2samp`) with Bonferroni correction for family-wise error rate control ($p < \alpha / m$) alongside Population Stability Index (PSI).
+   - **Categorical Features**: Chi-squared goodness-of-fit test (`chisquare`) and category frequency shifts.
+2. **D2: Prediction Drift (`PredictionDriftDetector`)**:
+   - Detects shifts in model output distribution prior to ground-truth label availability.
+   - Evaluates discrete prediction frequencies using Chi-squared tests and PSI thresholds ($> 0.25$).
+3. **D3: Confidence Drift (`ConfidenceDriftDetector`)**:
+   - Monitors model certainty scores ($P(\hat{y})$) using Jensen-Shannon Divergence (JSD).
+   - Flags reference-relative collapse: alerts when observed median confidence ($p_{50}$) drops below baseline $p_{10}$ or when low-confidence samples ($P < 0.60$) spike abnormally.
+
+> [!NOTE]
+> Drift detection identifies statistical divergence in input and prediction distributions; it does not in itself prove malicious intent. Findings are saved as structured evidence and forwarded to the SIEM rule engine for correlation with authentication, inference rate, and storage telemetry.
+
+---
+
+## 10. Platform Endpoints & UI Discovery
+
+| Interface / Service | Host URL | Description |
+| :--- | :--- | :--- |
+| **SentinelML Dashboard** | [http://localhost:5173](http://localhost:5173) | Primary React security & operations console |
+| **FastAPI Swagger UI** | [http://localhost:8001/docs](http://localhost:8001/docs) | Interactive API exploration and OpenAPI schemas |
+| **FastAPI Health Check** | [http://localhost:8001/health](http://localhost:8001/health) | Subsystem connectivity status (DB, lakeFS, MinIO, MLflow) |
+| **Grafana Dashboards** | [http://localhost:3000](http://localhost:3000) | Full-stack telemetry visualizer (Prometheus & Tempo) |
+| **MLflow Registry** | [http://localhost:5000](http://localhost:5000) | Experiment runs, parameters, metrics, model artifacts |
+| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | S3 bucket browser and object storage administration |
+| **lakeFS Console** | [http://localhost:8000](http://localhost:8000) | Git-for-Data repository and branch visualization |
+| **Prometheus UI** | [http://localhost:9090](http://localhost:9090) | Direct Prometheus time-series metric queries |
+| **Tempo API** | [http://localhost:3200/ready](http://localhost:3200/ready) | Distributed trace query engine |
+
+---
+
+## 11. Testing & Quality Assurance
+
+SentinelML features an automated test suite spanning unit tests, integration pipelines, and adversarial attack simulations:
+
+### Run Backend Test Suite
 ```bash
-cd backend
-pytest -v
+# Run the complete test suite (350+ tests)
+uv run pytest --no-cov -q
+
+# Run specific subsystem tests
+uv run pytest tests/test_model_governance.py --no-cov -v
+uv run pytest tests/test_storage_tampering.py --no-cov -v
+uv run pytest tests/test_data_poisoning.py --no-cov -v
+uv run pytest tests/test_drift_detection.py --no-cov -v
+uv run pytest tests/test_threat_hunting.py --no-cov -v
+uv run pytest tests/test_rbac.py --no-cov -v
+
+# Run Python static checks
+uv run ruff check backend/app/
 ```
 
-Run specific security test suites:
-```bash
-# Model upload & safe serialization tests
-pytest tests/test_model_upload.py -v
-
-# Real-time inference security & scraping detector tests
-pytest tests/test_inference_security.py -v
-
-# LakeFS pre-merge poisoning & schema injection tests
-pytest tests/test_dataset_catalog.py -v
-```
-
-### Frontend Linting & Production Build
+### Run Frontend Linting & Production Build
 ```bash
 cd frontend
 npx oxlint --deny-warnings
@@ -280,6 +383,28 @@ npm run build
 
 ---
 
-## License
+## 12. Troubleshooting & FAQ
 
-This project is licensed under the **Apache License 2.0**.
+### Port Collision: Port 8000 vs 8001
+- **Issue**: Attempting to run the FastAPI backend on port 8000 results in `address already in use`.
+- **Cause**: Port `8000` is assigned to lakeFS in `docker-compose.yml`.
+- **Solution**: The backend runs on port `8001` (`PORT=8001`). The frontend proxy and startup scripts (`run.sh`) automatically use port 8001.
+
+### lakeFS Pre-Merge Webhook Connection Refused
+- **Issue**: Merging a protected lakeFS branch fails with `dial tcp ...:8001: connect: connection refused`.
+- **Cause**: lakeFS runs inside Docker and communicates with the host backend using `LAKEFS_WEBHOOK_URL="http://host.docker.internal:8001/api/webhooks/lakefs/data-validation"`.
+- **Solution**: Ensure the backend server is running on the host machine before executing branch merges.
+
+### Grafana Admin Password on Existing Volume
+- **Issue**: Changing `GRAFANA_ADMIN_PASSWORD` in `.env` has no effect on an existing Grafana container.
+- **Cause**: Grafana stores administrative credentials in its persistent SQLite database (`sentinelml_grafana_data`).
+- **Solution**: Run `docker exec sentinelml-grafana grafana-cli admin reset-admin-password <new-password>`, or reset volumes via `docker compose down -v`.
+
+---
+
+## 13. Project Documentation Links
+
+For in-depth guides on specific platform layers, refer to:
+- [Backend Architecture & API Guide](file:///home/deepadharshan/Desktop/Capstone_MLSecOps/backend/README.md)
+- [Frontend Security Dashboard Guide](file:///home/deepadharshan/Desktop/Capstone_MLSecOps/frontend/README.md)
+- [Observability Stack & Telemetry Guide](file:///home/deepadharshan/Desktop/Capstone_MLSecOps/observability/README.md)
