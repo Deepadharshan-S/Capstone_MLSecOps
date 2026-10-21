@@ -7,7 +7,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.models.threat_hunting import HuntJob, SecurityEvent
-from app.schemas.threat_hunting import HuntDefinition, HuntJobCreate, SecurityEventFilter
+from app.schemas.threat_hunting import HuntDefinition, HuntJobCreate
 
 logger = logging.getLogger("threat_hunting.hunts")
 

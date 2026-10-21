@@ -75,7 +75,8 @@ class ModelGovernanceService:
         # First verify if it is Safetensors (8-byte little endian header + JSON)
         if len(data) >= 8:
             try:
-                import struct, json
+                import json
+                import struct
                 header_len = struct.unpack("<Q", data[:8])[0]
                 if 0 < header_len < len(data) - 8:
                     candidate = data[8 : 8 + header_len]
@@ -97,7 +98,8 @@ class ModelGovernanceService:
 
         # Protocol 2-5: check for PROTO opcode (0x80) followed by protocol version (0-5)
         # Search for pattern anywhere in data (handles disguised pickles with prefix padding)
-        import re, pickletools
+        import pickletools
+        import re
         proto_pattern = re.compile(b"\x80[\x00-\x05]")
         for match in proto_pattern.finditer(data):
             offset = match.start()
@@ -570,7 +572,8 @@ class ModelGovernanceService:
                                     pos_valid = False
                             elif model_format == "safetensors" or (primary_model_file and primary_model_file.lower().endswith(".safetensors")):
                                 try:
-                                    import struct, json
+                                    import json
+                                    import struct
                                     if len(physical_data) >= 8:
                                         h_len = struct.unpack("<Q", physical_data[:8])[0]
                                         if 0 < h_len < len(physical_data) - 8:

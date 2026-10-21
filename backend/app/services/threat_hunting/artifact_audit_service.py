@@ -1,4 +1,3 @@
-import os
 import re
 import logging
 from typing import Optional, List, Dict, Set, Any
@@ -114,7 +113,7 @@ class ArtifactAuditService:
                 # 2. Ingest structured Threat Hunting event
                 if db:
                     try:
-                        sec_event = event_service.ingest_event(
+                        event_service.ingest_event(
                             db,
                             SecurityEventCreate(
                                 event_type="artifact.orphan_detected",

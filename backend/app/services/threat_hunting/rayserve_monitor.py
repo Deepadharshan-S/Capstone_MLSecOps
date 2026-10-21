@@ -46,7 +46,6 @@ class RayServeSecurityMonitor:
                 spec = item.get("spec", {})
                 name = metadata.get("name", "unknown")
                 labels = metadata.get("labels", {})
-                annotations = metadata.get("annotations", {})
 
                 # Extract model_uri or serve config if present
                 model_uri = None
@@ -115,7 +114,7 @@ class RayServeSecurityMonitor:
                 # 2. Ingest structured Threat Hunting event
                 if db:
                     try:
-                        sec_event = event_service.ingest_event(
+                        event_service.ingest_event(
                             db,
                             SecurityEventCreate(
                                 event_type="rayserve.rogue_deployment_detected",

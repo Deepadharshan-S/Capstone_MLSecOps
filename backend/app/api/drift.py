@@ -24,7 +24,6 @@ from app.schemas.drift import (
     DriftCheckRequest,
     DriftCheckResponse,
     DriftConfigResponse,
-    DriftFindingItem,
 )
 from app.schemas.threat_hunting import AlertFilter
 from app.services.threat_hunting.alert_service import alert_service
