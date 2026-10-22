@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.logging_config import log_audit_event
+from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db
 from app.models.dataset import Dataset
 from app.schemas.threat_hunting import SecurityEventCreate
@@ -616,17 +617,40 @@ class FalcoWebhookPayload(BaseModel):
 @router.post(
     "/falco",
     summary="Falco container runtime eBPF intrusion detection webhook",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60))],
 )
 def falco_runtime_alert_webhook(
     payload: FalcoWebhookPayload,
     db: Session = Depends(get_db),
+    x_falco_secret: Optional[str] = Header(None, alias="X-Falco-Webhook-Secret"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     """
     Ingests runtime security alerts from Sysdig/Falco kernel eBPF engine.
+    Authenticates webhook requests using shared secret header or Bearer token.
     Detects unauthorized interactive shells (/bin/sh, bash) or network exfiltration
     utilities (curl, wget) spawned within Ray worker pods or serving containers.
     (MITRE ATT&CK T1059.004 / MITRE ATLAS AML.T0038)
     """
+    from app.core.config import settings
+
+    expected_secret = getattr(settings, "FALCO_WEBHOOK_SECRET", "")
+    if expected_secret:
+        provided_secret = x_falco_secret if isinstance(x_falco_secret, str) else None
+        auth_header = authorization if isinstance(authorization, str) else None
+        if not provided_secret and auth_header:
+            if auth_header.lower().startswith("bearer "):
+                provided_secret = auth_header[7:].strip()
+            else:
+                provided_secret = auth_header.strip()
+
+        if not provided_secret or not hmac.compare_digest(str(provided_secret), str(expected_secret)):
+            logger.warning("Unauthorized access attempt to Falco webhook (invalid or missing secret).")
+            return JSONResponse(
+                status_code=401,
+                content={"status": "unauthorized", "reason": "invalid_or_missing_webhook_secret"},
+            )
+
     fields = payload.output_fields or {}
     proc_name = fields.get("proc.name", "")
     proc_cmdline = fields.get("proc.cmdline", "")

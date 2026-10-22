@@ -40,6 +40,8 @@ class RateLimiter:
             ]
 
             if len(self.requests[key]) >= self.times:
+                oldest_request = self.requests[key][0]
+                retry_after = max(1, int(self.seconds - (now - oldest_request)) + 1)
                 # Log audit event for security monitoring
                 log_audit_event(
                     action="rate_limit_exceeded",
@@ -50,6 +52,7 @@ class RateLimiter:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many requests. Please try again later.",
+                    headers={"Retry-After": str(retry_after)},
                 )
 
             self.requests[key].append(now)

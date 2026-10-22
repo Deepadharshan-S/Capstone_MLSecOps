@@ -160,6 +160,7 @@ def logout(
 @router.post(
     "/cleanup-tokens",
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 def cleanup_tokens(
     db: Session = Depends(get_db),

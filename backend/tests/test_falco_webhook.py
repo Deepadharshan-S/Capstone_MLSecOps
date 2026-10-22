@@ -72,7 +72,7 @@ def test_falco_shell_spawned_webhook_generates_critical_alert(db):
         },
     )
 
-    res = falco_runtime_alert_webhook(payload=payload, db=db)
+    res = falco_runtime_alert_webhook(payload=payload, db=db, x_falco_secret="sentinelml-dev-falco-webhook-secret-32b")
     assert res["status"] == "ingested"
     assert res["event_id"] is not None
 
@@ -88,3 +88,23 @@ def test_falco_shell_spawned_webhook_generates_critical_alert(db):
     assert "Container Runtime Unauthorized Process" in alert.title
     assert alert.mitre_attack_id == "T1059.004"
     assert alert.mitre_atlas_id == "AML.T0038"
+
+
+def test_falco_webhook_unauthorized_rejection(db):
+    """
+    Verifies that Falco webhook rejects unauthenticated requests (missing or invalid secret) with HTTP 401.
+    """
+    payload = FalcoWebhookPayload(
+        rule="Terminal shell in container",
+        priority="Critical",
+        output="Critical A shell was spawned",
+        output_fields={"proc.name": "sh"},
+    )
+
+    # Missing secret
+    res_missing = falco_runtime_alert_webhook(payload=payload, db=db, x_falco_secret=None)
+    assert res_missing.status_code == 401
+
+    # Invalid secret
+    res_invalid = falco_runtime_alert_webhook(payload=payload, db=db, x_falco_secret="invalid-secret-key")
+    assert res_invalid.status_code == 401

@@ -127,6 +127,7 @@ class Settings(BaseSettings):
     MINIO_INTERNAL_ENDPOINT: Optional[str] = None
     MINIO_STORAGE_MUTATION_DETECTION_ENABLED: bool = True
     MINIO_WEBHOOK_SECRET: str = "sentinelml-dev-minio-webhook-secret-32b"
+    FALCO_WEBHOOK_SECRET: str = "sentinelml-dev-falco-webhook-secret-32b"
     MINIO_MONITORED_BUCKETS: list[str] = ["lakefs"]
     LAKEFS_S3_ACCESS_KEY_ID: Optional[str] = None
 
@@ -260,6 +261,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production environment requires an explicitly configured, non-default LAKEFS_WEBHOOK_SECRET."
                 )
+
             if self.MINIO_ROOT_PASSWORD == "minioadmin123":
                 raise ValueError(
                     "Production environment forbids using default MINIO_ROOT_PASSWORD ('minioadmin123')."

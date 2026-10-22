@@ -91,6 +91,13 @@ def get_current_user(
             headers={"WWW-Authenticate": authenticate_value},
         )
 
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user",
+            headers={"WWW-Authenticate": authenticate_value},
+        )
+
     # Enforce Role-Based Access Control (RBAC) scopes
     try:
         user_role = Role(user.role)

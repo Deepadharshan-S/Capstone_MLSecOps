@@ -166,6 +166,16 @@ class AuthService:
             )
             raise InvalidCredentialsError("Incorrect username or password.")
 
+        if not user.is_active:
+            log_audit_event(
+                "login_failed_inactive_user",
+                user.username,
+                ip_address,
+                "Attempted login for inactive/deactivated account.",
+                db=db,
+            )
+            raise InvalidCredentialsError("Account is inactive or disabled.")
+
         # 1. Lockout verification
         current_time = datetime.now(timezone.utc)
         if user.locked_until:
@@ -279,7 +289,9 @@ class AuthService:
 
         user_repo = self._get_user_repo(db)
         user_record = user_repo.get_by_id(user_uuid)
-        username = user_record.username if user_record else "unknown"
+        if not user_record or not user_record.is_active:
+            raise InvalidTokenError("Account is inactive or disabled.")
+        username = user_record.username
 
         refresh_token_repo = self._get_refresh_token_repo(db)
         db_token = refresh_token_repo.get_by_jti(jti)
