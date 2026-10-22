@@ -139,7 +139,7 @@ graph TD
 ## 5. Repository Structure
 
 ```text
-Capstone_MLSecOps/
+SentinelML/
 ├── backend/                          # FastAPI backend application
 │   ├── alembic/                      # Database migrations (PostgreSQL)
 │   ├── alembic.ini                   # Alembic environment configuration
@@ -405,6 +405,6 @@ npm run build
 ## 13. Project Documentation Links
 
 For in-depth guides on specific platform layers, refer to:
-- [Backend Architecture & API Guide](file:///home/deepadharshan/Desktop/Capstone_MLSecOps/backend/README.md)
-- [Frontend Security Dashboard Guide](file:///home/deepadharshan/Desktop/Capstone_MLSecOps/frontend/README.md)
-- [Observability Stack & Telemetry Guide](file:///home/deepadharshan/Desktop/Capstone_MLSecOps/observability/README.md)
+- [Backend Architecture & API Guide](file:///home/deepadharshan/Desktop/SentinelML/backend/README.md)
+- [Frontend Security Dashboard Guide](file:///home/deepadharshan/Desktop/SentinelML/frontend/README.md)
+- [Observability Stack & Telemetry Guide](file:///home/deepadharshan/Desktop/SentinelML/observability/README.md)
