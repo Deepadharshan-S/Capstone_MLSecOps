@@ -10,15 +10,16 @@ import {
 import {
   PageHeader, Panel, Button, Field, TextInput, TextArea, Badge,
   Alert, Progress, EmptyState, LoadingState, ErrorState, Segmented,
-  KeyValue, useToast, useConfirm, StatCard, CopyButton,
+  KeyValue, useToast, useConfirm, StatCard, CopyButton, Tabs,
 } from '../components/ui/index.jsx'
 import { TrainingConsole } from './JobPanels.jsx'
+import { parseJobLogText } from '../lib/joblogs.js'
 import { useAuth } from '../auth/AuthContext.jsx'
 import {
   Database, GitBranch, BrainCircuit, Play, BarChart3, Upload, Check,
   ChevronRight, ChevronLeft, RefreshCw, Rocket, ClipboardList, Sparkles,
   Code2, FileText, Target, Layers, Zap, GitCommitHorizontal,
-  Boxes, RotateCcw, Save, Copy,
+  Boxes, RotateCcw, Save, Copy, Terminal,
 } from '../components/icons.jsx'
 
 // recharts lives in JobResults — defer it until the Results stage renders.
@@ -773,10 +774,20 @@ export default function Pipeline() {
   const [progress, setProgress] = useState(() => draft?.progress ?? 0)
   const [headLogs, setHeadLogs] = useState([])
   const [streamLogs, setStreamLogs] = useState([])
+  // Which log source answered the last live fetch ("kubernetes" | "minio" |
+  // "unavailable") — the console shows it so a reader can tell whether the
+  // tail they are watching is live pod output or a replay.
+  const [logSource, setLogSource] = useState(null)
   // Stable identity: TrainingConsole's follow-the-tail effect keys off this
   // array, and a fresh one every render would re-scroll on unrelated updates.
   const logs = useMemo(() => [...headLogs, ...streamLogs], [headLogs, streamLogs])
   const [results, setResults] = useState(() => draft?.results ?? null)
+  // Results step: which tab is open, plus the one-shot archive fetch that
+  // backs the Logs tab (the live `streamLogs` tail dies with the run, so the
+  // finished output is re-read from the MinIO archive).
+  const [resultsTab, setResultsTab] = useState('results')
+  const [finalLogs, setFinalLogs] = useState([])
+  const [finalLogSource, setFinalLogSource] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
 
@@ -879,6 +890,7 @@ export default function Pipeline() {
   const clearLogs = useCallback(() => {
     setHeadLogs([])
     setStreamLogs([])
+    setLogSource(null)
   }, [])
 
   /* ── job polling ──────────────────────────────── */
@@ -890,6 +902,13 @@ export default function Pipeline() {
     stopPolling()
     pollFails.current = 0
     pollRef.current = setInterval(async () => {
+      // Status and log tail are independent reads — start the log fetch first
+      // so the two round-trips overlap instead of doubling the 2s cadence.
+      // GET /models/jobs/{id}/logs tails the live Ray head pod while the job
+      // runs and the MinIO archive once it finishes, naming which via
+      // `source`; a denied/unreachable lookup resolves to null so it can
+      // never fail the status poll.
+      const logFetch = mlOpsApi.jobLogs(jobId, 1000).catch(() => null)
       let j
       try {
         j = await mlOpsApi.getJob(jobId)
@@ -903,12 +922,26 @@ export default function Pipeline() {
         }
         return
       }
-      // GET /jobs/{id} hydrates `logs` — list rows deliberately do not — as
-      // the last 200 lines of the run's output. Swap the block in wholesale:
-      // appending would reprint the same tail every 2 seconds. A null/empty
-      // payload means the log source isn't reachable yet, so keep what the
+      const d = await logFetch
+      // `source: "unavailable"` means the pod is gone and no archive exists
+      // yet — the backend returns a placeholder sentence in `logs`, not real
+      // output. Rendering that mid-run ("Logs are no longer available for
+      // this historical job") would be a lie, so skip it and let the job
+      // record's hydrated `logs` (or the previous tick) hold the console.
+      const entries = d && d.source !== 'unavailable' ? parseJobLogText(d.logs) : []
+      if (entries.length) {
+        // Swap the block in wholesale: appending would reprint the same tail
+        // every 2 seconds. The dedicated endpoint wins over the job record's
+        // hydrated `logs` because it carries more lines and names its source.
+        setStreamLogs(entries)
+        setLogSource(d.source || null)
+      } else if (Array.isArray(j.logs) && j.logs.length) {
+        // Fallback: GET /jobs/{id} hydrates the last 200 lines when the
+        // dedicated lookup came back empty or failed.
+        setStreamLogs(j.logs)
+      }
+      // Both empty means the log source isn't reachable yet — keep what the
       // previous tick produced instead of blanking the console.
-      if (Array.isArray(j.logs) && j.logs.length) setStreamLogs(j.logs)
       setProgress(j.progress || 0)
       if (j.status === 'completed') {
         stopPolling()
@@ -947,6 +980,33 @@ export default function Pipeline() {
     }
   }, [draft, pollJob])
 
+  // Once the run finishes, pull the archived log text for the Results step's
+  // Logs tab. The live `streamLogs` tail above dies with the run, so the
+  // final output is re-read from the MinIO archive (source: "minio"). This is
+  // a one-shot fetch keyed to the finished job — no polling, and a fresh run
+  // resets it via submitRun.
+  const finalLogJob = useRef(null)
+  useEffect(() => {
+    const jobId = results?.job_id
+    if (!jobId || finalLogJob.current === jobId) return
+    finalLogJob.current = jobId
+    let alive = true
+    mlOpsApi.jobLogs(jobId, 2000).then((d) => {
+      if (!alive) return
+      // `unavailable` carries a placeholder sentence, not output — leave
+      // `finalLogs` empty so the console falls back to the live tail still
+      // held in memory and the source badge reports the miss.
+      setFinalLogs(d?.source === 'unavailable' ? [] : parseJobLogText(d?.logs))
+      setFinalLogSource(d?.source || null)
+    }).catch(() => {
+      if (!alive) return
+      // A failed archive lookup just flags the source; the console's `empty`
+      // copy then explains that nothing was found for this run.
+      setFinalLogSource('unavailable')
+    })
+    return () => { alive = false }
+  }, [results])
+
   /* ── validation ───────────────────────────────── */
   const validation = useMemo(() => {
     if (step === 0 && !selectedDs) return 'Select or upload a dataset to continue.'
@@ -973,6 +1033,12 @@ export default function Pipeline() {
     setProgress(0)
     setResults(null)
     setJob(null)
+    // Reset the Results-step Logs tab so a new run doesn't open on the
+    // previous run's archived output.
+    setResultsTab('results')
+    setFinalLogs([])
+    setFinalLogSource(null)
+    finalLogJob.current = null
 
     const common = {
       dataset_id: selectedDs.name,
@@ -1144,7 +1210,7 @@ export default function Pipeline() {
             </div>
           </Panel>
 
-          <TrainingConsole logs={logs} isTraining={submitting} empty="Press “Start training” to submit the job and stream logs." />
+          <TrainingConsole logs={logs} isTraining={submitting} source={logSource} empty="Press “Start training” to submit the job and stream logs." />
 
           {progress > 0 && (
             <Panel icon={RefreshCw} title="Progress" subtitle={submitting ? 'Polling GET /jobs/{job_id} every 2s' : 'Run finished'}>
@@ -1204,9 +1270,33 @@ export default function Pipeline() {
                 </div>
               </Panel>
 
-              <Suspense fallback={<LoadingState label="Loading results…" />}>
-                <JobResults results={results} jobId={results.job_id} />
-              </Suspense>
+              <Tabs
+                variant="underline"
+                tabs={[
+                  { id: 'results', label: 'Results', icon: BarChart3 },
+                  { id: 'logs', label: 'Logs', icon: Terminal },
+                ]}
+                active={resultsTab}
+                onChange={setResultsTab}
+              />
+
+              {resultsTab === 'logs' ? (
+                <TrainingConsole
+                  // The archive read can beat the MinIO write on a run that
+                  // just finished — fall back to the live tail still held in
+                  // memory rather than showing an empty box.
+                  logs={finalLogs.length ? finalLogs : logs}
+                  isTraining={false}
+                  source={finalLogSource}
+                  empty={finalLogSource === 'unavailable'
+                    ? 'Could not load the archived logs — the run output was not found in the pod tail or MinIO.'
+                    : 'No archived output for this run.'}
+                />
+              ) : (
+                <Suspense fallback={<LoadingState label="Loading results…" />}>
+                  <JobResults results={results} jobId={results.job_id} />
+                </Suspense>
+              )}
             </>
           )}
         </div>

@@ -7,7 +7,7 @@ import { parseJobLogText } from '../lib/joblogs.js'
 import {
   PageHeader, Panel, Button, DataTable, Drawer, Badge, StatusBadge,
   EmptyState, LoadingState, ErrorState, SearchInput, Select,
-  Progress, StatCard, Alert, useToast,
+  Progress, StatCard, Alert, useToast, Tabs,
 } from '../components/ui/index.jsx'
 import { JobSummary, TrainingConsole } from './JobPanels.jsx'
 import {
@@ -54,6 +54,10 @@ export default function Jobs() {
   const [logError, setLogError] = useState(null)
   // Which job the console currently belongs to, for dropping late responses.
   const logsJobRef = useRef(null)
+  // Drawer body: "results" (summary + charts) or "logs" (the terminal).
+  // A still-running job opens on its live logs — that's what you opened it
+  // to watch — while a finished one lands on its metrics.
+  const [drawerTab, setDrawerTab] = useState('results')
   const [live, setLive] = useState(true)
   const debounced = useDebounced(query, 200)
 
@@ -139,6 +143,9 @@ export default function Jobs() {
     setSelected(job)
     setDetailError(null)
     setDetailLoading(true)
+    // A running job opens on its live logs (that's why you clicked in);
+    // a finished one lands on its metrics.
+    setDrawerTab(ACTIVE.includes(String(job.status).toLowerCase()) ? 'logs' : 'results')
     // Clear first so the previous job's output never sits under this one's
     // title while the new fetch is in flight, then start the log lookup in
     // parallel — a failing log endpoint must not hold up the metrics.
@@ -411,41 +418,55 @@ export default function Jobs() {
 
             {selected.error_message && <Alert tone="error">{selected.error_message}</Alert>}
 
-            {selectedActive && (
-              <Panel icon={Activity} title="Live progress" actions={<Badge tone="warning" dot>polling</Badge>}>
-                <Progress
-                  value={selected.progress || 0}
-                  label="Stage"
-                  indeterminate
-                  status={stageLabel || 'Working'}
-                />
-                <div className="mt-3 text-xs muted">
-                  {stageLabel || 'Working'}
-                  {elapsed ? ` · running for ${elapsed}` : ''}
-                  {' · '}status refreshes every few seconds while the job is active.
-                  The backend reports a stage, not a measured percentage.
-                </div>
-              </Panel>
-            )}
-
-            <TrainingConsole
-              // The dedicated endpoint is preferred; `selected.logs` remains
-              // as the fallback for a viewer whose log lookup was denied.
-              logs={jobLogs.length ? jobLogs : (selected.logs || [])}
-              isTraining={selectedActive}
-              source={logSource}
-              empty={logError
-                ? `Could not load logs — ${logError.message || 'the request failed.'}`
-                : 'No logs archived for this job — the backend found nothing to stream from the pod or MinIO.'}
+            <Tabs
+              variant="underline"
+              tabs={[
+                { id: 'results', label: 'Results', icon: TrendingUp },
+                { id: 'logs', label: 'Logs', icon: Terminal },
+              ]}
+              active={drawerTab}
+              onChange={setDrawerTab}
             />
 
-            <Suspense fallback={<LoadingState label="Loading charts…" />}>
-              <JobResults
-                results={String(selected.status).toLowerCase() === 'completed' ? selected : null}
+            {drawerTab === 'logs' ? (
+              <TrainingConsole
+                // The dedicated endpoint is preferred; `selected.logs` remains
+                // as the fallback for a viewer whose log lookup was denied.
+                logs={jobLogs.length ? jobLogs : (selected.logs || [])}
                 isTraining={selectedActive}
-                jobId={selected.job_id}
+                source={logSource}
+                empty={logError
+                  ? `Could not load logs — ${logError.message || 'the request failed.'}`
+                  : 'No logs archived for this job — the backend found nothing to stream from the pod or MinIO.'}
               />
-            </Suspense>
+            ) : (
+              <>
+                {selectedActive && (
+                  <Panel icon={Activity} title="Live progress" actions={<Badge tone="warning" dot>polling</Badge>}>
+                    <Progress
+                      value={selected.progress || 0}
+                      label="Stage"
+                      indeterminate
+                      status={stageLabel || 'Working'}
+                    />
+                    <div className="mt-3 text-xs muted">
+                      {stageLabel || 'Working'}
+                      {elapsed ? ` · running for ${elapsed}` : ''}
+                      {' · '}status refreshes every few seconds while the job is active.
+                      The backend reports a stage, not a measured percentage.
+                    </div>
+                  </Panel>
+                )}
+
+                <Suspense fallback={<LoadingState label="Loading charts…" />}>
+                  <JobResults
+                    results={String(selected.status).toLowerCase() === 'completed' ? selected : null}
+                    isTraining={selectedActive}
+                    jobId={selected.job_id}
+                  />
+                </Suspense>
+              </>
+            )}
           </div>
         </Drawer>
       )}
