@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
-import numpy as np
 import pandas as pd
 
 from app.services.drift import stats as drift_stats

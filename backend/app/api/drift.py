@@ -15,7 +15,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy.orm import Session
 
-from app.api.permissions import get_current_user
+from app.api.permissions import get_current_active_user
+from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.drift import (
@@ -24,7 +25,6 @@ from app.schemas.drift import (
     DriftCheckRequest,
     DriftCheckResponse,
     DriftConfigResponse,
-    DriftFindingItem,
 )
 from app.schemas.threat_hunting import AlertFilter
 from app.services.threat_hunting.alert_service import alert_service
@@ -53,7 +53,7 @@ def _service(db: Session):
 )
 def get_drift_config(
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     """Thresholds and window sizes, so the UI can explain a skipped check."""
     service, detection_source = _service(db)
@@ -121,7 +121,7 @@ def list_findings(
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     """
     Drift findings surfaced through their correlated alerts.
@@ -195,7 +195,7 @@ def list_baselines(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     from app.repositories.baseline_repository import BaselineRepository
 
@@ -224,7 +224,7 @@ def get_baseline_detail(
     model_name: str,
     model_version: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     """Per-feature reference statistics — the numbers a finding was compared to."""
     from app.repositories.baseline_repository import BaselineRepository
@@ -257,11 +257,12 @@ def get_baseline_detail(
     response_model=BaselineResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Compute and store a baseline from the training dataset",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 def create_baseline(
     body: BaselineCreate,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["rules:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["rules:manage"]),
 ):
     """
     Builds reference statistics from the training dataset in lakeFS and stores
@@ -301,11 +302,12 @@ def create_baseline(
     "/drift/check",
     response_model=DriftCheckResponse,
     summary="Run a drift check now for one model",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
 )
 def run_drift_check(
     body: DriftCheckRequest,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["rules:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["rules:manage"]),
 ):
     """
     Executes D1/D2/D3 over the observation window immediately.
@@ -345,7 +347,7 @@ def list_telemetry(
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     """Raw per-request rows the detectors measure against — for verifying that
     telemetry is actually being captured for a model."""

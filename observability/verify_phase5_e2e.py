@@ -120,8 +120,15 @@ def run_e2e_verification():
     record_training_duration(112.5)
     record_deployment_operation(operation="create", result="success")
 
+    # Record structured log via security_audit logger
+    import logging
+    test_logger = logging.getLogger("security_audit")
+    unique_log_marker = f"phase5_e2e_verification_log_{trace_id_hex}"
+    test_logger.info(unique_log_marker)
+
     print(f"  ✓ Emitted 3-level Trace [Trace ID: {trace_id_hex}]")
     print("  ✓ Emitted ML metrics (inference.requests, training.jobs.submitted, etc.)")
+    print(f"  ✓ Emitted structured application log: '{unique_log_marker}'")
 
     # 4. Flush Telemetry to OTel Collector
     print("\n[Step 4] Flushing Telemetry to OTel Collector via OTLP/HTTP...")
@@ -172,18 +179,40 @@ def run_e2e_verification():
                 val = res.get("value", [None, None])[1]
                 print(f"    -> Labels: {res.get('metric', {})} | Value: {val}")
 
-    # 8. Verify Grafana Datasource Queries
-    print("\n[Step 8] Verifying Grafana can query Prometheus and Tempo datasources...")
+    # 8. Verify Logs in Loki
+    print(f"\n[Step 8] Querying Loki for Log '{unique_log_marker}'...")
+    loki_found = False
+    with httpx.Client(timeout=10.0) as client:
+        for attempt in range(5):
+            try:
+                loki_resp = client.get(
+                    f"http://localhost:3100/loki/api/v1/query_range?query=%7Bjob%3D%22sentinelml-backend%22%7D%20%7C%3D%20%22{unique_log_marker}%22"
+                )
+                if loki_resp.status_code == 200:
+                    loki_data = loki_resp.json()
+                    results = loki_data.get("data", {}).get("result", [])
+                    if results:
+                        loki_found = True
+                        print(f"  ✓ Log found in Loki! HTTP {loki_resp.status_code}")
+                        break
+            except Exception as e:
+                print(f"    Notice during Loki query: {e}")
+            time.sleep(2)
+    assert loki_found, f"Log '{unique_log_marker}' was not found in Loki!"
+
+    # 9. Verify Grafana Datasource Queries
+    print("\n[Step 9] Verifying Grafana can query Prometheus, Tempo, and Loki datasources...")
     grafana_user = os.getenv("GRAFANA_ADMIN_USER", "admin")
     grafana_password = os.getenv("GRAFANA_ADMIN_PASSWORD")
     auth_credentials = (grafana_user, grafana_password) if grafana_password else None
     with httpx.Client(timeout=10.0, auth=auth_credentials) as client:
-        # Check Prometheus proxy through Grafana
+        # Check datasources proxy through Grafana
         ds_resp = client.get("http://localhost:3000/api/datasources")
         assert ds_resp.status_code == 200
         datasources = ds_resp.json()
         prom_uid = next(ds["uid"] for ds in datasources if ds["type"] == "prometheus")
         tempo_uid = next(ds["uid"] for ds in datasources if ds["type"] == "tempo")
+        loki_uid = next(ds["uid"] for ds in datasources if ds["type"] == "loki")
 
         # Query Prometheus via Grafana
         g_prom_resp = client.get(
@@ -199,7 +228,14 @@ def run_e2e_verification():
         assert g_tempo_resp.status_code == 200
         print(f"  ✓ Grafana Tempo proxy query successful: HTTP {g_tempo_resp.status_code}")
 
-    # 9. Clean up test telemetry state
+        # Query Loki via Grafana
+        g_loki_resp = client.get(
+            f"http://localhost:3000/api/datasources/proxy/uid/{loki_uid}/loki/api/v1/query_range?query=%7Bjob%3D%22sentinelml-backend%22%7D%20%7C%3D%20%22{unique_log_marker}%22"
+        )
+        assert g_loki_resp.status_code == 200
+        print(f"  ✓ Grafana Loki proxy query successful: HTTP {g_loki_resp.status_code}")
+
+    # 10. Clean up test telemetry state
     _reset_telemetry_state(app=app, engine=engine)
 
     print("\n" + "=" * 70)

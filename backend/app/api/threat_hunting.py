@@ -1,11 +1,12 @@
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy.orm import Session
 
-from app.api.permissions import get_current_user
+from app.api.permissions import get_current_active_user
+from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.threat_hunting import (
@@ -53,7 +54,7 @@ def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     filters = AlertFilter(
         status=status_filter,
@@ -83,7 +84,7 @@ def list_alerts(
 def get_alert(
     alert_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     alert = alert_service.get_alert_by_id(db, alert_id)
     if not alert:
@@ -103,7 +104,7 @@ def update_alert(
     alert_id: UUID,
     update_in: AlertUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:manage"]),
 ):
     try:
         updated = alert_service.update_alert(
@@ -127,7 +128,7 @@ def get_alert_events(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     alert = alert_service.get_alert_by_id(db, alert_id)
     if not alert:
@@ -156,7 +157,7 @@ def get_alert_events(
 def list_detection_rules(
     is_enabled: Optional[bool] = None,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     rules = rule_service.list_rules(db, is_enabled=is_enabled)
     return [DetectionRuleResponse.model_validate(r) for r in rules]
@@ -167,11 +168,12 @@ def list_detection_rules(
     response_model=DetectionRuleResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new detection rule",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
 )
 def create_detection_rule(
     rule_in: DetectionRuleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["rules:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["rules:manage"]),
 ):
     try:
         rule = rule_service.create_rule(db, rule_in, creator=current_user.username)
@@ -188,7 +190,7 @@ def create_detection_rule(
 def get_detection_rule(
     rule_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     rule = rule_service.get_rule(db, rule_id)
     if not rule:
@@ -208,7 +210,7 @@ def update_detection_rule(
     rule_id: UUID,
     rule_update: DetectionRuleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["rules:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["rules:manage"]),
 ):
     try:
         updated = rule_service.update_rule(db, rule_id, rule_update)
@@ -221,12 +223,13 @@ def update_detection_rule(
     "/detection-rules/{rule_id}/test",
     response_model=DetectionRuleTestResponse,
     summary="Test rule against recent events without creating alerts",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
 )
 def test_detection_rule(
     rule_id: UUID,
     test_req: Optional[DetectionRuleTestRequest] = None,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["rules:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["rules:manage"]),
 ):
     win = test_req.window_seconds if test_req else None
     try:
@@ -256,7 +259,7 @@ def list_security_events(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["events:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["events:view"]),
 ):
     filters = SecurityEventFilter(
         event_type=event_type,
@@ -284,11 +287,12 @@ def list_security_events(
     response_model=SecurityEventResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Ingest a security event directly with automatic normalization and redaction",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60))],
 )
 def ingest_security_event(
     event_in: SecurityEventCreate,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:manage"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:manage"]),
 ):
     event = event_service.ingest_event(db, event_in)
     return SecurityEventResponse.model_validate(event)
@@ -303,11 +307,12 @@ def ingest_security_event(
     response_model=HuntJobResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create and execute a historical threat hunting job",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 def create_threat_hunt(
     hunt_in: HuntJobCreate,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["hunts:execute"]),
+    current_user: User = Security(get_current_active_user, scopes=["hunts:execute"]),
 ):
     job = hunt_service.create_hunt_job(db, hunt_in, user_id=current_user.id)
     # Execute immediately
@@ -325,7 +330,7 @@ def list_threat_hunts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     jobs, total = hunt_service.list_hunt_jobs(db, status=status_filter, limit=limit, offset=offset)
     return {
@@ -344,7 +349,7 @@ def list_threat_hunts(
 def get_threat_hunt(
     hunt_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     job = hunt_service.get_hunt_job(db, hunt_id)
     if not job:
@@ -363,7 +368,7 @@ def get_threat_hunt(
 def get_threat_hunt_results(
     hunt_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Security(get_current_user, scopes=["alerts:view"]),
+    current_user: User = Security(get_current_active_user, scopes=["alerts:view"]),
 ):
     try:
         job, events = hunt_service.get_hunt_results(db, hunt_id)

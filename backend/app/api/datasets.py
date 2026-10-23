@@ -64,10 +64,23 @@ def register_dataset(
     """
 
     file_path = file.filename
-    if not file_path:
+    if not file_path or not file_path.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file must have a valid filename.",
+        )
+
+    import os
+    clean_name = os.path.basename(file_path.strip())
+    if not clean_name or ".." in file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file has an invalid or unsafe filename.",
+        )
+    if file_path.startswith("_lakefs_actions") or "_lakefs_actions" in file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Direct modification of system action configurations (_lakefs_actions) is forbidden.",
         )
 
     try:
@@ -227,10 +240,23 @@ def upload_file(
     branch and validated before merging.
     """
     file_path = file.filename
-    if not file_path:
+    if not file_path or not file_path.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file must have a valid filename.",
+        )
+
+    import os
+    clean_name = os.path.basename(file_path.strip())
+    if not clean_name or ".." in file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file has an invalid or unsafe filename.",
+        )
+    if file_path.startswith("_lakefs_actions") or "_lakefs_actions" in file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Direct modification of system action configurations (_lakefs_actions) is forbidden.",
         )
 
     target_branch = branch_form or branch or "main"
@@ -350,7 +376,11 @@ def compare_dataset_versions(
     return data_service.compare_dataset_versions(db, dataset_name, left_ref, right_ref, type)
 
 
-@router.post("/{dataset_name}/rollback", response_model=RollbackResponse)
+@router.post(
+    "/{dataset_name}/rollback",
+    response_model=RollbackResponse,
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
 def rollback_changes(
     dataset_name: str,
     req: RollbackRequest,

@@ -1,4 +1,5 @@
 import http.server
+import logging
 import os
 import threading
 import httpx
@@ -26,6 +27,7 @@ from app.core.telemetry import (
     get_meter,
     get_sampler,
     get_tracer,
+    get_logger_provider,
     initialize_telemetry,
     instrument_fastapi_app,
     instrument_sqlalchemy_engine,
@@ -35,6 +37,7 @@ from app.core.telemetry import (
     is_telemetry_enabled,
     normalize_metrics_endpoint,
     normalize_traces_endpoint,
+    normalize_logs_endpoint,
     shutdown_telemetry,
     uninstrument_fastapi_app,
     get_ml_tracer,
@@ -46,7 +49,9 @@ from app.core.telemetry import (
     record_deployment_operation,
     record_inference_request,
     record_inference_duration,
+    OTelInternalLogFilter,
 )
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
 from app.main import app
 
 
@@ -1766,6 +1771,91 @@ def test_phase6a_fastapi_to_rayservice_distributed_trace_continuity(monkeypatch)
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ==============================================================================
+# OpenTelemetry Logging Integration Tests
+# ==============================================================================
+
+
+def test_logging_endpoint_normalization():
+    """Validates normalization of OTLP logs endpoint paths."""
+    assert normalize_logs_endpoint("http://localhost:4318") == "http://localhost:4318/v1/logs"
+    assert normalize_logs_endpoint("http://localhost:4318/") == "http://localhost:4318/v1/logs"
+    assert normalize_logs_endpoint("http://localhost:4318/v1/logs") == "http://localhost:4318/v1/logs"
+
+
+def test_logging_initialization_and_export():
+    """Validates that application log records are captured by LoggerProvider and exported."""
+    cfg = Settings(
+        OTEL_ENABLED=True,
+        OTEL_SERVICE_NAME="sentinelml-backend-test",
+        OTEL_SERVICE_VERSION="1.0.0",
+        ENVIRONMENT="test",
+    )
+    log_exporter = InMemoryLogRecordExporter()
+    log_processor = SimpleLogRecordProcessor(log_exporter)
+
+    success = initialize_telemetry(cfg=cfg, log_processor=log_processor)
+    assert success is True
+    assert get_logger_provider() is not None
+
+    test_logger = logging.getLogger("security_audit")
+    test_logger.info("Security audit login succeeded for user alice")
+
+    flush_telemetry()
+    records = log_exporter.get_finished_logs()
+    assert len(records) >= 1
+    audit_record = next(r for r in records if "alice" in str(r.log_record.body))
+    assert audit_record.log_record.severity_text == "INFO"
+    assert audit_record.log_record.body == "Security audit login succeeded for user alice"
+
+
+def test_logging_filter_excludes_otel_internal():
+    """Validates that internal SDK logs are filtered out to prevent recursive loops."""
+    log_filter = OTelInternalLogFilter()
+
+    internal_rec = logging.LogRecord(
+        name="opentelemetry.exporter.otlp.proto.http",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="exporting batch",
+        args=(),
+        exc_info=None,
+    )
+    assert log_filter.filter(internal_rec) is False
+
+    urllib_rec = logging.LogRecord(
+        name="urllib3.connectionpool",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="resetting connection",
+        args=(),
+        exc_info=None,
+    )
+    assert log_filter.filter(urllib_rec) is False
+
+    app_rec = logging.LogRecord(
+        name="security_audit",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="safe audit log",
+        args=(),
+        exc_info=None,
+    )
+    assert log_filter.filter(app_rec) is True
+
+
+def test_logging_disabled_when_otel_disabled():
+    """Validates that LoggerProvider is not initialized when OTEL_ENABLED is False."""
+    cfg = Settings(OTEL_ENABLED=False)
+    success = initialize_telemetry(cfg=cfg)
+    assert success is False
+    assert get_logger_provider() is None
+
 
 
 

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session

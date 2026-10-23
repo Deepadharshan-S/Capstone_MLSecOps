@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -6,6 +7,8 @@ from app.core.logging_config import log_audit_event
 from app.services.interfaces import VersionControlService
 from app.services.dataset.utils import get_dataset_or_404
 from app.core.telemetry import trace_ml_operation
+
+logger = logging.getLogger("dataset_versioning_service")
 
 
 class DatasetVersioningService:

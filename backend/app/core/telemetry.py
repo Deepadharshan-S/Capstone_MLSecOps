@@ -3,8 +3,12 @@ from contextlib import contextmanager
 from typing import Optional
 
 from opentelemetry import metrics, trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler, LogRecordProcessor
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -25,6 +29,23 @@ logger = logging.getLogger("telemetry")
 _initialized: bool = False
 _tracer_provider: Optional[TracerProvider] = None
 _meter_provider: Optional[MeterProvider] = None
+_logger_provider: Optional[LoggerProvider] = None
+_logging_handler: Optional[LoggingHandler] = None
+
+
+class OTelInternalLogFilter(logging.Filter):
+    """Prevents recursive feedback loops by excluding internal OpenTelemetry and HTTP client exporter logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name and (
+            record.name.startswith("opentelemetry")
+            or record.name.startswith("urllib3")
+            or record.name.startswith("httpx")
+            or record.name.startswith("httpcore")
+        ):
+            return False
+        return True
+
 
 
 def get_sampler(sampler_name: Optional[str], arg: float = 1.0) -> Sampler:
@@ -68,6 +89,14 @@ def normalize_metrics_endpoint(base_endpoint: str) -> str:
     return f"{cleaned}/v1/metrics"
 
 
+def normalize_logs_endpoint(base_endpoint: str) -> str:
+    """Ensures logs endpoint points to the standard OTLP /v1/logs path."""
+    cleaned = base_endpoint.rstrip("/")
+    if cleaned.endswith("/v1/logs"):
+        return cleaned
+    return f"{cleaned}/v1/logs"
+
+
 def build_resource(
     service_name: str,
     service_version: str,
@@ -90,18 +119,19 @@ def initialize_telemetry(
     trace_exporter: Optional[SpanExporter] = None,
     span_processor: Optional[SpanProcessor] = None,
     metric_reader: Optional[MetricReader] = None,
+    log_processor: Optional[LogRecordProcessor] = None,
 ) -> bool:
     """
-    Initializes the OpenTelemetry TracerProvider and MeterProvider for SentinelML.
+    Initializes the OpenTelemetry TracerProvider, MeterProvider, and LoggerProvider for SentinelML.
 
     Guarantees:
     - Safe & Idempotent: If OTEL_ENABLED is False, returns False immediately.
-    - Non-blocking: Telemetry uses BatchSpanProcessor and PeriodicExportingMetricReader
-      with asynchronous background workers. If the collector is unavailable,
-      FastAPI startup and request handling continue uninterrupted.
+    - Non-blocking: Telemetry uses BatchSpanProcessor, PeriodicExportingMetricReader,
+      and BatchLogRecordProcessor with asynchronous background workers. If the collector
+      is unavailable, FastAPI startup and request handling continue uninterrupted.
     - Extensible: Supports dependency injection of custom exporters for unit testing.
     """
-    global _initialized, _tracer_provider, _meter_provider
+    global _initialized, _tracer_provider, _meter_provider, _logger_provider, _logging_handler
 
     active_settings = cfg or app_settings
 
@@ -167,6 +197,32 @@ def initialize_telemetry(
             logger.debug(f"MeterProvider already registered globally: {set_err}")
         _meter_provider = mp
 
+        # 3. Logging Configuration
+        lp = LoggerProvider(resource=resource)
+        if log_processor is not None:
+            lp.add_log_record_processor(log_processor)
+        else:
+            logs_url = normalize_logs_endpoint(active_settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+            log_exporter = OTLPLogExporter(
+                endpoint=logs_url,
+                timeout=active_settings.OTEL_EXPORTER_OTLP_TIMEOUT_SECONDS,
+            )
+            lp.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+
+        try:
+            set_logger_provider(lp)
+        except Exception as set_err:
+            logger.debug(f"LoggerProvider already registered globally: {set_err}")
+        _logger_provider = lp
+
+        handler = LoggingHandler(level=logging.INFO, logger_provider=lp)
+        handler.addFilter(OTelInternalLogFilter())
+        _logging_handler = handler
+
+        root_logger = logging.getLogger()
+        if handler not in root_logger.handlers:
+            root_logger.addHandler(handler)
+
         _initialized = True
         logger.info(
             f"OpenTelemetry initialized for service '{service_name}' ({service_version}) "
@@ -184,7 +240,7 @@ def shutdown_telemetry() -> None:
     Gracefully flushes and shuts down OpenTelemetry providers.
     Safe to call when telemetry is uninitialized or disabled.
     """
-    global _initialized, _tracer_provider, _meter_provider
+    global _initialized, _tracer_provider, _meter_provider, _logger_provider, _logging_handler
 
     if not _initialized:
         return
@@ -196,20 +252,29 @@ def shutdown_telemetry() -> None:
         if _meter_provider is not None:
             logger.debug("Shutting down OpenTelemetry MeterProvider...")
             _meter_provider.shutdown()
+        if _logger_provider is not None:
+            logger.debug("Shutting down OpenTelemetry LoggerProvider...")
+            _logger_provider.shutdown()
+        if _logging_handler is not None:
+            root_logger = logging.getLogger()
+            if _logging_handler in root_logger.handlers:
+                root_logger.removeHandler(_logging_handler)
     except Exception as exc:
         logger.warning(f"Error during OpenTelemetry shutdown: {exc}")
     finally:
         _initialized = False
         _tracer_provider = None
         _meter_provider = None
+        _logger_provider = None
+        _logging_handler = None
         _ml_instruments.clear()
         logger.info("OpenTelemetry shutdown completed.")
 
 
 def flush_telemetry(timeout_millis: int = 5000) -> bool:
     """
-    Forces an immediate flush of pending spans and metrics to the configured exporters.
-    Returns True if both providers flushed successfully.
+    Forces an immediate flush of pending spans, metrics, and logs to the configured exporters.
+    Returns True if all active providers flushed successfully.
     """
     success = True
     if _tracer_provider is not None:
@@ -225,6 +290,13 @@ def flush_telemetry(timeout_millis: int = 5000) -> bool:
             success = bool(meter_flushed) and success
         except Exception as exc:
             logger.warning(f"Error flushing MeterProvider: {exc}")
+            success = False
+    if _logger_provider is not None:
+        try:
+            logger_flushed = _logger_provider.force_flush(timeout_millis=timeout_millis)
+            success = bool(logger_flushed) and success
+        except Exception as exc:
+            logger.warning(f"Error flushing LoggerProvider: {exc}")
             success = False
     return success
 
@@ -252,6 +324,13 @@ def get_meter(name: str, version: Optional[str] = None):
     if _meter_provider is not None:
         return _meter_provider.get_meter(name, version)
     return metrics.get_meter(name, version)
+
+
+def get_logger_provider() -> Optional[LoggerProvider]:
+    """
+    Retrieves the active LoggerProvider (or None if uninitialized).
+    """
+    return _logger_provider
 
 
 def instrument_fastapi_app(app, cfg: Optional[Settings] = None) -> bool:
@@ -423,7 +502,7 @@ def uninstrument_httpx() -> None:
 
 def _reset_telemetry_state(app=None, engine=None) -> None:
     """Internal test helper to reset module state between test cases."""
-    global _initialized, _tracer_provider, _meter_provider, _httpx_instrumented
+    global _initialized, _tracer_provider, _meter_provider, _logger_provider, _logging_handler, _httpx_instrumented
     if app is not None:
         uninstrument_fastapi_app(app)
     uninstrument_sqlalchemy_engine(engine)
@@ -438,9 +517,20 @@ def _reset_telemetry_state(app=None, engine=None) -> None:
             _meter_provider.shutdown()
         except Exception:
             pass
+    if _logger_provider is not None:
+        try:
+            _logger_provider.shutdown()
+        except Exception:
+            pass
+    if _logging_handler is not None:
+        root_logger = logging.getLogger()
+        if _logging_handler in root_logger.handlers:
+            root_logger.removeHandler(_logging_handler)
     _initialized = False
     _tracer_provider = None
     _meter_provider = None
+    _logger_provider = None
+    _logging_handler = None
     _ml_instruments.clear()
 
 

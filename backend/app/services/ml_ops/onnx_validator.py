@@ -3,7 +3,6 @@ import threading
 from typing import Any, Dict, Set, Tuple
 
 import onnx
-from onnx import TensorProto
 
 MAX_ONNX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB upload limit
 MAX_ONNX_NODES = 50000

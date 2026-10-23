@@ -11,6 +11,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+import mlflow.pyfunc
+
 from app.models.user import User
 from app.core.logging_config import log_audit_event
 from app.core.config import settings
@@ -24,8 +26,6 @@ _models_cache = {"timestamp": 0.0, "data": None}
 _models_cache_lock = threading.Lock()
 MODELS_CACHE_TTL_SECONDS = 15.0
 
-
-import mlflow.pyfunc
 
 class DeferredArtifactModel(mlflow.pyfunc.PythonModel):
     """
@@ -446,11 +446,7 @@ class ModelRegistryService:
         metadata: Optional[str] = None,
         metrics: Optional[str] = None,
     ) -> dict:
-        import cloudpickle
-        import pickle
-
         mlflow, MlflowClient = load_mlflow()
-        from app.services.ml_ops.ray_wrapper import ModelWrapper
 
         log_audit_event(
             "model_upload_initiated",
@@ -568,7 +564,7 @@ class ModelRegistryService:
 
                 scan_result = pickle_scanner.scan_file(temp_file_path)
                 if not scan_result["is_safe"]:
-                    quarantine_path = pickle_scanner.quarantine_file(
+                    pickle_scanner.quarantine_file(
                         source_path=temp_file_path,
                         filename=safe_filename,
                         username=user.username,

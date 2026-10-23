@@ -508,7 +508,6 @@ class ConfidenceDriftDetector:
         base_quant = baseline_conf.get("quantiles") or {}
         base_p50 = base_quant.get("p50")
         base_p10 = base_quant.get("p10")
-        base_p90 = base_quant.get("p90")
 
         obs = np.asarray(clean, dtype=float)
         obs_quant = np.percentile(obs, [10, 50, 90])

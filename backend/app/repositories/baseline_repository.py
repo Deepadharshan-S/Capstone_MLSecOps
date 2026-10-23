@@ -1,6 +1,6 @@
 from typing import Optional, Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.drift import ModelBaseline
